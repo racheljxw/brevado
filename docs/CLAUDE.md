@@ -1,0 +1,57 @@
+# Brevado
+
+Mobile-first app for practicing concise, intentional public speaking. Each day the user picks a
+mode (interview, story, or miscellaneous), records a voice memo answering a prompt (or a
+self-chosen topic), and gets AI-generated feedback shortly after — focused on structure,
+conciseness, and filler-word usage. Past sessions and feedback are stored as a searchable
+history. Goal: make it effortless to build a daily practice habit and see, over time, whether
+speaking is actually getting more concise — not just generate one-off feedback.
+
+Full detail lives in [docs/PROJECT_PLAN.md](docs/PROJECT_PLAN.md) — read it when a task needs
+more context than what's here.
+
+## Current phase
+
+**Phase 1 — Foundation.** Auth, basic recording UI, upload to storage, minimal history list (no
+AI yet). We're working phase-by-phase (see plan Section 6); don't reach ahead into later phases
+without being asked.
+
+## Tech stack
+
+| Layer | Choice | Notes |
+|---|---|---|
+| Frontend | React Native + TypeScript (Expo), run via Expo Go | Mobile-first UI: recording (expo-audio), playback, history, dashboard. Free, no Mac needed to develop (EAS Build compiles in the cloud if ever needed) |
+| Auth | Supabase Auth | Account creation/login |
+| Database | Supabase Postgres | Users, recordings, transcripts, feedback, questions |
+| File storage | Supabase Storage | Audio files, subject to the 7-day retention policy |
+| API | Python (FastAPI) on Render | Handles uploads, enqueues background jobs, serves data to the frontend |
+| Task queue | Celery + Upstash Redis | Per-recording processing jobs, plus scheduled jobs (retention cleanup, v2 question generation) |
+| AI | Gemini API (Flash model, free tier) | Transcription (native audio input) + feedback generation; question generation in v2 |
+| Hosting | Render (API only) | Frontend isn't web-hosted — it runs as an Expo project loaded through the Expo Go app; free-tier API subdomain, custom domain optional |
+
+## Scope — don't let v2 creep into v1 work
+
+**v1 (build now):** recording/playback/AI feedback pipeline, mode selection with a hardcoded
+question pool, auth, history view, retry/regenerate logic, audio retention rules.
+
+**v2 (deferred — do not build yet):** criteria-based scoring, progress-over-time charts, streak
+calendar, re-practice/redo-question mode, dynamically growing AI-generated question pool,
+additional modes beyond interview/story.
+
+**Out of scope for now:** email notifications, Apple Developer Program / App Store / TestFlight
+distribution, multi-tenant scaling concerns (rate limiting, abuse prevention, paid AI tier), push
+notifications (deletion warning is in-app badge only).
+
+## Conventions
+
+- Use `expo-audio` for recording/playback — **not** `expo-av` (deprecated).
+- Development runs via the **Expo Go** app on a physical iPhone, not a standalone/dev-client
+  build. No Apple Developer Program membership yet — don't introduce anything that requires one
+  (e.g. custom native modules outside the Expo Go sandbox, EAS device builds).
+- The backend (FastAPI + Celery, on Render) is a **separate Python project**, not part of this
+  Expo/TypeScript project — don't mix backend code into `src/`.
+- Routing: **Expo Router**, file-based under `src/app/` (chosen over React Navigation — smaller
+  boilerplate and better fit for this app's shallow, mostly-linear screen flow: home → record →
+  processing → history/detail. See `src/app/` for routes, `src/components/` for shared UI,
+  `src/lib/` for future Supabase client / API calls, `src/types/` for shared TS types).
+- Full project plan, phases, and data-flow detail: [docs/PROJECT_PLAN.md](docs/PROJECT_PLAN.md).
