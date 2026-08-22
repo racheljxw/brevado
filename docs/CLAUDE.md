@@ -42,16 +42,43 @@ additional modes beyond interview/story.
 distribution, multi-tenant scaling concerns (rate limiting, abuse prevention, paid AI tier), push
 notifications (deletion warning is in-app badge only).
 
+## Database
+
+Supabase Postgres, no ORM — query via the `supabase-js` client (`src/lib/supabase.ts`) using
+`.from(...)`, not raw SQL from the app. Schema lives as versioned SQL in
+`supabase/migrations/` (`0001_initial_schema.sql`, `0002_storage_bucket.sql`, …) — that's the
+source of truth; don't assume a table shape without checking there first, and add new schema
+changes as a new numbered migration file rather than editing an applied one.
+
+- `recordings` — one row per practice session: mode, question/topic, `audio_path`, `status`
+  (`pending`/`processing`/`done`/`failed`), `transcript`, `feedback`, `metrics` (jsonb, Phase 2),
+  `saved`/`audio_deleted` flags, `report_generated_at` (drives the 7-day retention window).
+- `questions` — stub only (`id`, `mode`, `prompt_text`, `created_at`), reserved shape for the
+  Phase 4 hardcoded pool and Phase 5 dynamic pool / re-practice. Not queried anywhere yet.
+
+RLS is **on** for both tables and scoped to `user_id = auth.uid()` on `recordings` (select/insert/
+update only — no delete policy yet, add one deliberately if a "delete recording" feature shows
+up). `questions` is open-read (no user-specific data); writes to it go through the service-role
+key only, bypassing RLS. Storage (`recordings-audio` bucket, private) mirrors this: objects must
+live under a `{user_id}/...` path prefix, enforced by storage RLS policies in
+`0002_storage_bucket.sql`.
+
 ## Conventions
 
 - Use `expo-audio` for recording/playback — **not** `expo-av` (deprecated).
 - Development runs via the **Expo Go** app on a physical iPhone, not a standalone/dev-client
   build. No Apple Developer Program membership yet — don't introduce anything that requires one
   (e.g. custom native modules outside the Expo Go sandbox, EAS device builds).
+- **Expo SDK version is pinned deliberately** (currently SDK 54, per `package.json`) to match
+  what the installed Expo Go app on the test iPhone supports — never run `expo install --fix`,
+  `npx expo upgrade`, or otherwise change Expo/React Native/related package versions without
+  being asked first, even to fix a peer-dependency warning.
 - The backend (FastAPI + Celery, on Render) is a **separate Python project**, not part of this
   Expo/TypeScript project — don't mix backend code into `src/`.
 - Routing: **Expo Router**, file-based under `src/app/` (chosen over React Navigation — smaller
   boilerplate and better fit for this app's shallow, mostly-linear screen flow: home → record →
   processing → history/detail. See `src/app/` for routes, `src/components/` for shared UI,
-  `src/lib/` for future Supabase client / API calls, `src/types/` for shared TS types).
+  `src/lib/` for the Supabase client / future API calls, `src/types/` for shared TS types).
+- Supabase URL/anon key are read from `EXPO_PUBLIC_SUPABASE_URL` / `EXPO_PUBLIC_SUPABASE_ANON_KEY`
+  in `.env` (gitignored; see `.env.example`) — never hardcode them.
 - Full project plan, phases, and data-flow detail: [docs/PROJECT_PLAN.md](docs/PROJECT_PLAN.md).
