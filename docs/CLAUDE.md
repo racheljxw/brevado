@@ -87,6 +87,32 @@ live under a `{user_id}/...` path prefix, enforced by storage RLS policies in
   wasn't verified against this project's actual dashboard state — check it directly and flip it
   per your own testing needs; flip it back on before any real users sign up.
 
+## Recording
+
+- Recording/playback uses **`expo-audio`**, not `expo-av` (deprecated, and the library it's easy to
+  reach for out of habit — see Conventions below).
+- The recording screen lives at `src/app/(tabs)/index.tsx` (the Home tab) — it replaces the
+  template's placeholder content rather than living at a separate route, since recording is the
+  core home-screen action per the project plan. `RecordingPlayback`, the play/pause + progress UI
+  shown after stopping, is a private component in the same file; split it out only if another
+  screen needs it.
+- Flow: `useAudioRecorder(RecordingPresets.HIGH_QUALITY)` + `useAudioRecorderState` drive
+  record/stop and the elapsed-time counter; on stop, `recorder.uri` (the local file URI) is kept
+  in state and handed to a `useAudioPlayer`-backed playback view. Discarding just clears that
+  state, which unmounts the playback view and releases its player. Nothing is uploaded yet — the
+  local URI is only shown on screen (`ThemedText type="code"`), which is the hook Step 5 will
+  build on.
+- Mic permission is requested lazily on the first record tap
+  (`AudioModule.requestRecordingPermissionsAsync()`), not on screen load; a denied/blocked state
+  shows an in-UI message instead of failing silently, with a link to the Settings app if the OS
+  says it can't be asked again (`response.canAskAgain`).
+- iOS permission copy (`NSMicrophoneUsageDescription`) is set via the `expo-audio` config plugin's
+  `microphonePermission` option in `app.json` (`expo.plugins`), not a manually-added
+  `ios.infoPlist` entry — the plugin writes it into `Info.plist` for you. **Note:** like all config
+  plugins, this only takes effect on a native prebuild (EAS Build / dev client); running through
+  Expo Go, the mic permission prompt and its copy come from the Expo Go app itself, not this
+  project — worth knowing if the permission text looks generic while testing.
+
 ## Conventions
 
 - Use `expo-audio` for recording/playback — **not** `expo-av` (deprecated).
