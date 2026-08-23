@@ -63,6 +63,30 @@ key only, bypassing RLS. Storage (`recordings-audio` bucket, private) mirrors th
 live under a `{user_id}/...` path prefix, enforced by storage RLS policies in
 `0002_storage_bucket.sql`.
 
+## Auth
+
+- The auth context/provider lives at `src/lib/auth-context.tsx` (`AuthProvider` + `useAuth()`).
+  It wraps the whole app from `src/app/_layout.tsx`, holds `session`/`user`/`loading` state via
+  Supabase's `onAuthStateChange`, and exposes `signUp` / `signIn` / `signOut` — these already
+  convert raw Supabase `AuthError`s into a plain `error: string | null` for screens to show
+  directly, so screens should never touch `error.message` from a raw Supabase call themselves.
+- Routes are split into two Expo Router groups off `src/app/`: `(tabs)/` (the real app, currently
+  just Home + Explore) and two ungrouped screens, `login.tsx` and `signup.tsx`. `src/app/_layout.tsx`
+  reads `useAuth()` and renders one group or the other via `Stack.Protected` — signed-in users only
+  ever see `(tabs)`, signed-out users only ever see login/signup, and a loading screen covers the
+  initial session check on boot. **Future screens that only make sense when logged in belong under
+  `(tabs)/`** (or a new sibling group gated the same way) — don't add ad hoc auth checks inside
+  individual screens, the routing layer already handles it.
+- Basic client-side validation (non-empty, email shape, min password length) lives in
+  `src/lib/auth-validation.ts`, shared by both screens.
+- Email confirmation is **on by default** for new hosted Supabase projects — an account created
+  via `signUp` gets no session back until the confirmation link is clicked, which `auth-context`
+  surfaces as `needsEmailConfirmation` (the signup screen shows a "check your email" notice in
+  that case rather than silently doing nothing). To turn it off for solo/local testing: Supabase
+  dashboard → **Authentication → Sign In / Providers → Email**, toggle off **Confirm email**. This
+  wasn't verified against this project's actual dashboard state — check it directly and flip it
+  per your own testing needs; flip it back on before any real users sign up.
+
 ## Conventions
 
 - Use `expo-audio` for recording/playback — **not** `expo-av` (deprecated).
