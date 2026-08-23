@@ -71,7 +71,7 @@ live under a `{user_id}/...` path prefix, enforced by storage RLS policies in
   convert raw Supabase `AuthError`s into a plain `error: string | null` for screens to show
   directly, so screens should never touch `error.message` from a raw Supabase call themselves.
 - Routes are split into two Expo Router groups off `src/app/`: `(tabs)/` (the real app, currently
-  just Home + Explore) and two ungrouped screens, `login.tsx` and `signup.tsx`. `src/app/_layout.tsx`
+  Home + History) and two ungrouped screens, `login.tsx` and `signup.tsx`. `src/app/_layout.tsx`
   reads `useAuth()` and renders one group or the other via `Stack.Protected` — signed-in users only
   ever see `(tabs)`, signed-out users only ever see login/signup, and a loading screen covers the
   initial session check on boot. **Future screens that only make sense when logged in belong under
@@ -141,6 +141,38 @@ live under a `{user_id}/...` path prefix, enforced by storage RLS policies in
 - Mode/question are hardcoded (`mode: 'miscellaneous'`, `question: null`) until Phase 4 adds real
   mode selection — this is the only combination the `recordings.mode` check constraint allows
   without that UI.
+
+## History
+
+- Lives at `src/app/(tabs)/history.tsx` — this **replaces the scaffold's placeholder "Explore"
+  tab** rather than adding a third tab (`app-tabs.tsx` and `app-tabs.web.tsx` were updated
+  accordingly: `NativeTabs.Trigger`/`TabTrigger` name and route both renamed `explore` →
+  `history`). The tab still reuses the scaffold's `explore.png` icon — there's no dedicated
+  history icon asset yet; swap it whenever one exists.
+- Query logic is `fetchRecordings()` in `src/lib/recordings.ts`, alongside the upload logic —
+  selects `id, mode, status, created_at` for the current user ordered by `created_at desc`. It
+  only selects those four columns; widen it (or use `select('*')`) once Phase 3's detail view
+  needs `transcript`/`feedback`/`metrics` too.
+- **What it shows right now, deliberately sparse**: date/time, mode, and status per row in a flat
+  list — no transcript/feedback (Phase 2 doesn't generate any yet), and rows aren't tappable
+  (Phase 3 adds the detail view). Every row currently reads `miscellaneous` / `pending` because
+  that's all Upload can produce before Phase 2's processing pipeline and Phase 4's mode selection
+  exist — this is expected, not a bug, until those phases land.
+- Refresh: the list refetches on every focus (`useFocusEffect`, not a mount-only effect) so
+  landing here from a fresh upload — or tabbing back after a second recording — always shows
+  current data, since tab screens stay mounted in the background rather than remounting on
+  switch. Pull-to-refresh (`RefreshControl`) covers the same case manually. Both call the same
+  `fetchRecordings()` — no real-time subscription yet; that's more naturally Phase 2's job, once
+  there's a `status` that actually changes after the row is created.
+- Loading (first fetch only, not on subsequent focus refetches — those update the list silently
+  once data arrives so switching tabs doesn't re-blank it), empty, and fetch-error (with a Retry
+  action, and without clearing any previously-loaded list) states are all handled explicitly.
+- Upload → History handoff: on a successful upload, the Home tab (`src/app/(tabs)/index.tsx`)
+  calls `router.navigate('/history')` right after setting its own "done" state, so the user lands
+  on the updated list immediately instead of stopping at a static confirmation. The Home tab's own
+  "done" confirmation state is intentionally left in place (not reset) underneath — tabbing back
+  to Home still shows "Uploaded" + the recording id + "Record another", rather than silently
+  resetting a screen the user didn't touch.
 
 ## Conventions
 

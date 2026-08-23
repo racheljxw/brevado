@@ -7,6 +7,7 @@ import {
   useAudioRecorder,
   useAudioRecorderState,
 } from 'expo-audio';
+import { useRouter } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Animated, Linking, Platform, Pressable, StyleSheet, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -142,6 +143,7 @@ function RecordingPlayback({
 export default function RecordScreen() {
   const { user, signOut } = useAuth();
   const theme = useTheme();
+  const router = useRouter();
 
   const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
   const recorderState = useAudioRecorderState(recorder, 200);
@@ -231,6 +233,11 @@ export default function RecordScreen() {
       const result = await uploadRecording({ userId: user.id, localUri: recordedUri, audioPath: path });
       setUploadedRecordingId(result.id);
       setUploadState('done');
+      // Step 6: land on the history list so the new recording is visible
+      // immediately, instead of stopping at a dead-end confirmation. This
+      // screen's own state is left as "done" (not reset) so tabbing back
+      // here still shows the accurate confirmation + "Record another".
+      router.navigate('/history');
     } catch (err) {
       const stage = err instanceof RecordingUploadError ? err.stage : 'upload';
       const message = err instanceof Error ? err.message : 'Something went wrong.';

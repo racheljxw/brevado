@@ -25,6 +25,27 @@ export class RecordingUploadError extends Error {
   }
 }
 
+// Only the columns the Step 6 history list needs. Widen this (or select('*'))
+// once Phase 3's detail view needs transcript/feedback/metrics too.
+export type RecordingRow = {
+  id: string;
+  mode: string;
+  status: string;
+  created_at: string;
+};
+
+export async function fetchRecordings(userId: string): Promise<RecordingRow[]> {
+  const { data, error } = await supabase
+    .from('recordings')
+    .select('id, mode, status, created_at')
+    .eq('user_id', userId)
+    .order('created_at', { ascending: false });
+  if (error) {
+    throw error;
+  }
+  return data ?? [];
+}
+
 function extensionOf(localUri: string): string {
   const match = localUri.match(/\.([a-zA-Z0-9]+)$/);
   return match ? match[1].toLowerCase() : 'm4a';

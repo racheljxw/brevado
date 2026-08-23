@@ -17,8 +17,9 @@ export default function AppTabs() {
         <Icon src={require('@/assets/images/tabIcons/home.png')} />
       </NativeTabs.Trigger>
 
-      <NativeTabs.Trigger name="explore">
-        <Label>Explore</Label>
+      <NativeTabs.Trigger name="history">
+        <Label>History</Label>
+        {/* Reusing the scaffold's "explore" icon — no dedicated history icon asset yet. */}
         <Icon src={require('@/assets/images/tabIcons/explore.png')} />
       </NativeTabs.Trigger>
     </NativeTabs>
