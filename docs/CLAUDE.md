@@ -98,10 +98,9 @@ live under a `{user_id}/...` path prefix, enforced by storage RLS policies in
   screen needs it.
 - Flow: `useAudioRecorder(RecordingPresets.HIGH_QUALITY)` + `useAudioRecorderState` drive
   record/stop and the elapsed-time counter; on stop, `recorder.uri` (the local file URI) is kept
-  in state and handed to a `useAudioPlayer`-backed playback view. Discarding just clears that
-  state, which unmounts the playback view and releases its player. Nothing is uploaded yet — the
-  local URI is only shown on screen (`ThemedText type="code"`), which is the hook Step 5 will
-  build on.
+  in state and handed to a `useAudioPlayer`-backed playback view, which now also carries the
+  Keep/Discard decision point that Upload (below) hooks into. Discarding clears that state, which
+  unmounts the playback view and releases its player.
 - Mic permission is requested lazily on the first record tap
   (`AudioModule.requestRecordingPermissionsAsync()`), not on screen load; a denied/blocked state
   shows an in-UI message instead of failing silently, with a link to the Settings app if the OS
@@ -112,6 +111,36 @@ live under a `{user_id}/...` path prefix, enforced by storage RLS policies in
   plugins, this only takes effect on a native prebuild (EAS Build / dev client); running through
   Expo Go, the mic permission prompt and its copy come from the Expo Go app itself, not this
   project — worth knowing if the permission text looks generic while testing.
+
+## Upload
+
+- Upload logic lives in `src/lib/recordings.ts` (`uploadRecording`, `buildAudioPath`,
+  `RecordingUploadError`) — separated from the recording screen so Step 6's history list and
+  Phase 2's processing pipeline have one place to read/reuse this instead of duplicating it. The
+  screen only owns UI state; it never talks to Storage or the DB directly.
+- Trigger: the "Keep & upload" button on the Step 4 playback screen (`RecordingPlayback` in
+  `src/app/(tabs)/index.tsx`) — upload never happens on every stop, only once the user has
+  reviewed playback and explicitly kept the take. "Discard & re-record" bypasses upload entirely.
+- Storage path: `{user_id}/{timestamp}.{ext}` in the `recordings-audio` bucket (`buildAudioPath`)
+  — storage RLS (`0002_storage_bucket.sql`) only checks that the first path segment matches
+  `auth.uid()`, so a timestamp is sufficient as the filename; it doesn't need to match the
+  `recordings.id` the DB later generates.
+- **Order of operations: upload to Storage first, then insert the `recordings` row with the
+  resulting `audio_path`** — not insert-then-update. A `recordings` row is only ever created once
+  its audio is durably stored, so an interrupted/failed upload can never leave a stray `pending`
+  row with no audio behind it (this is what Step 5 required — no orphaned rows on upload
+  failure). The tradeoff: if the upload succeeds but the insert itself then fails, the file is
+  orphaned in Storage with no DB row pointing at it. That's accepted as the lesser problem — an
+  untracked file to clean up later beats a broken row visible to the user — and Step 6's history
+  list won't surface it since it only lists real rows.
+- Failure/retry: `RecordingUploadError` carries which stage failed (`'upload'` vs `'insert'`) so
+  the error message can say whether the audio itself is already safe. The screen keeps the
+  generated `audio_path` in a ref across retries (`upsert: true` on the Storage call) so retrying
+  overwrites the same object instead of accumulating duplicates; since the DB row is only
+  inserted after a successful upload, retrying can't create duplicate rows either.
+- Mode/question are hardcoded (`mode: 'miscellaneous'`, `question: null`) until Phase 4 adds real
+  mode selection — this is the only combination the `recordings.mode` check constraint allows
+  without that UI.
 
 ## Conventions
 
