@@ -13,9 +13,10 @@ more context than what's here.
 ## Current phase
 
 **Phase 2 — AI pipeline, Step 1 (FastAPI skeleton) done.** Phase 1 (auth, recording UI, upload,
-minimal history) is complete. Phase 2 wires up Celery + Redis, Gemini transcription + feedback
-generation, deterministic metrics, and a processing status indicator (see plan Section 6) — only
-Step 1 of that (the bare FastAPI skeleton, deployed and reachable) exists so far; see
+minimal history) is complete. Phase 2 continues with Gemini transcription + feedback generation,
+deterministic metrics, and a processing status indicator, run via FastAPI's `BackgroundTasks` (see
+[Background processing](#background-processing)) — no queue/broker/worker setup needed. Only
+Step 1 of Phase 2 (the bare FastAPI skeleton, deployed and reachable) exists so far; see
 [Backend](#backend) below for exactly what does and doesn't exist yet. We're working
 phase-by-phase and step-by-step within a phase; don't reach ahead without being asked.
 
@@ -26,9 +27,8 @@ phase-by-phase and step-by-step within a phase; don't reach ahead without being 
 | Frontend | React Native + TypeScript (Expo), run via Expo Go | Mobile-first UI: recording (expo-audio), playback, history, dashboard. Free, no Mac needed to develop (EAS Build compiles in the cloud if ever needed) |
 | Auth | Supabase Auth | Account creation/login |
 | Database | Supabase Postgres | Users, recordings, transcripts, feedback, questions |
-| File storage | Supabase Storage | Audio files, subject to the 7-day retention policy |
-| API | Python (FastAPI) on Render | Handles uploads, enqueues background jobs, serves data to the frontend |
-| Task queue | Celery + Upstash Redis | Per-recording processing jobs, plus scheduled jobs (retention cleanup, v2 question generation) |
+| File storage | Supabase Storage | Audio files, capped per user (`MAX_RECORDINGS_PER_USER`) and manually deleted rather than time-expired |
+| API | Python (FastAPI) on Render | Handles uploads, serves data to the frontend, and runs background processing in-process via FastAPI's `BackgroundTasks` — no separate queue/broker/worker service |
 | AI | Gemini API (Flash model, free tier) | Transcription (native audio input) + feedback generation; question generation in v2 |
 | Hosting | Render (API only) | Frontend isn't web-hosted — it runs as an Expo project loaded through the Expo Go app; free-tier API subdomain, custom domain optional |
 
@@ -55,7 +55,14 @@ changes as a new numbered migration file rather than editing an applied one.
 
 - `recordings` — one row per practice session: mode, question/topic, `audio_path`, `status`
   (`pending`/`processing`/`done`/`failed`), `transcript`, `feedback`, `metrics` (jsonb, Phase 2),
-  `saved`/`audio_deleted` flags, `report_generated_at` (drives the 7-day retention window).
+  `favorite`/`audio_deleted` flags. `favorite` is a personal star marker (renamed from `saved`,
+  which used to mean "exempt from the old 7-day auto-delete") — it's no longer tied to any
+  deletion behavior. `report_generated_at` has been removed — it only existed to compute the old
+  7-day window. Retention is now a per-user cap, `MAX_RECORDINGS_PER_USER = 30` (counting rows
+  where `audio_deleted = false`), defined in `backend/app/config.py` — the constant exists but
+  enforcement logic (checked on new-recording start) isn't wired up yet, a later step. Deletion is
+  manual only (bin icon per history row), and only ever clears `audio_path`/sets
+  `audio_deleted = true`; it never removes the row.
 - `questions` — stub only (`id`, `mode`, `prompt_text`, `created_at`), reserved shape for the
   Phase 4 hardcoded pool and Phase 5 dynamic pool / re-practice. Not queried anywhere yet.
 
@@ -207,10 +214,27 @@ live under a `{user_id}/...` path prefix, enforced by storage RLS policies in
   `/health` and expect `{"status": "ok"}`. Free tier sleeps after inactivity, so the first hit
   after a while can take ~30s to wake up.
 - **What exists after Step 1, and what doesn't yet:** just the FastAPI app and the `/health`
-  endpoint, deployed and reachable. No Celery, no Redis, no Gemini calls, no upload/processing
-  endpoints, nothing that talks to Supabase — the backend "does nothing" at this point by design.
-  Those land in Step 2 onward within Phase 2; don't be surprised the API has no real endpoints
-  yet.
+  endpoint, deployed and reachable. No Gemini calls, no upload/processing endpoints, nothing that
+  talks to Supabase — the backend "does nothing" at this point by design. Those land in Step 2
+  onward within Phase 2, using `BackgroundTasks` (see [Background processing](#background-processing))
+  rather than any separate queue/worker; don't be surprised the API has no real endpoints yet.
+
+## Background processing
+
+- No task queue, broker, or worker process — background work (transcription + feedback
+  generation) runs via FastAPI's built-in `BackgroundTasks`, in the same process as the web
+  service that serves everything else. Chosen because Render has no free tier for a background
+  worker (minimum ~$7/month), and this project stays at $0/month at its current scale (builder +
+  a few test accounts).
+- Trigger point: the upload endpoint (Phase 2, not yet built) creates/updates the `recordings` row
+  first, then schedules a `BackgroundTasks` call to do the Gemini transcription + feedback work —
+  same request/response cycle, no separate dispatch step.
+- Retry: one inline retry on failure (plain try/except around the Gemini call), not a queue retry
+  policy. If the retry also fails, the recording is left with no report; the existing
+  "Regenerate report" 3-dot-menu flow (Phase 3) covers retrying again later.
+- The same pattern (no cron) applies to the v2 question-pool top-up: it fires from a
+  `BackgroundTasks` call triggered by mode selection running low on unused questions, not a
+  scheduled job. See plan Section 5's "Question pool" subsection.
 
 ## Conventions
 
@@ -222,10 +246,10 @@ live under a `{user_id}/...` path prefix, enforced by storage RLS policies in
   what the installed Expo Go app on the test iPhone supports — never run `expo install --fix`,
   `npx expo upgrade`, or otherwise change Expo/React Native/related package versions without
   being asked first, even to fix a peer-dependency warning.
-- The backend (FastAPI + Celery, on Render) is a **separate Python project** living in
-  [backend/](../backend/), a sibling directory to `src/` in this same repo — not part of this
-  Expo/TypeScript project, and don't mix backend code into `src/`. See [Backend](#backend) above
-  for how to run/deploy it.
+- The backend (FastAPI on Render, background work via `BackgroundTasks`) is a **separate Python
+  project** living in [backend/](../backend/), a sibling directory to `src/` in this same repo —
+  not part of this Expo/TypeScript project, and don't mix backend code into `src/`. See
+  [Backend](#backend) above for how to run/deploy it.
 - Routing: **Expo Router**, file-based under `src/app/` (chosen over React Navigation — smaller
   boilerplate and better fit for this app's shallow, mostly-linear screen flow: home → record →
   processing → history/detail. See `src/app/` for routes, `src/components/` for shared UI,

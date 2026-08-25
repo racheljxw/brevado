@@ -35,7 +35,7 @@ create policy "Users can update their own audio files"
     and (storage.foldername(name))[1] = auth.uid()::text
   );
 
--- No delete policy: the 7-day retention cleanup runs from the backend with the
--- service role key, which bypasses RLS, so client-side delete access isn't
--- needed for that flow. Add one deliberately if a manual "delete recording"
--- feature shows up.
+-- No delete policy: manual audio delete (bin icon per history row) runs from
+-- the backend with the service role key, which bypasses RLS, so client-side
+-- delete access isn't needed for that flow. Add one deliberately if audio
+-- deletion ever needs to happen directly from the client instead.

@@ -23,3 +23,10 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+# Per-user audio retention cap: how many recordings a user may have with
+# audio_deleted = false at once. Not an env var — it's an app constant, not
+# meant to vary by deployment. Unused as of this pass; the enforcement
+# logic (checked when a user starts a new recording, per
+# docs/PROJECT_PLAN.md Section 5 "Audio cap check") lands in a later step.
+MAX_RECORDINGS_PER_USER = 30

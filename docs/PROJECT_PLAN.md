@@ -48,9 +48,12 @@ Platform: React Native app (via Expo), iPhone-first, run through the free Expo G
 - All past sessions (recording, mode, question/topic, transcript, feedback) are viewable, sorted by date.
 
 **Audio retention**
-- Once a report successfully generates, the audio auto-deletes 7 days later; the transcript and feedback are kept permanently.
-- An in-app badge warns of pending deletion starting 2 days out.
-- A manual "Save" button keeps audio indefinitely.
+- No time-based auto-deletion. Instead, a per-user cap (`MAX_RECORDINGS_PER_USER = 30`, counting
+  only recordings where `audio_deleted = false`) bounds how much audio can be stored at once.
+- Deletion is manual only: a bin icon per history row deletes that recording's audio file (keeps
+  the DB row, transcript, and feedback intact, sets `audio_deleted = true`, and frees a cap slot).
+- A `favorite` flag (star icon) lets the user mark recordings personally — it's just a marker, not
+  tied to any deletion behavior.
 - A manual "Download" button exports the audio file to the phone via native file APIs (expo-file-system + the share sheet) — reliable in a way that browser-based blob downloads are not on iOS.
 
 **Auth**
@@ -70,17 +73,20 @@ Platform: React Native app (via Expo), iPhone-first, run through the free Expo G
 | Frontend | React Native + TypeScript (Expo), run via Expo Go | Mobile-first UI: recording (expo-audio), playback, history, dashboard. Free, no Mac needed to develop (EAS Build compiles in the cloud if ever needed) |
 | Auth | Supabase Auth | Account creation/login |
 | Database | Supabase Postgres | Users, recordings, transcripts, feedback, questions |
-| File storage | Supabase Storage | Audio files, subject to the 7-day retention policy |
-| API | Python (FastAPI) on Render | Handles uploads, enqueues background jobs, serves data to the frontend |
-| Task queue | Celery + Upstash Redis | Per-recording processing jobs, plus scheduled jobs (retention cleanup, v2 question generation) |
+| File storage | Supabase Storage | Audio files, capped per user (`MAX_RECORDINGS_PER_USER`) and manually deleted rather than time-expired |
+| API | Python (FastAPI) on Render | Handles uploads, serves data to the frontend, and runs background processing in-process via FastAPI's `BackgroundTasks` — no separate queue/broker/worker service |
 | AI | Gemini API (Flash model, free tier) | Transcription (native audio input) + feedback generation; question generation in v2 |
 | Hosting | Render (API only) | Frontend isn't web-hosted — it runs as an Expo project loaded through the Expo Go app; free-tier API subdomain, custom domain optional |
 
 ## 5. How It Works
 ### Recording → feedback pipeline
 1. User selects mode + question/topic (or free topic for miscellaneous) and records.
-2. Audio uploads to Supabase Storage; a recording row is created (status: processing).
-3. A Celery task sends the audio directly to Gemini, requesting a transcript.
+2. Audio uploads to Supabase Storage; a recording row is created (status: processing), and the
+   upload endpoint fires a FastAPI `BackgroundTask` to run processing in-process — no separate
+   queue/worker.
+3. The background task sends the audio directly to Gemini, requesting a transcript. On failure it
+   retries once inline (try/except); if that also fails, the recording is left with no report and
+   the existing "Regenerate report" flow (3-dot menu) takes over.
 4. Code computes deterministic metrics from the transcript (filler words, WPM, repetition).
 5. A second Gemini call generates mode-specific feedback using the transcript, metrics, and the original question/topic as context.
 6. The recording row updates to done with transcript, metrics, and feedback attached.
@@ -92,17 +98,23 @@ Note: since mode is now selected up front (not detected from spoken keywords), t
 - v1: A small hardcoded pool (~20–30 prompts per mode). On session start, pick randomly from the pool, excluding only the immediately previous question (no back-to-back repeats; repeats otherwise fine). No AI cost, no scheduled jobs required.
 - v2: Add an answered_questions table (user, question, recording, date). This single table does double duty:
   - Re-practice mode — browse previously answered questions and re-record against one, for free.
-  - Growing pool — a weekly Celery Beat job checks how many unused questions remain per mode; if running low, it asks Gemini to generate a new batch, explicitly prompted with the existing pool to avoid near-duplicates. This keeps AI usage to a handful of calls per week rather than per recording.
+  - Growing pool — event-driven, not scheduled: when a user selects a mode, check the
+    unused-question count for that mode against `answered_questions`; if none remain, fire a
+    `BackgroundTasks` call to Gemini to generate a new batch, explicitly prompted with the
+    existing pool to avoid near-duplicates. No cron, no weekly job — generation only happens when
+    a user is actually about to run out.
 
-### Audio retention job
-A scheduled Celery task runs daily:
-- Finds recordings with a successful report, past their 7-day mark, and not manually saved → deletes the audio file (keeps the DB row, transcript, and feedback).
-- Flags recordings entering their 2-day warning window so the frontend can show the deletion badge.
+### Audio cap check
+No scheduled job. When a user starts a new recording, the app checks their count of recordings
+where `audio_deleted = false` against the `MAX_RECORDINGS_PER_USER` cap (30); if at the cap, the
+user is prompted to free a slot by manually deleting an old recording's audio (bin icon in
+History) before continuing. Manual delete removes only the Storage object and sets
+`audio_deleted = true` — the DB row, transcript, and feedback are kept permanently either way.
 
 ## 6. Implementation Phases
 Rather than a dated timeline, this is scoped as generic phases you can pick up in whatever time you have available:
 - **Phase 1 — Foundation** Auth, basic recording UI, upload to storage, minimal history list (no AI yet). Test recording + playback on an actual iPhone via Expo Go early in this phase, since it's the foundation everything else builds on.
-- **Phase 2 — AI pipeline** Wire up Celery + Redis, Gemini transcription + feedback generation, deterministic metrics, processing status indicator.
+- **Phase 2 — AI pipeline** Gemini transcription + feedback generation, deterministic metrics, processing status indicator.
 - **Phase 3 — History, retention & retry** Full history view (audio + transcript + feedback per session), retry/regenerate logic, 7-day deletion job, save/download buttons, deletion warning badge.
 - **Phase 4 — v1 polish** Hardcoded question pool + mode selection flow, custom topic input, end-to-end testing on an actual iPhone via Expo Go.
 - **Phase 5 — v2** Criteria-based scoring, progress charts, streak calendar, re-practice mode, dynamic question pool + weekly generation job.
@@ -112,9 +124,8 @@ At current scope (builder + a few test accounts), this is realistically $0/month
 | Service | Free tier | Fit |
 |---|---|---|
 | Expo / Expo Go | Free | ✅ no Apple Developer account needed; EAS Build free tier covers occasional cloud builds if ever required |
-| Render (API) | Free web service | ✅ (sleeps when idle — fine at this usage level) |
-| Upstash Redis | Free tier | ✅ trivial usage |
-| Supabase (Auth + DB + Storage) | Free tier | ✅ — worth monitoring storage as audio accumulates, though the 7-day auto-delete significantly limits long-term growth |
+| Render (API) | Free web service | ✅ (sleeps when idle — fine at this usage level); background processing runs in this same free web service via `BackgroundTasks`, so no separate paid worker service is needed |
+| Supabase (Auth + DB + Storage) | Free tier | ✅ — worth monitoring storage as audio accumulates; the per-user `MAX_RECORDINGS_PER_USER` cap plus manual delete bounds long-term growth instead of a time-based auto-delete |
 | Gemini API | Flash models, free tier | ✅ no card required, generous daily request allowance, comfortably covers daily personal use |
 
 Optional future costs:
