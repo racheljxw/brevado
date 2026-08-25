@@ -1,21 +1,21 @@
 """
 Background processing for a recording.
 
-*** Phase 2 Step 4: deterministic metrics. Feedback is still a stub. ***
+*** Phase 2 Step 5: the full pipeline is now real — no stubs remain. ***
 `process_recording` downloads the recording's audio from Supabase Storage
 once, sends it to Gemini (native audio input) for a real transcript, then
 computes deterministic metrics (filler-word rate, words per minute,
 repetition — see `app/services/metrics.py`) from that transcript and the
-same audio bytes, no second download or Gemini call involved. Feedback
-generation is deliberately left as stub text — that's Step 5, kept out of
-this step so transcription/metrics could be tested in isolation first (see
-docs/CLAUDE.md's "AI processing endpoint" and "Metrics" sections).
-Remaining stub/TODO work:
-  - Step 5: real Gemini feedback generation call
+same audio bytes, then sends the transcript, metrics, mode, and question to
+Gemini again for real mode-aware feedback (see `app/services/feedback.py`)
+— no second download involved anywhere in this. Each stage's result is
+written to the row as soon as it succeeds (transcript, then metrics), so a
+later stage failing can never lose earlier, already-successful work.
+Remaining TODO work:
   - Step 6: the one-inline-retry failure policy described in
     docs/PROJECT_PLAN.md Section 5 ("On failure it retries once inline") —
-    today a transcription failure marks the recording `failed` on the
-    first error, no retry yet.
+    today any stage's failure marks the recording `failed` on the first
+    error, no retry yet.
 
 This runs as a FastAPI `BackgroundTasks` callback, i.e. after the request
 that scheduled it has already returned a response — there's no HTTP request
@@ -30,6 +30,7 @@ from google.genai.errors import APIError
 
 from app.config import RECORDINGS_BUCKET, settings
 from app.gemini_client import get_gemini_client
+from app.services.feedback import FeedbackGenerationError, generate_feedback
 from app.services.metrics import compute_metrics
 from app.supabase_client import get_service_client
 
@@ -60,7 +61,7 @@ class TranscriptionError(Exception):
     Covers: the audio failing to download, the Gemini call itself erroring, and a
     technically-successful Gemini response with no usable transcript text. Caught
     specifically in `process_recording` so a bad transcript can never fall through to
-    getting a `done` status with stub feedback attached.
+    metrics/feedback generation and a `done` status.
     """
 
 
@@ -137,7 +138,7 @@ def process_recording(recording_id: str) -> None:
 
         result = (
             client.table("recordings")
-            .select("audio_path")
+            .select("audio_path, mode, question")
             .eq("id", recording_id)
             .maybe_single()
             .execute()
@@ -146,6 +147,8 @@ def process_recording(recording_id: str) -> None:
         audio_path = row.get("audio_path") if row else None
         if not audio_path:
             raise TranscriptionError(f"Recording {recording_id} has no audio_path to transcribe.")
+        mode = row.get("mode") if row else None
+        question = row.get("question") if row else None
 
         mime_type = _mime_type_for(audio_path)
         audio_bytes = _download_audio(audio_path)
@@ -163,28 +166,40 @@ def process_recording(recording_id: str) -> None:
             # Deliberately lenient, not the stricter "fail the recording" option: a
             # good transcript is the expensive/valuable part (real Gemini call,
             # user's actual speech) and metrics are a derived nice-to-have for the
-            # Step 5 feedback prompt — losing metrics is a much smaller loss than
+            # feedback prompt below — losing metrics is a much smaller loss than
             # losing a transcript over what's likely a duration-parsing edge case.
             # `metrics` stays None here; `compute_metrics` itself already isolates
             # the one field (words_per_minute) that can legitimately fail on its
             # own, so reaching this branch means something more unexpected broke.
             logger.error("processing: metrics computation failed for recording %s: %s", recording_id, exc)
 
-        # Feedback generation is still a stub (Step 5) — `status: done` here means
-        # "done for what Steps 3-4 cover", not that the full pipeline ran. See
-        # module docstring.
+        # Store metrics immediately too, before attempting feedback generation —
+        # mirrors the transcript store above, so a feedback-generation failure below
+        # can never lose metrics that already succeeded (see
+        # docs/CLAUDE.md's "AI processing endpoint" section).
+        client.table("recordings").update({"metrics": metrics}).eq("id", recording_id).execute()
+
+        feedback = generate_feedback(transcript=transcript, metrics=metrics, mode=mode, question=question)
+
         client.table("recordings").update(
             {
                 "status": "done",
-                "metrics": metrics,
-                "feedback": "STUB - Step 5 will replace this",
+                "feedback": feedback,
             }
         ).eq("id", recording_id).execute()
     except TranscriptionError as exc:
         # Transcription-specific failure: logged distinctly from an unexpected/
         # infrastructure error below, but handled the same way either way — mark
-        # `failed` and stop, never write a `done` status with stub feedback attached.
+        # `failed` and stop before metrics/feedback are ever attempted.
         logger.error("processing: recording %s failed to transcribe: %s", recording_id, exc)
+        client.table("recordings").update({"status": "failed"}).eq("id", recording_id).execute()
+    except FeedbackGenerationError as exc:
+        # Feedback-specific failure: the transcript and metrics steps above already
+        # wrote their results to the row before this ran, so this branch only ever
+        # touches `status` — the good partial work (transcript, metrics) is never
+        # lost or overwritten, matching the same principle as the transcription
+        # failure branch above. See docs/CLAUDE.md's "AI processing endpoint" section.
+        logger.error("processing: recording %s failed to generate feedback: %s", recording_id, exc)
         client.table("recordings").update({"status": "failed"}).eq("id", recording_id).execute()
     except Exception as exc:
         # Not the real retry policy (see module docstring, Step 6) — just prevents an

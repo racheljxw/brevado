@@ -12,9 +12,10 @@ used here.
 that module and docs/CLAUDE.md's "AI processing endpoint" section for where
 it's used and where to get one.
 
-`gemini_model` is the model id used for the transcription call in
-`app/services/processing.py` (and will be reused for feedback generation in
-Step 5). Kept as a setting rather than a hardcoded string because Google
+`gemini_model` is the model id used for both the transcription call
+(`app/services/processing.py`) and the feedback generation call
+(`app/services/feedback.py`) — one model id for the whole pipeline. Kept
+as a setting rather than a hardcoded string because Google
 retires/renames Gemini model ids over time — "gemini-2.5-flash" was already
 rejected with a 404 telling callers to switch to "gemini-3.6-flash" during
 Step 3 testing (2026-08-25), see docs/CLAUDE.md's "AI processing endpoint"

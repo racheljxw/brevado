@@ -4,8 +4,8 @@ words-per-minute, the source audio) — no Gemini calls in this module. Per
 docs/PROJECT_PLAN.md Section 3 ("Processing & feedback"), these are computed
 in code and fed into the feedback prompt as grounding rather than left to
 the LLM to eyeball, so they need to be right on their own, independent of
-any AI call. Step 5 will pass this module's output into the feedback
-prompt as context.
+any AI call. As of Step 5, `app/services/feedback.py` passes this module's
+output into the feedback prompt as grounding context.
 
 Kept as its own module rather than folded into `processing.py` — this is
 pure text/audio-metadata logic with no Supabase/Gemini/network calls of its
@@ -17,7 +17,7 @@ Output shape (stored as-is into `recordings.metrics` jsonb):
         "filler_word_rate": 0.08,      # float 0.0-1.0, NOT a percentage — see compute_filler_word_rate
         "words_per_minute": 142,       # int, or None if audio duration couldn't be determined
         "repetition_count": 3,         # int, count of immediate word/phrase repeats — see compute_repetition_count
-        "word_count": 210,             # int, included since both fields above are derived from it and Step 5 / Phase 5 scoring may want it directly
+        "word_count": 210,             # int, included since both fields above are derived from it and the feedback prompt / Phase 5 scoring may want it directly
     }
 """
 

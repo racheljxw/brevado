@@ -54,8 +54,8 @@ def start_processing(
             detail=f"Recording is already '{recording['status']}', not 'pending' — refusing to reprocess.",
         )
 
-    # Returns immediately; the actual work (still a stub as of this step —
-    # see app/services/processing.py) runs after this response is sent.
+    # Returns immediately; the actual work (transcription, metrics, feedback — see
+    # app/services/processing.py) runs after this response is sent.
     background_tasks.add_task(process_recording, recording_id)
 
     return {"id": recording_id}
