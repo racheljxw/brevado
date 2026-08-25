@@ -1,7 +1,8 @@
 """
 Background processing for a recording.
 
-*** Phase 2 Step 5: the full pipeline is now real — no stubs remain. ***
+*** Phase 2 Step 6: the full pipeline is real and now retries once on
+failure — no stubs and no more "fail on the first error" remain. ***
 `process_recording` downloads the recording's audio from Supabase Storage
 once, sends it to Gemini (native audio input) for a real transcript, then
 computes deterministic metrics (filler-word rate, words per minute,
@@ -11,11 +12,21 @@ Gemini again for real mode-aware feedback (see `app/services/feedback.py`)
 — no second download involved anywhere in this. Each stage's result is
 written to the row as soon as it succeeds (transcript, then metrics), so a
 later stage failing can never lose earlier, already-successful work.
-Remaining TODO work:
-  - Step 6: the one-inline-retry failure policy described in
-    docs/PROJECT_PLAN.md Section 5 ("On failure it retries once inline") —
-    today any stage's failure marks the recording `failed` on the first
-    error, no retry yet.
+
+**Retry policy (Step 6, docs/PROJECT_PLAN.md Section 3 "Retry behavior"):**
+each of the two Gemini-calling stages — transcription (download + the
+transcribe call, via `_run_with_one_retry` in `process_recording`) and
+feedback generation — gets one immediate inline retry of *just that stage*
+if it raises `TranscriptionError`/`FeedbackGenerationError`, before the
+recording is marked `failed`. This is stage-level retry, not whole-pipeline
+retry: a feedback failure retries only the feedback call, reusing the
+transcript/metrics already computed and stored on the first pass, rather
+than re-downloading audio and burning a second transcription Gemini call
+for work that already succeeded. See `_run_with_one_retry`'s docstring for
+the full reasoning and `docs/CLAUDE.md`'s "Background processing" section
+for the project-level summary. Both attempts happen synchronously inside
+this same `BackgroundTasks` call — a caller polling `status` never sees an
+intermediate `failed` unless both attempts of a stage failed.
 
 This runs as a FastAPI `BackgroundTasks` callback, i.e. after the request
 that scheduled it has already returned a response — there's no HTTP request
@@ -24,6 +35,7 @@ than anything tied to the caller's bearer token.
 """
 
 import logging
+from typing import Callable, TypeVar
 
 from google.genai import types
 from google.genai.errors import APIError
@@ -35,6 +47,8 @@ from app.services.metrics import compute_metrics
 from app.supabase_client import get_service_client
 
 logger = logging.getLogger(__name__)
+
+T = TypeVar("T")
 
 # Gemini's documented native audio MIME types (ai.google.dev/gemini-api/docs/audio)
 # are audio/wav, audio/mp3, audio/aiff, audio/aac, audio/ogg, audio/flac — m4a isn't
@@ -130,6 +144,63 @@ def _transcribe(audio_bytes: bytes, mime_type: str) -> str:
     return transcript
 
 
+def _run_with_one_retry(stage_name: str, recording_id: str, fn: Callable[[], T]) -> T:
+    """Runs `fn()`, retrying it exactly once, immediately, if it raises
+    `TranscriptionError` or `FeedbackGenerationError` — the Step 6 retry policy from
+    docs/PROJECT_PLAN.md Section 3 ("On failure, the pipeline auto-retries once
+    immediately"). If `fn` succeeds on the retry, the caller never learns a first
+    attempt failed at all except via the logs — `status` never moves to `failed`. If
+    the retry also fails, that same exception propagates to the caller, who is
+    responsible for marking the recording `failed`.
+
+    Deliberately **stage-level**, not whole-pipeline: `fn` is expected to be just the
+    Gemini-calling unit that can fail (transcription's download+transcribe, or a bare
+    feedback generation call), not a re-run of the entire `process_recording` body.
+    This was the two options considered for Step 6:
+      - Retry the whole pipeline from scratch — simpler, but a feedback failure would
+        redo a successful transcription too, wasting a second transcription Gemini
+        call over audio that was already transcribed correctly.
+      - Retry only the failed stage, preserving already-succeeded stages — the
+        approach used here. It isn't meaningfully more complex than whole-pipeline
+        retry *because* the pipeline was already structured to store each stage's
+        result to the row as soon as it succeeds (see `process_recording` and
+        docs/CLAUDE.md's "Metrics"/"Feedback generation" sections) — that same
+        structure means a feedback retry can just reuse the transcript/metrics
+        already in hand rather than needing to fetch them back from the row.
+    A transcription-stage retry does re-download the audio (see `process_recording`)
+    rather than reusing bytes from a failed first attempt — that's a cheap Storage
+    round-trip, not a Gemini call, so it isn't the waste this policy is trying to
+    avoid; it also means a first-attempt download failure is retried too, not just a
+    first-attempt Gemini-call failure.
+
+    Only two log lines exist for this, deliberately worded to be unambiguous when
+    read later in Render's log stream: a first-attempt failure says "retrying once
+    immediately" and never appears if the retry then succeeds; a retry failure says
+    "retry also failed" and only appears once both attempts are exhausted. Before
+    Step 6 these were indistinguishable — every failure logged the same way whether
+    it was a first or only attempt.
+    """
+    try:
+        return fn()
+    except (TranscriptionError, FeedbackGenerationError) as exc:
+        logger.warning(
+            "processing: recording %s: %s failed on first attempt (%s) — retrying once immediately",
+            recording_id,
+            stage_name,
+            exc,
+        )
+        try:
+            return fn()
+        except (TranscriptionError, FeedbackGenerationError) as retry_exc:
+            logger.error(
+                "processing: recording %s: %s failed again on retry (%s) — giving up, marking failed",
+                recording_id,
+                stage_name,
+                retry_exc,
+            )
+            raise
+
+
 def process_recording(recording_id: str) -> None:
     client = get_service_client()
 
@@ -151,8 +222,13 @@ def process_recording(recording_id: str) -> None:
         question = row.get("question") if row else None
 
         mime_type = _mime_type_for(audio_path)
-        audio_bytes = _download_audio(audio_path)
-        transcript = _transcribe(audio_bytes, mime_type)
+
+        def _do_transcription() -> tuple[bytes, str]:
+            audio_bytes = _download_audio(audio_path)
+            transcript = _transcribe(audio_bytes, mime_type)
+            return audio_bytes, transcript
+
+        audio_bytes, transcript = _run_with_one_retry("transcription", recording_id, _do_transcription)
 
         # Store the transcript immediately, before touching metrics — a metrics bug
         # below must never be able to lose an already-successful transcript (see
@@ -179,7 +255,11 @@ def process_recording(recording_id: str) -> None:
         # docs/CLAUDE.md's "AI processing endpoint" section).
         client.table("recordings").update({"metrics": metrics}).eq("id", recording_id).execute()
 
-        feedback = generate_feedback(transcript=transcript, metrics=metrics, mode=mode, question=question)
+        feedback = _run_with_one_retry(
+            "feedback generation",
+            recording_id,
+            lambda: generate_feedback(transcript=transcript, metrics=metrics, mode=mode, question=question),
+        )
 
         client.table("recordings").update(
             {
@@ -188,22 +268,35 @@ def process_recording(recording_id: str) -> None:
             }
         ).eq("id", recording_id).execute()
     except TranscriptionError as exc:
-        # Transcription-specific failure: logged distinctly from an unexpected/
-        # infrastructure error below, but handled the same way either way — mark
-        # `failed` and stop before metrics/feedback are ever attempted.
-        logger.error("processing: recording %s failed to transcribe: %s", recording_id, exc)
+        # Reached only after `_run_with_one_retry` already tried transcription twice
+        # (see that function's own "retrying once immediately" / "failed again on
+        # retry" log lines above this one) — this is the terminal "give up" step:
+        # mark `failed` and stop before metrics/feedback are ever attempted. Also
+        # reached directly (no retry involved) for the missing-audio_path check
+        # above, which raises `TranscriptionError` outside of `_run_with_one_retry`.
+        logger.error(
+            "processing: recording %s: giving up after retry, marking failed to transcribe: %s",
+            recording_id,
+            exc,
+        )
         client.table("recordings").update({"status": "failed"}).eq("id", recording_id).execute()
     except FeedbackGenerationError as exc:
-        # Feedback-specific failure: the transcript and metrics steps above already
-        # wrote their results to the row before this ran, so this branch only ever
-        # touches `status` — the good partial work (transcript, metrics) is never
-        # lost or overwritten, matching the same principle as the transcription
-        # failure branch above. See docs/CLAUDE.md's "AI processing endpoint" section.
-        logger.error("processing: recording %s failed to generate feedback: %s", recording_id, exc)
+        # Reached only after `_run_with_one_retry` already tried feedback generation
+        # twice. The transcript and metrics steps above already wrote their results
+        # to the row before this ran, so this branch only ever touches `status` — the
+        # good partial work (transcript, metrics) is never lost or overwritten,
+        # matching the same principle as the transcription failure branch above. See
+        # docs/CLAUDE.md's "AI processing endpoint" section.
+        logger.error(
+            "processing: recording %s: giving up after retry, marking failed to generate feedback: %s",
+            recording_id,
+            exc,
+        )
         client.table("recordings").update({"status": "failed"}).eq("id", recording_id).execute()
     except Exception as exc:
-        # Not the real retry policy (see module docstring, Step 6) — just prevents an
-        # unexpected failure (e.g. a Supabase error) from leaving a row stuck at
-        # "processing" forever.
+        # Deliberately NOT retried (see `_run_with_one_retry`'s docstring): the Step 6
+        # retry policy targets flaky Gemini calls specifically, not every possible
+        # failure mode. This branch just prevents an unexpected failure (e.g. a
+        # Supabase read/write error) from leaving a row stuck at "processing" forever.
         logger.error("processing: recording %s failed unexpectedly: %s", recording_id, exc)
         client.table("recordings").update({"status": "failed"}).eq("id", recording_id).execute()
