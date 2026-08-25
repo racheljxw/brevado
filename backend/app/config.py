@@ -7,6 +7,10 @@ Render's dashboard env vars in production).
 touches Supabase goes through — see docs/CLAUDE.md's "AI processing
 endpoint" section for why the service role key specifically (not anon) is
 used here.
+
+`gemini_api_key` is read by `app/gemini_client.py` (Phase 2 Step 3) — see
+that module and docs/CLAUDE.md's "AI processing endpoint" section for where
+it's used and where to get one.
 """
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -19,6 +23,7 @@ class Settings(BaseSettings):
 
     supabase_url: str = ""
     supabase_service_role_key: str = ""
+    gemini_api_key: str = ""
 
 
 settings = Settings()
@@ -29,3 +34,11 @@ settings = Settings()
 # logic (checked when a user starts a new recording, per
 # docs/PROJECT_PLAN.md Section 5 "Audio cap check") lands in a later step.
 MAX_RECORDINGS_PER_USER = 30
+
+# Supabase Storage bucket recordings' audio lives in. Mirrors
+# RECORDINGS_BUCKET in src/lib/recordings.ts on the frontend — kept as a
+# separate constant here rather than shared, since this is a separate
+# Python project (see docs/CLAUDE.md's "Backend" section). Not an env var
+# for the same reason as MAX_RECORDINGS_PER_USER above: an app constant,
+# not something that varies by deployment.
+RECORDINGS_BUCKET = "recordings-audio"
