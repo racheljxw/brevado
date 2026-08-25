@@ -11,6 +11,15 @@ used here.
 `gemini_api_key` is read by `app/gemini_client.py` (Phase 2 Step 3) — see
 that module and docs/CLAUDE.md's "AI processing endpoint" section for where
 it's used and where to get one.
+
+`gemini_model` is the model id used for the transcription call in
+`app/services/processing.py` (and will be reused for feedback generation in
+Step 5). Kept as a setting rather than a hardcoded string because Google
+retires/renames Gemini model ids over time — "gemini-2.5-flash" was already
+rejected with a 404 telling callers to switch to "gemini-3.6-flash" during
+Step 3 testing (2026-08-25), see docs/CLAUDE.md's "AI processing endpoint"
+section. When that happens again, bump the default here (or set
+GEMINI_MODEL in .env/Render to override without a code change at all).
 """
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -24,6 +33,7 @@ class Settings(BaseSettings):
     supabase_url: str = ""
     supabase_service_role_key: str = ""
     gemini_api_key: str = ""
+    gemini_model: str = "gemini-3.6-flash"
 
 
 settings = Settings()

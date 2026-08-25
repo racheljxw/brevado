@@ -26,19 +26,11 @@ import logging
 from google.genai import types
 from google.genai.errors import APIError
 
-from app.config import RECORDINGS_BUCKET
+from app.config import RECORDINGS_BUCKET, settings
 from app.gemini_client import get_gemini_client
 from app.supabase_client import get_service_client
 
 logger = logging.getLogger(__name__)
-
-# Flash, per docs/PROJECT_PLAN.md Section 4's tech stack. Deliberately the
-# well-established "gemini-2.5-flash" rather than a newer-numbered Flash
-# release: it has confirmed native audio input support and a confirmed free
-# tier, which is what this step actually needs verified rather than assumed.
-# Worth revisiting if a newer Flash model is confirmed to support audio on
-# the free tier too.
-TRANSCRIPTION_MODEL = "gemini-2.5-flash"
 
 # Gemini's documented native audio MIME types (ai.google.dev/gemini-api/docs/audio)
 # are audio/wav, audio/mp3, audio/aiff, audio/aac, audio/ogg, audio/flac — m4a isn't
@@ -96,12 +88,12 @@ def _transcribe(audio_path: str) -> str:
         "processing: sending %d bytes (%s) to Gemini model %s for transcription",
         len(audio_bytes),
         mime_type,
-        TRANSCRIPTION_MODEL,
+        settings.gemini_model,
     )
 
     try:
         response = get_gemini_client().models.generate_content(
-            model=TRANSCRIPTION_MODEL,
+            model=settings.gemini_model,
             contents=[
                 "Transcribe this audio recording verbatim. Return only the spoken words as "
                 "plain text — no extra commentary, labels, timestamps, or formatting. If the "
