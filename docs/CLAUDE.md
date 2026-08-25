@@ -12,9 +12,12 @@ more context than what's here.
 
 ## Current phase
 
-**Phase 1 — Foundation.** Auth, basic recording UI, upload to storage, minimal history list (no
-AI yet). We're working phase-by-phase (see plan Section 6); don't reach ahead into later phases
-without being asked.
+**Phase 2 — AI pipeline, Step 1 (FastAPI skeleton) done.** Phase 1 (auth, recording UI, upload,
+minimal history) is complete. Phase 2 wires up Celery + Redis, Gemini transcription + feedback
+generation, deterministic metrics, and a processing status indicator (see plan Section 6) — only
+Step 1 of that (the bare FastAPI skeleton, deployed and reachable) exists so far; see
+[Backend](#backend) below for exactly what does and doesn't exist yet. We're working
+phase-by-phase and step-by-step within a phase; don't reach ahead without being asked.
 
 ## Tech stack
 
@@ -174,6 +177,41 @@ live under a `{user_id}/...` path prefix, enforced by storage RLS policies in
   to Home still shows "Uploaded" + the recording id + "Record another", rather than silently
   resetting a screen the user didn't touch.
 
+## Backend
+
+- Lives in [backend/](../backend/) — a sibling top-level directory in this same repo, alongside
+  `src/`, `docs/`, `supabase/`. It's a **separate Python project** (own venv, own dependencies,
+  own `.gitignore`) sharing git history with the Expo app rather than living in its own repo;
+  don't mix backend code into `src/` or frontend code into `backend/`.
+- Structure: a small package rather than a single file, since Phase 2 will grow this a lot —
+  `backend/app/main.py` creates the FastAPI app and includes routers from `backend/app/routers/`
+  (currently just `health.py`); `backend/app/config.py` holds a `pydantic-settings` `Settings`
+  object reading from `.env`. Add new endpoints as new router modules under `app/routers/`
+  rather than growing `main.py` directly.
+- Dependencies are pinned in `backend/requirements.txt` (plain pip, not `pyproject.toml` — this
+  is a small service without a package to publish, so `pip install -r requirements.txt` is the
+  simplest thing that works and matches Render's default Python build).
+- Config: `backend/.env` (gitignored; see `backend/.env.example`) holds `PORT` (local dev only —
+  Render injects its own `$PORT`) plus `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY` placeholders.
+  Those two are **unused as of Step 1** — reserved for whenever the processing pipeline needs to
+  read/write `recordings` rows and Storage objects directly, bypassing RLS.
+- Run locally: from `backend/`, `python -m venv .venv`, activate it, `pip install -r
+  requirements.txt`, then `uvicorn app.main:app --reload`. Confirm it's alive by hitting
+  `GET http://localhost:8000/health` → `{"status": "ok"}`.
+- Deploy target: Render, as a free-tier Python web service, configured via the `render.yaml`
+  Blueprint at `backend/render.yaml` (chosen over manual dashboard setup so the service config
+  lives in version control and Render re-syncs it automatically on push, rather than dashboard
+  clicks nobody remembers later). Live URL: `https://brevado-api.onrender.com` (exact subdomain
+  depends on what's available when the service is first created — check the Render dashboard for
+  the actual assigned URL). Confirm a deploy is alive the same way as local: hit that URL's
+  `/health` and expect `{"status": "ok"}`. Free tier sleeps after inactivity, so the first hit
+  after a while can take ~30s to wake up.
+- **What exists after Step 1, and what doesn't yet:** just the FastAPI app and the `/health`
+  endpoint, deployed and reachable. No Celery, no Redis, no Gemini calls, no upload/processing
+  endpoints, nothing that talks to Supabase — the backend "does nothing" at this point by design.
+  Those land in Step 2 onward within Phase 2; don't be surprised the API has no real endpoints
+  yet.
+
 ## Conventions
 
 - Use `expo-audio` for recording/playback — **not** `expo-av` (deprecated).
@@ -184,8 +222,10 @@ live under a `{user_id}/...` path prefix, enforced by storage RLS policies in
   what the installed Expo Go app on the test iPhone supports — never run `expo install --fix`,
   `npx expo upgrade`, or otherwise change Expo/React Native/related package versions without
   being asked first, even to fix a peer-dependency warning.
-- The backend (FastAPI + Celery, on Render) is a **separate Python project**, not part of this
-  Expo/TypeScript project — don't mix backend code into `src/`.
+- The backend (FastAPI + Celery, on Render) is a **separate Python project** living in
+  [backend/](../backend/), a sibling directory to `src/` in this same repo — not part of this
+  Expo/TypeScript project, and don't mix backend code into `src/`. See [Backend](#backend) above
+  for how to run/deploy it.
 - Routing: **Expo Router**, file-based under `src/app/` (chosen over React Navigation — smaller
   boilerplate and better fit for this app's shallow, mostly-linear screen flow: home → record →
   processing → history/detail. See `src/app/` for routes, `src/components/` for shared UI,

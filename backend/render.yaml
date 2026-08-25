@@ -1,0 +1,25 @@
+# Render Blueprint (infra-as-code) for the Brevado API.
+#
+# Render auto-detects this file when you create a service via
+# "New + > Blueprint" and point it at this repo — it reads the service
+# definition below instead of you clicking through dashboard settings by
+# hand, and re-syncs automatically on every push to keep config and code
+# together in version control. See the deploy instructions in
+# docs/CLAUDE.md's "Backend" section for the manual account/repo steps
+# this doesn't cover (Render requires those regardless of Blueprint vs.
+# dashboard setup).
+services:
+  - type: web
+    name: brevado-api
+    runtime: python
+    plan: free
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      # Render assigns and injects PORT itself for web services — not
+      # declared here, startCommand reads it directly from the shell.
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false

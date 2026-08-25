@@ -1,0 +1,28 @@
+# virtual environment
+.venv/
+venv/
+env/
+
+# byte-compiled
+__pycache__/
+*.py[cod]
+*$py.class
+
+# distribution / packaging
+build/
+dist/
+*.egg-info/
+
+# local env files
+.env
+.env.*.local
+
+# editors
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+
+# logs
+*.log
