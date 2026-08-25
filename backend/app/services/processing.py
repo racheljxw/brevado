@@ -1,14 +1,16 @@
 """
 Background processing for a recording.
 
-*** Phase 2 Step 3: real Gemini transcription. Feedback is still a stub. ***
-`process_recording` now downloads the recording's audio from Supabase
-Storage and sends it to Gemini (native audio input) for a real transcript.
-Feedback generation is deliberately left as stub text — that's Step 5,
-kept out of this step so transcription can be tested in isolation first
-(see docs/CLAUDE.md's "AI processing endpoint" section). Deterministic
-metrics (Step 4) also aren't computed yet. Remaining stub/TODO work:
-  - Step 4: deterministic metrics (filler words, WPM, repetition)
+*** Phase 2 Step 4: deterministic metrics. Feedback is still a stub. ***
+`process_recording` downloads the recording's audio from Supabase Storage
+once, sends it to Gemini (native audio input) for a real transcript, then
+computes deterministic metrics (filler-word rate, words per minute,
+repetition — see `app/services/metrics.py`) from that transcript and the
+same audio bytes, no second download or Gemini call involved. Feedback
+generation is deliberately left as stub text — that's Step 5, kept out of
+this step so transcription/metrics could be tested in isolation first (see
+docs/CLAUDE.md's "AI processing endpoint" and "Metrics" sections).
+Remaining stub/TODO work:
   - Step 5: real Gemini feedback generation call
   - Step 6: the one-inline-retry failure policy described in
     docs/PROJECT_PLAN.md Section 5 ("On failure it retries once inline") —
@@ -28,6 +30,7 @@ from google.genai.errors import APIError
 
 from app.config import RECORDINGS_BUCKET, settings
 from app.gemini_client import get_gemini_client
+from app.services.metrics import compute_metrics
 from app.supabase_client import get_service_client
 
 logger = logging.getLogger(__name__)
@@ -66,11 +69,12 @@ def _mime_type_for(audio_path: str) -> str:
     return _GEMINI_MIME_TYPES.get(extension, "audio/mp4")
 
 
-def _transcribe(audio_path: str) -> str:
-    """Downloads `audio_path` from Storage and sends it to Gemini for transcription.
+def _download_audio(audio_path: str) -> bytes:
+    """Downloads `audio_path` from Storage. Raises `TranscriptionError` on failure.
 
-    Raises `TranscriptionError` on any failure — never returns an empty or
-    placeholder transcript.
+    Kept separate from `_transcribe` so `process_recording` can download once and reuse
+    the same bytes for both the Gemini call and metrics' `get_audio_duration_seconds`
+    (see `app/services/metrics.py`) — no second Storage round-trip for metrics.
     """
     supabase = get_service_client()
 
@@ -83,7 +87,15 @@ def _transcribe(audio_path: str) -> str:
     if not audio_bytes:
         raise TranscriptionError(f"Downloaded audio file was empty: {audio_path}")
 
-    mime_type = _mime_type_for(audio_path)
+    return audio_bytes
+
+
+def _transcribe(audio_bytes: bytes, mime_type: str) -> str:
+    """Sends already-downloaded audio bytes to Gemini for transcription.
+
+    Raises `TranscriptionError` on any failure — never returns an empty or
+    placeholder transcript.
+    """
     logger.info(
         "processing: sending %d bytes (%s) to Gemini model %s for transcription",
         len(audio_bytes),
@@ -102,18 +114,18 @@ def _transcribe(audio_path: str) -> str:
             ],
         )
     except APIError as exc:
-        logger.error("processing: Gemini transcription call failed for %s: %s", audio_path, exc)
+        logger.error("processing: Gemini transcription call failed: %s", exc)
         raise TranscriptionError(f"Gemini API error: {exc}") from exc
     except Exception as exc:
-        logger.error("processing: unexpected error calling Gemini for %s: %s", audio_path, exc)
+        logger.error("processing: unexpected error calling Gemini: %s", exc)
         raise TranscriptionError(f"Unexpected error calling Gemini: {exc}") from exc
 
     transcript = (response.text or "").strip()
     if not transcript or transcript == "[no speech detected]":
-        logger.error("processing: Gemini returned no usable transcript for %s (got: %r)", audio_path, transcript)
+        logger.error("processing: Gemini returned no usable transcript (got: %r)", transcript)
         raise TranscriptionError(f"Gemini returned no usable transcript (got: {transcript!r}).")
 
-    logger.info("processing: transcription succeeded for %s (%d characters)", audio_path, len(transcript))
+    logger.info("processing: transcription succeeded (%d characters)", len(transcript))
     return transcript
 
 
@@ -135,15 +147,36 @@ def process_recording(recording_id: str) -> None:
         if not audio_path:
             raise TranscriptionError(f"Recording {recording_id} has no audio_path to transcribe.")
 
-        transcript = _transcribe(audio_path)
+        mime_type = _mime_type_for(audio_path)
+        audio_bytes = _download_audio(audio_path)
+        transcript = _transcribe(audio_bytes, mime_type)
 
-        # Feedback generation is still a stub (Step 5) and metrics aren't computed yet
-        # (Step 4) — `status: done` here means "done for what Step 3 covers", not that
-        # the full pipeline ran. See module docstring.
+        # Store the transcript immediately, before touching metrics — a metrics bug
+        # below must never be able to lose an already-successful transcript (see
+        # module docstring and docs/CLAUDE.md's "Metrics" section).
+        client.table("recordings").update({"transcript": transcript}).eq("id", recording_id).execute()
+
+        metrics = None
+        try:
+            metrics = compute_metrics(transcript, audio_bytes, mime_type)
+        except Exception as exc:
+            # Deliberately lenient, not the stricter "fail the recording" option: a
+            # good transcript is the expensive/valuable part (real Gemini call,
+            # user's actual speech) and metrics are a derived nice-to-have for the
+            # Step 5 feedback prompt — losing metrics is a much smaller loss than
+            # losing a transcript over what's likely a duration-parsing edge case.
+            # `metrics` stays None here; `compute_metrics` itself already isolates
+            # the one field (words_per_minute) that can legitimately fail on its
+            # own, so reaching this branch means something more unexpected broke.
+            logger.error("processing: metrics computation failed for recording %s: %s", recording_id, exc)
+
+        # Feedback generation is still a stub (Step 5) — `status: done` here means
+        # "done for what Steps 3-4 cover", not that the full pipeline ran. See
+        # module docstring.
         client.table("recordings").update(
             {
                 "status": "done",
-                "transcript": transcript,
+                "metrics": metrics,
                 "feedback": "STUB - Step 5 will replace this",
             }
         ).eq("id", recording_id).execute()
