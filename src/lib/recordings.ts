@@ -41,18 +41,22 @@ export class RecordingUploadError extends Error {
 // once Phase 3's detail view needs transcript/feedback/metrics too.
 // `favorite` was added in Phase 3 Step 4 — the list needs it directly (not
 // just the detail screen) since the star toggle now lives on both.
+// `audio_deleted` was added in Phase 3 Step 5 — the list needs to know
+// whether a row still has audio to show/hide the delete action and (Step 6)
+// the download action correctly per row.
 export type RecordingRow = {
   id: string;
   mode: string;
   status: string;
   created_at: string;
   favorite: boolean;
+  audio_deleted: boolean;
 };
 
 export async function fetchRecordings(userId: string): Promise<RecordingRow[]> {
   const { data, error } = await supabase
     .from('recordings')
-    .select('id, mode, status, created_at, favorite')
+    .select('id, mode, status, created_at, favorite, audio_deleted')
     .eq('user_id', userId)
     .order('created_at', { ascending: false });
   if (error) {

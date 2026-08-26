@@ -26,7 +26,7 @@ below for exactly what's real. **No stubs remain anywhere in the pipeline** — 
 metrics -> feedback are all real Gemini/code calls end to end, `status: done` means the full
 pipeline actually ran (retrying once inline if either Gemini-calling stage fails), and the
 frontend reflects that status accurately and promptly without flashing stale data.
-**Phase 3 — History, retention & retry — in progress. Steps 1, 2, 3, and 4 are done.** Step 1
+**Phase 3 — History, retention & retry — in progress. Steps 1, 2, 3, 4, and 5 are done.** Step 1
 (full history detail view) — see [History](#history)'s "Detail screen" bullet for exactly what it
 shows. **Step 2 (manual "Regenerate report") is now built, backend and frontend** — see
 [Background processing](#background-processing)'s "Regenerate report" bullet and
@@ -43,10 +43,19 @@ list row and on the detail screen, both calling the same direct-Supabase `setFav
 [History](#history)'s "Favorite toggle" bullets for exactly where and how, and note it's a
 **purely cosmetic personal marker with no automated behavior attached** — no retention exemption,
 no confirmation gate before Step 5 deletes a favorited recording's audio; favorite and delete are
-fully independent. Note docs/PROJECT_PLAN.md Section 6's phase descriptions are stale (still
-describe the old Celery/time-based retention plan) — Sections 3, 4, 5, and 7 reflect the current
-zero-cost, cap-based, manual-delete architecture and are the ones to trust. We're working
-phase-by-phase and step-by-step within a phase; don't reach ahead without being asked.
+fully independent. **Step 5 (manual audio delete) is now built, backend and frontend** — a bin
+icon on each History list row and on the detail screen, both calling the new
+`DELETE /recordings/{id}/audio` backend endpoint (not a direct Supabase call — see
+[Audio delete](#audio-delete) for why this one, unlike favorite/cap-check, goes through the
+backend) — see that section for the full detail. **This is the actual mechanism that frees a slot
+under `MAX_RECORDINGS_PER_USER`** (Step 3): [Recording cap](#recording-cap)'s "No way to free a
+slot yet" bullet is now stale — deleting a recording's audio from History is the real way to do it.
+Deletion has **no confirmation dialog** — an explicit product decision, immediate on tap, even for
+a favorited recording (favorite and delete remain fully independent, as Step 4 already noted).
+Note docs/PROJECT_PLAN.md Section 6's phase descriptions are stale (still describe the old
+Celery/time-based retention plan) — Sections 3, 4, 5, and 7 reflect the current zero-cost,
+cap-based, manual-delete architecture and are the ones to trust. We're working phase-by-phase and
+step-by-step within a phase; don't reach ahead without being asked.
 
 ## Tech stack
 
@@ -96,8 +105,8 @@ changes as a new numbered migration file rather than editing an applied one.
   7-day window. Retention is now a per-user cap, `MAX_RECORDINGS_PER_USER = 30` (counting rows
   where `audio_deleted = false`) — as of Phase 3 Step 3 this is enforced, not just defined; see
   [Recording cap](#recording-cap) for where and how. Deletion is manual only (bin icon per history
-  row — not yet built, Phase 3 Step 5), and only ever clears `audio_path`/sets
-  `audio_deleted = true`; it never removes the row.
+  row — built in Phase 3 Step 5, see [Audio delete](#audio-delete)), and only ever clears
+  `audio_path`/sets `audio_deleted = true`; it never removes the row.
 - `questions` — stub only (`id`, `mode`, `prompt_text`, `created_at`), reserved shape for the
   Phase 4 hardcoded pool and Phase 5 dynamic pool / re-practice. Not queried anywhere yet.
 
@@ -251,10 +260,11 @@ never be able to record + hit upload and only then learn they're blocked.
   - This migration hasn't been applied via a Supabase CLI (this repo has `supabase/migrations/`
     files but no linked CLI project) — like `0001`–`0003` before it, run its SQL manually in the
     Supabase dashboard's SQL editor against the live project.
-- **No way to free a slot yet:** manual delete (Phase 3 Step 5, the bin icon in History) isn't
-  built. Until it is, the only way to drop below the cap for testing is deleting `recordings` rows
-  directly in the Supabase dashboard's table editor (or lowering `audio_deleted`-false row count
-  some other manual way) — expected and fine for exercising this step in isolation, not a bug.
+- **Freeing a slot:** as of Phase 3 Step 5, the bin icon in History (list and detail — see
+  [Audio delete](#audio-delete)) is the real, built mechanism — deleting a recording's audio sets
+  `audio_deleted = true`, which drops it out of `getActiveRecordingCount`'s count immediately.
+  Before Step 5 the only way to drop below the cap was deleting `recordings` rows directly in the
+  Supabase dashboard's table editor; that workaround is no longer needed.
 - **How this was tested:** `MAX_RECORDINGS_PER_USER` was temporarily lowered to `2` in all three
   places (`backend/app/config.py`, `src/lib/recordings.ts`, and the migration's `max_recordings`)
   to make hitting the cap practical by hand, confirmed both that recording is blocked with the
@@ -315,6 +325,14 @@ never be able to record + hit upload and only then learn they're blocked.
   itself fails — no waiting on a refetch/poll tick to see the new state. **Purely a personal
   marker** — favoriting a recording has no effect on the cap, retention, or delete behavior (Step
   5); favorite and delete are fully independent, by design (see [Database](#database)).
+- **Delete audio (Phase 3 Step 5, done):** each row also renders a bin icon (`DeleteAudioButton`,
+  `src/components/delete-audio-button.tsx` — shared with the detail screen below), placed in its
+  own row under the mode text rather than next to the status badge/star — that cluster is
+  identity/status markers, this is a per-row *audio* action, and the Step 6 download icon will sit
+  right alongside this one in the same row. Nested inside the row's outer `Pressable` the same way
+  the "Regenerate report" action is (above), so tapping it doesn't also navigate into the detail
+  screen. Hidden entirely once `audio_deleted` is `true` — there's nothing left to act on. See
+  [Audio delete](#audio-delete) for the full detail (endpoint, ordering, why it's a backend call).
 - Refresh: the list refetches on every focus (`useFocusEffect`, not a mount-only effect) so
   landing here from a fresh upload — or tabbing back after a second recording — always shows
   current data, since tab screens stay mounted in the background rather than remounting on
@@ -412,10 +430,79 @@ never be able to record + hit upload and only then learn they're blocked.
     gets a fetchable URI at all) rather than a local file, but `useAudioPlayer(uri)` doesn't care
     which kind of URI it's given, so no extra branching was needed in the shared component itself.
   - **`audio_deleted` is checked and shows a clear "audio deleted" message in place of playback
-    controls**, built now even though nothing sets that flag `true` yet (Phase 3 Step 5, manual
-    delete, isn't built) — so this screen doesn't need revisiting once it is. A missing
-    `audio_path` on an otherwise-real row (shouldn't happen, given upload-then-insert — see
+    controls** — built in Step 1 before anything set that flag `true`, and as of Phase 3 Step 5
+    that's exactly what this screen's own "Delete audio" action (right below playback, see
+    [Audio delete](#audio-delete)) now does, with no revisiting of this conditional needed. A
+    missing `audio_path` on an otherwise-real row (shouldn't happen, given upload-then-insert — see
     [Upload](#upload)) is handled the same defensive way rather than crashing.
+  - **Delete audio (Phase 3 Step 5, done):** see [Audio delete](#audio-delete) for the full detail
+    — a `DeleteAudioButton` + "Delete audio" row renders directly below playback (in all of its
+    loading/ready/error states, since audio exists in each of those) whenever the recording still
+    has audio, calling the same `deleteRecordingAudio()` (`src/lib/api.ts`) as the list. No
+    confirmation dialog. On success, `recording.audio_deleted` flips to `true` locally (not
+    optimistically — only once the backend confirms the delete completed), which the `AudioSection`
+    conditional above already renders correctly with no further wiring needed.
+
+## Audio delete
+
+Phase 3 Step 5 — the real mechanism that frees a slot under `MAX_RECORDINGS_PER_USER` (see
+[Recording cap](#recording-cap)); before this step, the only way to drop below the cap was
+deleting rows by hand in the Supabase dashboard. **No confirmation dialog** — an explicit product
+decision: delete is immediate on tap, from either the list or the detail screen, even for a
+favorited recording. Favorite (Step 4) and delete are fully independent — favoriting has no effect
+on this at all.
+
+- **Endpoint, not a direct-Supabase call:** `DELETE /recordings/{recording_id}/audio`
+  (`delete_audio` in `backend/app/routers/recordings.py`), same bearer-token auth and ownership
+  check as `/process`/`/regenerate` (via the same `_fetch_authorized_recording` helper, now also
+  selecting `audio_path`/`audio_deleted` so this endpoint doesn't need a second round-trip). This
+  is a deliberate departure from the Step 3/4 pattern (`getActiveRecordingCount`, `setFavorite` —
+  direct Supabase calls from the frontend): those have no Storage component and RLS already scopes
+  them correctly, so a backend round-trip only adds latency. Deleting audio is different — it's a
+  Storage delete *and* a DB update that both need to happen, and a partial failure between two
+  independent client-side calls (Storage succeeds, DB update fails, or vice versa) would leave the
+  row and the actual file disagreeing with no clean way to detect or recover from that from the
+  client alone. Storage RLS also has **no delete policy** on the `recordings-audio` bucket
+  (`supabase/migrations/0002_storage_bucket.sql` — this was anticipated when that migration was
+  written) — client-side delete would need a new RLS policy opening that up, for a case that's
+  more cleanly handled server-side anyway. Routing it through the backend means one place owns the
+  ordering below and returns a single clear success/failure to retry against.
+- **The operation, storage-first:** delete the Storage object at `audio_path` (service-role
+  client, bypassing the missing RLS policy above), *then* update the row —
+  `audio_deleted = true` and `audio_path` cleared to `null` (not kept for a historical record: no
+  code has a reason to read a known-deleted path, and keeping it risks something later trying to
+  use it for playback without checking `audio_deleted` first). This ordering mirrors
+  `uploadRecording`'s "Storage first, then the DB write" principle (see [Upload](#upload)) run in
+  reverse: if the DB write fails after a successful Storage delete, the row still has its
+  (now-stale) `audio_path`, so a retry can find it, re-attempt the (idempotent) Storage delete, and
+  complete the DB write — self-healing. Clearing `audio_path` first instead would risk losing the
+  only reference to a file that then fails to delete, orphaning it with no way to retry. Row,
+  transcript, feedback, and metrics are all left untouched — only `audio_path`/`audio_deleted`
+  change.
+- **Already-deleted is a no-op success, not an error:** if the row is already `audio_deleted`, the
+  endpoint returns success immediately without touching Storage again — covers a double-tap, or
+  deleting the same recording from the list and the detail screen in quick succession. This relies
+  on deleting an already-missing Storage object itself being a no-op rather than an error (standard
+  idempotent-delete semantics), which is what makes it safe for two near-simultaneous requests to
+  both reach the Storage call before either has updated the row.
+- **Frontend:** `deleteRecordingAudio()` (`src/lib/api.ts`, same request shape as
+  `startProcessing()`/`regenerateReport()` but `DELETE` against `/audio`) is called from both the
+  History list (`RecordingListItem`'s bin icon) and the detail screen (`AudioSection`'s "Delete
+  audio" row) — see [History](#history)'s "Delete audio" bullets under both. Both call sites are
+  **deliberately not optimistic**, unlike the favorite toggle: local state only flips to
+  `audio_deleted: true` once the backend confirms the delete actually completed, rather than
+  flipping immediately and risking a brief "audio deleted" flash for audio that's still there (or
+  the reverse on a failed revert). A failure shows an inline per-row/per-screen error instead,
+  telling the user to try again — the same in-flight/error-state shape (keyed by id in the list, a
+  couple of `useState`s in the detail screen) already used for regenerate and favorite.
+- **Verification status:** backend compiles, the full existing pytest suite still passes, and the
+  frontend type-checks clean — but this step hasn't yet been exercised against the running Expo
+  app + live Supabase project (delete from list, confirm detail screen updates; delete from
+  detail, confirm list updates; confirm the Storage object is actually gone in the dashboard;
+  confirm transcript/feedback/metrics survive; confirm `getActiveRecordingCount` drops). That
+  manual pass is still needed before calling this step fully done — see
+  [Recording cap](#recording-cap)'s "How this was tested" bullet for the equivalent Step 3 pass to
+  follow the same shape of.
 
 ## Backend
 

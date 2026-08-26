@@ -70,3 +70,46 @@ export async function startProcessing(recordingId: string): Promise<void> {
 export async function regenerateReport(recordingId: string): Promise<void> {
   return postRecordingAction(recordingId, 'regenerate');
 }
+
+/**
+ * Phase 3 Step 5 — deletes a recording's audio (Storage file + the
+ * `audio_deleted`/`audio_path` row fields), the actual mechanism that frees
+ * a slot under `MAX_RECORDINGS_PER_USER` (see docs/CLAUDE.md's "Recording
+ * cap" section).
+ *
+ * Calls `DELETE /recordings/{id}/audio` rather than doing this as two direct
+ * Supabase calls (Storage delete + table update) the way `setFavorite`/
+ * `getActiveRecordingCount` do — see the docstring on `delete_audio` in
+ * `backend/app/routers/recordings.py` for the full reasoning: a Storage
+ * delete and a DB update both need to happen here, and a partial failure
+ * between two independent client calls would leave Storage and the DB
+ * disagreeing with no clean way to retry. The backend owns getting that
+ * ordering right and returns a single clear success/failure. No request
+ * body, and no confirmation step before this is called (per an explicit
+ * product decision — see docs/CLAUDE.md's History section) — the caller is
+ * expected to invoke this the moment the user taps delete, not after an
+ * "are you sure?" prompt.
+ */
+export async function deleteRecordingAudio(recordingId: string): Promise<void> {
+  if (!apiUrl) {
+    throw new ProcessingRequestError(
+      'Missing EXPO_PUBLIC_API_URL. Copy .env.example to .env and set it, then restart the dev server.'
+    );
+  }
+
+  const { data, error: sessionError } = await supabase.auth.getSession();
+  const accessToken = data.session?.access_token;
+  if (sessionError || !accessToken) {
+    throw new ProcessingRequestError('No active session — cannot authorize the request.');
+  }
+
+  const response = await fetch(`${apiUrl}/recordings/${recordingId}/audio`, {
+    method: 'DELETE',
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+
+  if (!response.ok) {
+    const body = await response.text().catch(() => '');
+    throw new ProcessingRequestError(`Backend rejected the delete-audio request (${response.status}): ${body}`);
+  }
+}

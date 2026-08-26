@@ -3,13 +3,14 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, FlatList, Platform, Pressable, RefreshControl, StyleSheet, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { DeleteAudioButton } from '@/components/delete-audio-button';
 import { FavoriteStar } from '@/components/favorite-star';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { WebBadge } from '@/components/web-badge';
 import { BottomTabInset, MaxContentWidth, Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
-import { regenerateReport } from '@/lib/api';
+import { deleteRecordingAudio, regenerateReport } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
 import { formatRecordedAt } from '@/lib/format-time';
 import { getStatusPresentation, TERMINAL_STATUSES } from '@/lib/recording-status';
@@ -36,6 +37,9 @@ function RecordingListItem({
   onRegenerate,
   regenerating,
   regenerateError,
+  onDeleteAudio,
+  deletingAudio,
+  deleteAudioError,
 }: {
   recording: RecordingRow;
   onPress: () => void;
@@ -44,6 +48,9 @@ function RecordingListItem({
   onRegenerate: () => void;
   regenerating: boolean;
   regenerateError?: string;
+  onDeleteAudio: () => void;
+  deletingAudio: boolean;
+  deleteAudioError?: string;
 }) {
   const theme = useTheme();
   const status = getStatusPresentation(recording.status, theme);
@@ -62,9 +69,26 @@ function RecordingListItem({
             <FavoriteStar favorite={recording.favorite} onToggle={onToggleFavorite} disabled={favoritePending} size={20} />
           </View>
         </View>
-        <ThemedText type="small" themeColor="textSecondary">
-          {recording.mode}
-        </ThemedText>
+        <View style={styles.rowFooter}>
+          <ThemedText type="small" themeColor="textSecondary">
+            {recording.mode}
+          </ThemedText>
+          {/* Per-row audio actions — reserved space for both the bin (this
+              step) and the Step 6 download icon to sit side by side here,
+              separate from the identity/status cluster above (favorite,
+              status badge). Nothing renders once audio_deleted is true —
+              there's no audio left to act on. */}
+          {!recording.audio_deleted && (
+            <View style={styles.audioActionsRow}>
+              <DeleteAudioButton onDelete={onDeleteAudio} pending={deletingAudio} size={18} />
+            </View>
+          )}
+        </View>
+        {deleteAudioError && (
+          <ThemedText type="small" style={{ color: '#e5484d' }}>
+            {deleteAudioError}
+          </ThemedText>
+        )}
 
         {recording.status === 'failed' && (
           <View style={styles.regenerateRow}>
@@ -108,6 +132,11 @@ export default function HistoryScreen() {
   // Phase 3 Step 4 — per-row favorite-toggle in-flight state, same shape as
   // the regenerate state above (independent per row, keyed by id).
   const [favoritingIds, setFavoritingIds] = useState<Set<string>>(new Set());
+
+  // Phase 3 Step 5 — per-row audio-delete in-flight/error state, same shape
+  // as the regenerate state above.
+  const [deletingAudioIds, setDeletingAudioIds] = useState<Set<string>>(new Set());
+  const [deleteAudioErrors, setDeleteAudioErrors] = useState<Record<string, string>>({});
 
   // Step 7: monotonically-increasing id for each `load()` call, so a
   // response can tell whether a *newer* request has been issued since it
@@ -247,6 +276,40 @@ export default function HistoryScreen() {
     }
   }
 
+  // Phase 3 Step 5 — no confirmation dialog before this fires, per an
+  // explicit product decision (see docs/CLAUDE.md's History section):
+  // tapping delete calls the backend immediately, no "are you sure?" step.
+  // Unlike the favorite toggle above, this is NOT optimistic — local state
+  // only flips to audio_deleted once the backend confirms the delete
+  // actually completed (Storage object gone + row updated; see
+  // `delete_audio` in `backend/app/routers/recordings.py`). Flipping it
+  // eagerly and reverting on failure would risk briefly showing "audio
+  // deleted" for audio that's still there, or the reverse.
+  async function handleDeleteAudio(id: string) {
+    setDeletingAudioIds((prev) => new Set(prev).add(id));
+    setDeleteAudioErrors((prev) => {
+      if (!(id in prev)) return prev;
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
+    try {
+      await deleteRecordingAudio(id);
+      setRecordings((prev) => prev?.map((row) => (row.id === id ? { ...row, audio_deleted: true } : row)) ?? prev);
+    } catch (err) {
+      setDeleteAudioErrors((prev) => ({
+        ...prev,
+        [id]: err instanceof Error ? err.message : 'Could not delete audio — try again.',
+      }));
+    } finally {
+      setDeletingAudioIds((prev) => {
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
+    }
+  }
+
   const showInitialLoading = loading && recordings === null;
   const showEmpty = !loading && !error && recordings?.length === 0;
 
@@ -289,6 +352,9 @@ export default function HistoryScreen() {
                 onRegenerate={() => handleRegenerate(item.id)}
                 regenerating={regeneratingIds.has(item.id)}
                 regenerateError={regenerateErrors[item.id]}
+                onDeleteAudio={() => handleDeleteAudio(item.id)}
+                deletingAudio={deletingAudioIds.has(item.id)}
+                deleteAudioError={deleteAudioErrors[item.id]}
               />
             )}
             contentContainerStyle={styles.listContent}
@@ -343,6 +409,16 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
   },
   rowHeaderRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.two,
+  },
+  rowFooter: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  audioActionsRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: Spacing.two,

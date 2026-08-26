@@ -3,18 +3,24 @@ Endpoints the Expo app calls once it already owns a `recordings` row.
 
 As of Phase 2 Step 2, upload + row creation still happen entirely on the
 frontend, directly against Supabase (see `src/lib/recordings.ts`) — this
-router only covers what comes after that: kicking off processing, and (as of
-Phase 3 Step 2) manually retrying it after a failure. See docs/CLAUDE.md's
+router only covers what comes after that: kicking off processing, (as of
+Phase 3 Step 2) manually retrying it after a failure, and (as of Phase 3
+Step 5) manually deleting a recording's audio. See docs/CLAUDE.md's
 "AI processing endpoint" and "Background processing" sections for the full
 picture.
 """
+
+import logging
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from postgrest.exceptions import APIError
 
 from app.auth import get_current_user_id
+from app.config import RECORDINGS_BUCKET
 from app.services.processing import process_recording
 from app.supabase_client import get_service_client
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/recordings", tags=["recordings"])
 
@@ -22,15 +28,18 @@ router = APIRouter(prefix="/recordings", tags=["recordings"])
 def _fetch_authorized_recording(client, recording_id: str, user_id: str) -> dict:
     """Fetches `recording_id` and confirms it belongs to `user_id`.
 
-    Shared by `/process` and `/regenerate` so both endpoints give a caller an
-    identical, indistinguishable 403 whether the recording doesn't exist at
-    all or exists but belongs to someone else — a token for one user should
-    never be able to tell those two cases apart from the response.
+    Shared by `/process`, `/regenerate`, and the audio-delete endpoint so all
+    three give a caller an identical, indistinguishable 403 whether the
+    recording doesn't exist at all or exists but belongs to someone else — a
+    token for one user should never be able to tell those two cases apart
+    from the response. Selects `audio_path`/`audio_deleted` too (unused by
+    `/process` and `/regenerate`, but cheap to include) so the delete
+    endpoint below doesn't need a second round-trip just to get them.
     """
     try:
         result = (
             client.table("recordings")
-            .select("id, user_id, status")
+            .select("id, user_id, status, audio_path, audio_deleted")
             .eq("id", recording_id)
             .maybe_single()
             .execute()
@@ -103,3 +112,36 @@ def regenerate_report(
     background_tasks.add_task(process_recording, recording_id)
 
     return {"id": recording_id}
+
+
+@router.delete("/{recording_id}/audio", status_code=200)
+def delete_audio(
+    recording_id: str,
+    user_id: str = Depends(get_current_user_id),
+) -> dict[str, bool]:
+    """Manual audio delete, the actual mechanism that frees a
+    cap slot (see docs/CLAUDE.md's "Recording cap" section — `getActiveRecordingCount`
+    counts `audio_deleted = false` rows, so this is what makes that count drop).
+    """
+    client = get_service_client()
+    recording = _fetch_authorized_recording(client, recording_id, user_id)
+
+    if recording.get("audio_deleted"):
+        return {"audio_deleted": True}
+
+    audio_path = recording.get("audio_path")
+    if audio_path:
+        try:
+            client.storage.from_(RECORDINGS_BUCKET).remove([audio_path])
+        except Exception as exc:
+            logger.error(
+                "delete_audio: failed to delete '%s' from Storage for recording %s: %s",
+                audio_path,
+                recording_id,
+                exc,
+            )
+            raise HTTPException(status_code=502, detail="Could not delete audio from storage. Try again.")
+
+    client.table("recordings").update({"audio_deleted": True, "audio_path": None}).eq("id", recording_id).execute()
+
+    return {"audio_deleted": True}

@@ -4,13 +4,14 @@ import { ActivityIndicator, Platform, Pressable, ScrollView, StyleSheet, View } 
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { AudioPlaybackControls } from '@/components/audio-playback-controls';
+import { DeleteAudioButton } from '@/components/delete-audio-button';
 import { FavoriteStar } from '@/components/favorite-star';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { WebBadge } from '@/components/web-badge';
 import { BottomTabInset, MaxContentWidth, Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
-import { regenerateReport } from '@/lib/api';
+import { deleteRecordingAudio, regenerateReport } from '@/lib/api';
 import { formatRecordedAt } from '@/lib/format-time';
 import { getStatusPresentation, TERMINAL_STATUSES } from '@/lib/recording-status';
 import {
@@ -54,7 +55,17 @@ function BackLink() {
 // not built yet — see docs/CLAUDE.md's History section) changes what this
 // renders, which is why that check is built now even though the flag is
 // always false today.
-function AudioSection({ recording }: { recording: RecordingDetail }) {
+function AudioSection({
+  recording,
+  onDeleteAudio,
+  deletingAudio,
+  deleteAudioError,
+}: {
+  recording: RecordingDetail;
+  onDeleteAudio: () => void;
+  deletingAudio: boolean;
+  deleteAudioError: string | null;
+}) {
   const theme = useTheme();
   const [audioState, setAudioState] = useState<AudioState>('idle');
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
@@ -104,26 +115,56 @@ function AudioSection({ recording }: { recording: RecordingDetail }) {
     );
   }
 
+  // Phase 3 Step 5 — the delete action itself, rendered below playback
+  // regardless of whether playback is still loading/ready/errored (audio
+  // exists in all three of those states, so there's always something to
+  // delete). No confirmation dialog, per an explicit product decision — see
+  // docs/CLAUDE.md's History section.
+  const deleteRow = (
+    <View style={styles.deleteAudioRow}>
+      <DeleteAudioButton onDelete={onDeleteAudio} pending={deletingAudio} />
+      <ThemedText type="small" themeColor="textSecondary">
+        Delete audio
+      </ThemedText>
+      {deleteAudioError && (
+        <ThemedText type="small" style={{ color: '#e5484d' }}>
+          {deleteAudioError}
+        </ThemedText>
+      )}
+    </View>
+  );
+
   if (audioState === 'loading' || audioState === 'idle') {
     return (
-      <View style={styles.centerRow}>
-        <ActivityIndicator color={theme.textSecondary} />
-      </View>
+      <>
+        <View style={styles.centerRow}>
+          <ActivityIndicator color={theme.textSecondary} />
+        </View>
+        {deleteRow}
+      </>
     );
   }
 
   if (audioState === 'error') {
     return (
-      <ThemedView type="backgroundElement" style={styles.card}>
-        <ThemedText type="small">{audioError ?? 'Could not load audio.'}</ThemedText>
-        <Pressable onPress={loadAudioUrl}>
-          <ThemedText type="linkPrimary">Retry</ThemedText>
-        </Pressable>
-      </ThemedView>
+      <>
+        <ThemedView type="backgroundElement" style={styles.card}>
+          <ThemedText type="small">{audioError ?? 'Could not load audio.'}</ThemedText>
+          <Pressable onPress={loadAudioUrl}>
+            <ThemedText type="linkPrimary">Retry</ThemedText>
+          </Pressable>
+        </ThemedView>
+        {deleteRow}
+      </>
     );
   }
 
-  return <AudioPlaybackControls uri={audioUrl!} />;
+  return (
+    <>
+      <AudioPlaybackControls uri={audioUrl!} />
+      {deleteRow}
+    </>
+  );
 }
 
 // The transcript/metrics/feedback section — only meaningful once the
@@ -247,6 +288,8 @@ export default function RecordingDetailScreen() {
   const [regenerating, setRegenerating] = useState(false);
   const [regenerateError, setRegenerateError] = useState<string | null>(null);
   const [favoritePending, setFavoritePending] = useState(false);
+  const [deletingAudio, setDeletingAudio] = useState(false);
+  const [deleteAudioError, setDeleteAudioError] = useState<string | null>(null);
 
   // Shared with the silent poll below, same purpose as the History list's
   // own `requestSeqRef` (Phase 2 Step 7): only the response matching the
@@ -359,6 +402,24 @@ export default function RecordingDetailScreen() {
     }
   }, [recording]);
 
+  // Phase 3 Step 5 — same "no confirmation, not optimistic" reasoning as the
+  // History list's `handleDeleteAudio` (`history/index.tsx`): fires
+  // immediately on tap, and `recording.audio_deleted` only flips once the
+  // backend confirms the delete actually completed.
+  const handleDeleteAudio = useCallback(async () => {
+    if (!recording) return;
+    setDeletingAudio(true);
+    setDeleteAudioError(null);
+    try {
+      await deleteRecordingAudio(recording.id);
+      setRecording((prev) => (prev ? { ...prev, audio_deleted: true, audio_path: null } : prev));
+    } catch (err) {
+      setDeleteAudioError(err instanceof Error ? err.message : 'Could not delete audio — try again.');
+    } finally {
+      setDeletingAudio(false);
+    }
+  }, [recording]);
+
   const status = recording ? getStatusPresentation(recording.status, theme) : null;
 
   return (
@@ -411,7 +472,12 @@ export default function RecordingDetailScreen() {
             </ThemedText>
 
             <View style={styles.section}>
-              <AudioSection recording={recording} />
+              <AudioSection
+                recording={recording}
+                onDeleteAudio={handleDeleteAudio}
+                deletingAudio={deletingAudio}
+                deleteAudioError={deleteAudioError}
+              />
             </View>
 
             <ReportSection
@@ -454,6 +520,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     paddingVertical: Spacing.four,
+  },
+  deleteAudioRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.two,
+    marginTop: Spacing.two,
   },
   centerText: {
     textAlign: 'center',
