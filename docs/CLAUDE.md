@@ -26,7 +26,7 @@ below for exactly what's real. **No stubs remain anywhere in the pipeline** — 
 metrics -> feedback are all real Gemini/code calls end to end, `status: done` means the full
 pipeline actually ran (retrying once inline if either Gemini-calling stage fails), and the
 frontend reflects that status accurately and promptly without flashing stale data.
-**Phase 3 — History, retention & retry — in progress. Steps 1 and 2 are done.** Step 1 (full
+**Phase 3 — History, retention & retry — in progress. Steps 1, 2, and 3 are done.** Step 1 (full
 history detail view) — see [History](#history)'s "Detail screen" bullet for exactly what it
 shows. **Step 2 (manual "Regenerate report") is now built, backend and frontend** — see
 [Background processing](#background-processing)'s "Regenerate report" bullet and
@@ -34,8 +34,12 @@ shows. **Step 2 (manual "Regenerate report") is now built, backend and frontend*
 exists. This closes out docs/PROJECT_PLAN.md Section 3's "Retry behavior" in full: the automatic
 one-inline-retry-per-stage from Phase 2 Step 6 handles transient failures without any user action,
 and this step's manual regenerate covers anything still `failed` after that, retryable without
-limit. Note docs/PROJECT_PLAN.md Section 6's phase descriptions are stale (still describe the old
-Celery/time-based retention plan) — Sections 3, 4, 5, and 7 reflect the current zero-cost,
+limit. **Step 3 (per-user recording cap enforcement) is now built** — `MAX_RECORDINGS_PER_USER`
+(30) is checked before a new recording can even start, and enforced again independently by a
+Postgres trigger as a safety net — see [Recording cap](#recording-cap) for the full detail
+(including exactly where the frontend check lives and the note-to-self about Phase 4 needing to
+move it). Note docs/PROJECT_PLAN.md Section 6's phase descriptions are stale (still describe the
+old Celery/time-based retention plan) — Sections 3, 4, 5, and 7 reflect the current zero-cost,
 cap-based, manual-delete architecture and are the ones to trust. We're working phase-by-phase and
 step-by-step within a phase; don't reach ahead without being asked.
 
@@ -79,9 +83,9 @@ changes as a new numbered migration file rather than editing an applied one.
   which used to mean "exempt from the old 7-day auto-delete") — it's no longer tied to any
   deletion behavior. `report_generated_at` has been removed — it only existed to compute the old
   7-day window. Retention is now a per-user cap, `MAX_RECORDINGS_PER_USER = 30` (counting rows
-  where `audio_deleted = false`), defined in `backend/app/config.py` — the constant exists but
-  enforcement logic (checked on new-recording start) isn't wired up yet, a later step. Deletion is
-  manual only (bin icon per history row), and only ever clears `audio_path`/sets
+  where `audio_deleted = false`) — as of Phase 3 Step 3 this is enforced, not just defined; see
+  [Recording cap](#recording-cap) for where and how. Deletion is manual only (bin icon per history
+  row — not yet built, Phase 3 Step 5), and only ever clears `audio_path`/sets
   `audio_deleted = true`; it never removes the row.
 - `questions` — stub only (`id`, `mode`, `prompt_text`, `created_at`), reserved shape for the
   Phase 4 hardcoded pool and Phase 5 dynamic pool / re-practice. Not queried anywhere yet.
@@ -173,6 +177,78 @@ live under a `{user_id}/...` path prefix, enforced by storage RLS policies in
 - Mode/question are hardcoded (`mode: 'miscellaneous'`, `question: null`) until Phase 4 adds real
   mode selection — this is the only combination the `recordings.mode` check constraint allows
   without that UI.
+
+## Recording cap
+
+Phase 3 Step 3 — enforces `MAX_RECORDINGS_PER_USER` (30, counting rows where
+`audio_deleted = false`; see [Database](#database) and docs/PROJECT_PLAN.md Section 3's "Audio
+retention" subsection). Checked **before** a recording can start, not after upload — a user should
+never be able to record + hit upload and only then learn they're blocked.
+
+- **Where the check currently lives, precisely: `handleStartRecording()` in
+  `src/app/(tabs)/index.tsx` (the Home tab's record button), the first thing it does before
+  requesting mic permission or calling `recorder.record()`.** This is the "natural checkpoint"
+  only because Phase 4 hasn't built mode selection yet — **when Phase 4 replaces this button with
+  a mode-selection screen as the real entry point into recording, this check (the
+  `getActiveRecordingCount` call, the `MAX_RECORDINGS_PER_USER` comparison, and the
+  block-with-message behavior) needs to move to that screen's entry point.** Don't let this get
+  forgotten when Phase 4 starts — it's easy to build the new screen and only notice the cap check
+  never made the jump once someone actually hits 30 recordings again.
+- **Frontend check:** `getActiveRecordingCount(userId)` (`src/lib/recordings.ts`) — a direct
+  Supabase count query (`select('id', { count: 'exact', head: true })`), not a backend endpoint.
+  Chosen over adding e.g. `GET /recordings/cap-status` to the FastAPI backend because RLS ("Users
+  can view their own recordings", `0001_initial_schema.sql`) already scopes the query correctly to
+  the calling user — a backend round-trip would only add latency here, not correctness or any
+  shared logic worth centralizing (there's no non-trivial cap *logic*, just a count and a
+  comparison). `MAX_RECORDINGS_PER_USER` is mirrored as its own constant in `src/lib/recordings.ts`
+  rather than fetched from the backend's copy (`backend/app/config.py`) — same accepted duplication
+  as `RECORDINGS_BUCKET` already being defined separately in both projects (see
+  [Backend](#backend)).
+  - On a cap hit, `handleStartRecording` sets local state that swaps the entire record button out
+    for a `CapBlockedCard` (same file) — a clear "You've reached your 30 recording limit. Delete
+    some audio from History to record more." message plus a "Go to History" button
+    (`router.navigate('/history')`). The recording UI (mic permission prompt, `recorder.record()`)
+    is never reached in this state.
+  - If the count query itself fails (network blip), the check **fails open** — recording is
+    allowed to proceed rather than blocking someone over a check that couldn't complete. The
+    Postgres trigger below is what makes that safe to do.
+  - The blocked state resets on every screen focus (`useFocusEffect`), so navigating back from
+    History (e.g. after a future manual delete frees a slot) shows the normal record button again;
+    the next tap re-checks for real rather than trusting the stale cleared state.
+  - Under the cap, this is invisible: the count query runs once, inline, at tap time, and the
+    button behaves exactly as before — no separate loading UI was added for it, since it's a single
+    indexed count query and resolves well within the time the user spends granting mic permission
+    anyway.
+- **Backend/DB safety net:** a Postgres trigger, `recordings_enforce_cap` (function
+  `enforce_recording_cap()`, `supabase/migrations/0004_recording_cap_enforcement.sql`), fires
+  `before insert on recordings` and raises (blocking the insert) if the inserting user already has
+  `>= 30` rows with `audio_deleted = false`. This — not a backend endpoint — is where the
+  belt-and-suspenders check lives, because row creation still happens entirely on the frontend,
+  direct against Supabase (`uploadRecording` in `src/lib/recordings.ts`; see [Upload](#upload)) —
+  there's no backend code in the insert path to put a check in. The trigger is independent of the
+  frontend check above by design: it holds even if the frontend check is buggy, skipped, or bypassed
+  by some other client hitting the table directly with a valid session. At exactly 30, a 31st insert
+  attempt gets a clear Postgres error (`check_violation`, `errcode 23514`) rather than silently
+  succeeding — surfaces to the frontend as an `insert`-stage `RecordingUploadError` (see
+  [Upload](#upload)'s "Failure/retry" bullet) if it's ever actually hit in practice (it shouldn't
+  be, given the frontend check above runs first).
+  - The cap number is hardcoded in the migration SQL itself, since Postgres can't read
+    `MAX_RECORDINGS_PER_USER` from either `backend/app/config.py` (Python) or
+    `src/lib/recordings.ts` (a separate frontend project). That's a third copy of the same number —
+    if it ever changes, update all three: this migration, `backend/app/config.py`, and
+    `src/lib/recordings.ts`.
+  - This migration hasn't been applied via a Supabase CLI (this repo has `supabase/migrations/`
+    files but no linked CLI project) — like `0001`–`0003` before it, run its SQL manually in the
+    Supabase dashboard's SQL editor against the live project.
+- **No way to free a slot yet:** manual delete (Phase 3 Step 5, the bin icon in History) isn't
+  built. Until it is, the only way to drop below the cap for testing is deleting `recordings` rows
+  directly in the Supabase dashboard's table editor (or lowering `audio_deleted`-false row count
+  some other manual way) — expected and fine for exercising this step in isolation, not a bug.
+- **How this was tested:** `MAX_RECORDINGS_PER_USER` was temporarily lowered to `2` in all three
+  places (`backend/app/config.py`, `src/lib/recordings.ts`, and the migration's `max_recordings`)
+  to make hitting the cap practical by hand, confirmed both that recording is blocked with the
+  clear message at the cap and that recording still works normally below it, then the constant was
+  set back to `30` in all three places before calling this step done.
 
 ## History
 

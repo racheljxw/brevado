@@ -4,6 +4,18 @@ import { supabase } from '@/lib/supabase';
 
 const RECORDINGS_BUCKET = 'recordings-audio';
 
+// Mirrors MAX_RECORDINGS_PER_USER in backend/app/config.py — kept as a
+// separate constant here for the same reason RECORDINGS_BUCKET above is:
+// this frontend and the backend are separate projects with no shared module
+// to import a constant from (see docs/CLAUDE.md's "Backend" section).
+// Checked before a new recording starts (src/app/(tabs)/index.tsx, Phase 3
+// Step 3) and enforced again, independently, by a Postgres trigger
+// (supabase/migrations/0004_recording_cap_enforcement.sql) as a safety
+// net — see docs/CLAUDE.md's Audio retention section for why this one
+// number ends up duplicated in three places, and update all three if it
+// ever changes.
+export const MAX_RECORDINGS_PER_USER = 30;
+
 const CONTENT_TYPES_BY_EXTENSION: Record<string, string> = {
   m4a: 'audio/m4a',
   caf: 'audio/x-caf',
@@ -44,6 +56,29 @@ export async function fetchRecordings(userId: string): Promise<RecordingRow[]> {
     throw error;
   }
   return data ?? [];
+}
+
+/**
+ * Counts the current user's recordings that still count against the cap
+ * (`audio_deleted = false`) — see `MAX_RECORDINGS_PER_USER` above.
+ *
+ * A direct Supabase query rather than a backend endpoint, deliberately: RLS
+ * ("Users can view their own recordings", 0001_initial_schema.sql) already
+ * scopes this correctly to the calling user, so there's nothing a backend
+ * round-trip would add here beyond latency — see docs/CLAUDE.md's Audio
+ * retention section for the fuller reasoning. `head: true` means Supabase
+ * returns just the count, not the matching rows.
+ */
+export async function getActiveRecordingCount(userId: string): Promise<number> {
+  const { count, error } = await supabase
+    .from('recordings')
+    .select('id', { count: 'exact', head: true })
+    .eq('user_id', userId)
+    .eq('audio_deleted', false);
+  if (error) {
+    throw error;
+  }
+  return count ?? 0;
 }
 
 // Shape stored in `recordings.metrics` (Phase 2 Step 4) — see

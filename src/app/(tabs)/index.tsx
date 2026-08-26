@@ -1,6 +1,6 @@
 import { AudioModule, RecordingPresets, setAudioModeAsync, useAudioRecorder, useAudioRecorderState } from 'expo-audio';
-import { useRouter } from 'expo-router';
-import { useEffect, useRef, useState } from 'react';
+import { useFocusEffect, useRouter } from 'expo-router';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Animated, Linking, Platform, Pressable, StyleSheet, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -13,7 +13,14 @@ import { useTheme } from '@/hooks/use-theme';
 import { startProcessing } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
 import { formatDuration } from '@/lib/format-time';
-import { buildAudioPath, RecordingUploadError, uploadRecording, type RecordingUploadStage } from '@/lib/recordings';
+import {
+  buildAudioPath,
+  getActiveRecordingCount,
+  MAX_RECORDINGS_PER_USER,
+  RecordingUploadError,
+  uploadRecording,
+  type RecordingUploadStage,
+} from '@/lib/recordings';
 
 type PermissionState = 'unknown' | 'granted' | 'denied';
 type UploadState = 'idle' | 'uploading' | 'error' | 'done';
@@ -108,6 +115,29 @@ function RecordingPlayback({
   );
 }
 
+// Phase 3 Step 3 — shown in place of the record button once
+// `handleStartRecording` finds the user at/over MAX_RECORDINGS_PER_USER.
+// See docs/CLAUDE.md's Audio retention section: manual delete (Phase 3 Step
+// 5) is the only way to free a slot, so this is the entry point into
+// History to do that.
+function CapBlockedCard({ onGoToHistory }: { onGoToHistory: () => void }) {
+  const theme = useTheme();
+  return (
+    <ThemedView type="backgroundElement" style={styles.playbackCard}>
+      <ThemedText type="smallBold">Recording limit reached</ThemedText>
+      <ThemedText type="small" themeColor="textSecondary" style={styles.uriLabel}>
+        You&apos;ve reached your {MAX_RECORDINGS_PER_USER} recording limit. Delete some audio from
+        History to record more.
+      </ThemedText>
+      <Pressable
+        style={({ pressed }) => [styles.playButton, { borderColor: theme.text }, pressed && styles.pressed]}
+        onPress={onGoToHistory}>
+        <ThemedText type="smallBold">Go to History</ThemedText>
+      </Pressable>
+    </ThemedView>
+  );
+}
+
 export default function RecordScreen() {
   const { user, signOut } = useAuth();
   const theme = useTheme();
@@ -119,6 +149,24 @@ export default function RecordScreen() {
   const [permission, setPermission] = useState<PermissionState>('unknown');
   const [canAskAgain, setCanAskAgain] = useState(true);
   const [recordedUri, setRecordedUri] = useState<string | null>(null);
+
+  // Phase 3 Step 3: per-user recording cap (MAX_RECORDINGS_PER_USER) — see
+  // docs/CLAUDE.md's Audio retention section. `checkingCap` guards against a
+  // double-tap firing two count queries at once; `blockedByCap` swaps the
+  // whole record entry point for a blocking message once we know the user
+  // is at/over the cap.
+  const [checkingCap, setCheckingCap] = useState(false);
+  const [blockedByCap, setBlockedByCap] = useState(false);
+
+  // Re-arm the check on every focus (e.g. coming back from History after
+  // freeing a slot) so a stale "blocked" state doesn't linger — the next
+  // record tap re-checks for real via handleStartRecording below, this just
+  // clears the message so the normal record button reappears.
+  useFocusEffect(
+    useCallback(() => {
+      setBlockedByCap(false);
+    }, [])
+  );
 
   const [uploadState, setUploadState] = useState<UploadState>('idle');
   const [uploadError, setUploadError] = useState<UploadErrorInfo | null>(null);
@@ -163,6 +211,30 @@ export default function RecordScreen() {
   }
 
   async function handleStartRecording() {
+    if (!user || checkingCap) return;
+
+    // Phase 3 Step 3: check the per-user recording cap BEFORE opening the
+    // recording UI at all — not after recording + upload, per
+    // docs/CLAUDE.md's Audio retention section. This is the "natural
+    // checkpoint" until Phase 4's mode-selection screen replaces this
+    // button as the entry point (see the note left there for that).
+    setCheckingCap(true);
+    try {
+      const count = await getActiveRecordingCount(user.id);
+      if (count >= MAX_RECORDINGS_PER_USER) {
+        setBlockedByCap(true);
+        return;
+      }
+    } catch (err) {
+      // Fail open: don't block recording over a cap check that itself
+      // couldn't complete (e.g. a network blip) — the Postgres trigger
+      // (supabase/migrations/0004_recording_cap_enforcement.sql) is the
+      // real safety net if this ever lets someone squeak past the cap.
+      console.warn('Recording cap check failed, allowing recording to proceed', err);
+    } finally {
+      setCheckingCap(false);
+    }
+
     if (permission !== 'granted') {
       const response = await AudioModule.requestRecordingPermissionsAsync();
       setCanAskAgain(response.canAskAgain);
@@ -240,7 +312,9 @@ export default function RecordScreen() {
             </ThemedText>
           ) : null}
 
-          {!recordedUri && (
+          {!recordedUri && blockedByCap && <CapBlockedCard onGoToHistory={() => router.navigate('/history')} />}
+
+          {!recordedUri && !blockedByCap && (
             <View style={styles.recordArea}>
               <Animated.View style={{ opacity: pulseAnim }}>
                 <Pressable

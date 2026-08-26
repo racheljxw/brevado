@@ -41,9 +41,23 @@ settings = Settings()
 
 # Per-user audio retention cap: how many recordings a user may have with
 # audio_deleted = false at once. Not an env var — it's an app constant, not
-# meant to vary by deployment. Unused as of this pass; the enforcement
-# logic (checked when a user starts a new recording, per
-# docs/PROJECT_PLAN.md Section 5 "Audio cap check") lands in a later step.
+# meant to vary by deployment.
+#
+# As of Phase 3 Step 3 this is enforced, but not from this backend process:
+# there's no backend endpoint in the recording-creation path to check it in
+# (upload + row creation are still frontend-to-Supabase directly, see
+# docs/CLAUDE.md's "Upload" section), so enforcement lives in two other
+# places instead — the frontend's pre-recording check
+# (src/app/(tabs)/index.tsx, mirrored as MAX_RECORDINGS_PER_USER in
+# src/lib/recordings.ts) and a Postgres trigger as the belt-and-suspenders
+# backstop (supabase/migrations/0004_recording_cap_enforcement.sql). This
+# Python constant isn't read by either of those — Postgres can't read a
+# Python value, and the frontend is a separate project — so it exists here
+# only as documentation of the value and a reference point for this
+# backend's future/other own uses of the cap (e.g. if it ever gains a
+# recording-status or admin endpoint). If MAX_RECORDINGS_PER_USER changes,
+# update it in all three places: here, the frontend copy, and the trigger's
+# hardcoded `max_recordings` in the migration.
 MAX_RECORDINGS_PER_USER = 30
 
 # Supabase Storage bucket recordings' audio lives in. Mirrors
