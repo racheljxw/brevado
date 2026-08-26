@@ -26,7 +26,8 @@ below for exactly what's real. **No stubs remain anywhere in the pipeline** — 
 metrics -> feedback are all real Gemini/code calls end to end, `status: done` means the full
 pipeline actually ran (retrying once inline if either Gemini-calling stage fails), and the
 frontend reflects that status accurately and promptly without flashing stale data.
-**Phase 3 — History, retention & retry — in progress. Steps 1, 2, 3, 4, and 5 are done.** Step 1
+**Phase 3 — History, retention & retry — complete. Step 6 (download button) was the closing
+step.** Step 1
 (full history detail view) — see [History](#history)'s "Detail screen" bullet for exactly what it
 shows. **Step 2 (manual "Regenerate report") is now built, backend and frontend** — see
 [Background processing](#background-processing)'s "Regenerate report" bullet and
@@ -52,6 +53,17 @@ under `MAX_RECORDINGS_PER_USER`** (Step 3): [Recording cap](#recording-cap)'s "N
 slot yet" bullet is now stale — deleting a recording's audio from History is the real way to do it.
 Deletion has **no confirmation dialog** — an explicit product decision, immediate on tap, even for
 a favorited recording (favorite and delete remain fully independent, as Step 4 already noted).
+**Step 6 (manual audio download) is now built, list and detail — this closes out Phase 3.** A
+download icon sits right alongside the Step 5 bin icon on each History list row and on the detail
+screen, both calling the same `shareRecordingAudio()` (`src/lib/recordings.ts`) — downloads the
+audio to a temp local file via `expo-file-system` and hands it to the native share sheet
+(`expo-sharing`) so the user can save it into Files, AirDrop it, etc. See
+[Audio download](#audio-download) for the full detail, including why this one, unlike delete,
+needed no backend endpoint. Pairs naturally with delete as an "export before delete" flow, but the
+two are fully independent, with no forced ordering. Phase 3's revised scope (history detail view,
+regenerate, cap enforcement, favorite, manual delete, and now download) is fully built — see
+[Phase 3 assessment](#phase-3-assessment) for what's confirmed working end-to-end versus what
+still needs a manual on-device pass before trusting it completely.
 Note docs/PROJECT_PLAN.md Section 6's phase descriptions are stale (still describe the old
 Celery/time-based retention plan) — Sections 3, 4, 5, and 7 reflect the current zero-cost,
 cap-based, manual-delete architecture and are the ones to trust. We're working phase-by-phase and
@@ -328,11 +340,24 @@ never be able to record + hit upload and only then learn they're blocked.
 - **Delete audio (Phase 3 Step 5, done):** each row also renders a bin icon (`DeleteAudioButton`,
   `src/components/delete-audio-button.tsx` — shared with the detail screen below), placed in its
   own row under the mode text rather than next to the status badge/star — that cluster is
-  identity/status markers, this is a per-row *audio* action, and the Step 6 download icon will sit
+  identity/status markers, this is a per-row *audio* action, and the Step 6 download icon sits
   right alongside this one in the same row. Nested inside the row's outer `Pressable` the same way
   the "Regenerate report" action is (above), so tapping it doesn't also navigate into the detail
   screen. Hidden entirely once `audio_deleted` is `true` — there's nothing left to act on. See
   [Audio delete](#audio-delete) for the full detail (endpoint, ordering, why it's a backend call).
+- **Download audio (Phase 3 Step 6, done):** each row also renders a download icon
+  (`DownloadAudioButton`, `src/components/download-audio-button.tsx` — shared with the detail
+  screen below) in the same `audioActionsRow` as the bin icon, download first — reads as "export,
+  then optionally delete." Nested inside the row's outer `Pressable` the same way the bin icon is,
+  so tapping it doesn't navigate into the detail screen. Calls `shareRecordingAudio()`
+  (`src/lib/recordings.ts`) with per-row in-flight/error state (`downloadingAudioIds`/
+  `downloadAudioErrors`, keyed by id, same shape as delete's). **Hidden entirely whenever
+  `audio_deleted` is `true` — same condition as the bin icon** — there's no file left to export,
+  so the icon isn't shown disabled, it's simply absent; also defensively hidden if `audio_path`
+  itself is falsy even though `audio_deleted` is false (shouldn't happen given upload-then-insert
+  ordering, but avoids offering a button that would just error if a row ever showed up in that
+  state). See [Audio download](#audio-download) for the full detail (why this one, unlike delete,
+  needed no backend endpoint, and how a cancelled share sheet is distinguished from a real failure).
 - Refresh: the list refetches on every focus (`useFocusEffect`, not a mount-only effect) so
   landing here from a fresh upload — or tabbing back after a second recording — always shows
   current data, since tab screens stay mounted in the background rather than remounting on
@@ -435,6 +460,13 @@ never be able to record + hit upload and only then learn they're blocked.
     [Audio delete](#audio-delete)) now does, with no revisiting of this conditional needed. A
     missing `audio_path` on an otherwise-real row (shouldn't happen, given upload-then-insert — see
     [Upload](#upload)) is handled the same defensive way rather than crashing.
+  - **Download audio (Phase 3 Step 6, done):** see [Audio download](#audio-download) for the full
+    detail — a `DownloadAudioButton` + "Download audio" row renders directly above the delete row
+    (same rationale as the list: export reads naturally before delete), in all of playback's
+    loading/ready/error states, calling the same `shareRecordingAudio()`
+    (`src/lib/recordings.ts`) as the list. Rendered by the same `AudioSection` branches that already
+    gate the delete row on `audio_deleted`/`audio_path` — no separate conditional needed, since both
+    rows return before either is reached whenever there's no audio to act on.
   - **Delete audio (Phase 3 Step 5, done):** see [Audio delete](#audio-delete) for the full detail
     — a `DeleteAudioButton` + "Delete audio" row renders directly below playback (in all of its
     loading/ready/error states, since audio exists in each of those) whenever the recording still
@@ -503,6 +535,112 @@ on this at all.
   manual pass is still needed before calling this step fully done — see
   [Recording cap](#recording-cap)'s "How this was tested" bullet for the equivalent Step 3 pass to
   follow the same shape of.
+
+## Audio download
+
+Phase 3 Step 6 — the last step of Phase 3. Per docs/PROJECT_PLAN.md's "manual Download button"
+spec (Section 2, and Section 3's "save/download buttons"): exports a recording's audio file to the
+user's device via `expo-file-system` + the native share sheet (`expo-sharing`), **not** a raw
+blob/data-URI download — that pattern is unreliable on iOS, the only platform this app runs on via
+Expo Go (see [Conventions](#conventions)). Pairs naturally with [Audio delete](#audio-delete) as an
+"export before delete" flow (download sits first in both the list's `audioActionsRow` and the
+detail screen's stacked rows), but the two are **fully independent actions with no forced
+ordering** — nothing about download touches `audio_deleted`/`audio_path`, and nothing requires a
+download before a delete.
+
+- **No backend endpoint — unlike delete, this is a direct-Supabase-plus-on-device flow.** Playback
+  already established the pattern this reuses: `getRecordingAudioUrl()` (`src/lib/recordings.ts`)
+  gets a signed, time-limited Storage URL, which Storage RLS ("Users can read their own audio
+  files", `0002_storage_bucket.sql`) already scopes correctly to the calling user. Delete needed
+  the backend because it's a Storage delete *and* a DB update that must not disagree (see
+  [Audio delete](#audio-delete)'s reasoning); download is a pure read plus an on-device
+  file/share-sheet operation neither Supabase nor a backend round-trip has any part in, so there's
+  nothing here for a backend endpoint to add beyond latency.
+- **The flow, in `shareRecordingAudio(audioPath)` (`src/lib/recordings.ts`):** (1) confirm
+  `Sharing.isAvailableAsync()` first, so an unavailable share sheet fails clearly rather than after
+  an unnecessary download; (2) get a signed URL via the existing `getRecordingAudioUrl()`; (3)
+  `File.downloadFileAsync()` (`expo-file-system`'s current, non-legacy API — same one
+  `uploadRecording()` already uses for the reverse direction) it into a uniquely-named file
+  (`Date.now()`-suffixed, so two downloads fired close together can't collide) under `Paths.cache`
+  — not `Paths.document`, since the file only needs to survive long enough for the share sheet to
+  read it, and `cache` is the directory the OS is allowed to reclaim under storage pressure; (4)
+  `Sharing.shareAsync()` on that local file, opening the native share sheet (Files, AirDrop,
+  Messages, etc.); (5) delete the temp cache file in a `finally`, regardless of whether anything was
+  actually shared — no reason to accumulate temp copies of already-uploaded audio.
+- **A cancelled share sheet is not an error, by construction, not by a special case in this app's
+  code.** `expo-sharing`'s iOS module resolves `shareAsync()`'s promise identically whether the
+  user completed a share or dismissed the sheet without picking anything (its
+  `completionWithItemsHandler` calls `promise.resolve(nil)` in both the "completed" and the
+  "dismissed without action" branches) — there's no distinct "user cancelled" rejection for this
+  code to catch or suppress. Practically: a cancel just resolves `shareRecordingAudio()` normally,
+  same as a completed share, so the calling screen's in-flight spinner clears with no error text,
+  which is exactly the desired behavior. Only a genuine failure (no network fetching the signed URL,
+  the URL rejecting the download, `isAvailableAsync()` returning `false`) throws and surfaces an
+  inline error.
+- **`audio_deleted` handling:** the download icon isn't rendered at all — not present-but-disabled
+  — whenever `audio_deleted` is `true`, in both the list (`RecordingListItem`'s
+  `!recording.audio_deleted` guard, shared with the bin icon) and the detail screen
+  (`AudioSection`'s early-return branches for `audio_deleted`/missing `audio_path`, shared the same
+  way with the delete row). The list additionally guards on `recording.audio_path` being non-null
+  before rendering the icon — defensive, since `RecordingRow` now selects that column (Step 6 added
+  it to `fetchRecordings()`'s `select()`, which previously only needed it in `RecordingDetail`) —
+  matching the same "don't offer a button that would just fail" judgment already applied elsewhere
+  (e.g. `AudioSection`'s "shouldn't happen, but don't crash" handling of a missing `audio_path`).
+- **Frontend:** `shareRecordingAudio()` is called from both the History list
+  (`RecordingListItem`'s download icon, `handleDownloadAudio` in `HistoryScreen`) and the detail
+  screen (`AudioSection`'s "Download audio" row, `handleDownloadAudio` in
+  `RecordingDetailScreen`) — see [History](#history)'s "Download audio" bullets under both. Same
+  per-row/per-screen in-flight-and-error-state shape already used for delete/regenerate/favorite
+  (`downloadingAudioIds`/`downloadAudioErrors` in the list, a couple of `useState`s in the detail
+  screen) — a failed download on one row doesn't disturb any other row or the rest of the screen.
+- **Dependencies:** `expo-file-system` was already a dependency (used since Phase 1's upload flow
+  for its current `File`/`Paths` API, not the deprecated legacy API); `expo-sharing` is new as of
+  this step, installed via `npx expo install expo-sharing` so npm resolved the SDK-54-compatible
+  version automatically (`~14.0.8`) rather than picking a version by hand.
+- **Verification status:** frontend type-checks clean, but — same caveat as
+  [Audio delete](#audio-delete)'s Step 5 — this hasn't yet been exercised on the physical test
+  iPhone (download from the list and confirm the share sheet opens and a save/share actually
+  completes; same from the detail screen; confirm the icon is genuinely absent, not just disabled,
+  once a recording's audio has been deleted; cancel out of the share sheet once on purpose and
+  confirm no error text appears). That manual pass is the one still needed before trusting this
+  completely — see [Phase 3 assessment](#phase-3-assessment).
+
+## Phase 3 assessment
+
+Same spirit as the Phase 1/Phase 2 wrap-ups: does Phase 3's revised scope (history detail view,
+regenerate, cap enforcement, favorite, manual delete, download — Sections 3/4/5/7 of
+docs/PROJECT_PLAN.md, not the stale Section 6 description) work end-to-end, and what's still shaky
+before starting Phase 4?
+
+- **Built and internally consistent:** every Phase 3 feature above compiles/type-checks together,
+  the backend's existing pytest suite passes, and each feature was designed to compose with the
+  others without hidden coupling — favorite and delete are independent (Step 4), download and
+  delete are independent (Step 6), regenerating a failed row is picked up by the same polling that
+  already existed for a fresh upload (Step 2), and the cap check degrades safely (fails open) if its
+  own query fails (Step 3). No feature in this phase reaches into another's state directly; each
+  goes through the shared `recordings`-row shape and its own small, scoped in-flight/error state.
+- **What's confirmed on a physical device already:** Step 3 (recording cap) — deliberately tested
+  end to end with the cap temporarily lowered to 2, both blocked-at-cap and works-below-cap
+  behavior confirmed, then restored to 30 (see [Recording cap](#recording-cap)'s "How this was
+  tested" bullet). This is the one Phase 3 feature with a real on-device pass already behind it.
+- **What's still shaky — not yet exercised on the physical test iPhone, only type-checked/unit-
+  tested:** Step 1 (detail screen), Step 2 (regenerate, both entry points), Step 4 (favorite, both
+  entry points), Step 5 (delete, both entry points, plus confirming the Storage object is actually
+  gone and `getActiveRecordingCount` actually drops), and Step 6 (download, both entry points, plus
+  the cancelled-share-sheet case specifically). None of these have known bugs — they follow patterns
+  (optimistic vs. non-optimistic state, per-row in-flight tracking, shared components between list
+  and detail) that are already proven elsewhere in the app — but "type-checks and passes unit tests"
+  and "confirmed working in Expo Go against the live Supabase project" are different claims, and
+  only the former is true for five of Phase 3's six steps right now. **Recommend one focused manual
+  pass through History (list and detail, one recording) before starting Phase 4:** favorite it,
+  download its audio (verify the share sheet, verify a cancel produces no error), delete its audio
+  (verify the bin/download icons both disappear, verify the list and detail screens agree), and — on
+  a separate recording — trigger a failure and confirm "Regenerate report" recovers it. That single
+  pass would cover Steps 1, 2, 4, 5, and 6 together.
+- **Nothing found that blocks starting Phase 4** — the shakiness above is "unverified," not
+  "known-broken." Phase 4 (mode selection) does have one concrete carry-over item already flagged
+  in [Recording cap](#recording-cap): the cap check currently lives in the Home tab's record button
+  and needs to move to whatever screen Phase 4 makes the new entry point into recording.
 
 ## Backend
 

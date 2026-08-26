@@ -4,6 +4,7 @@ import { ActivityIndicator, FlatList, Platform, Pressable, RefreshControl, Style
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { DeleteAudioButton } from '@/components/delete-audio-button';
+import { DownloadAudioButton } from '@/components/download-audio-button';
 import { FavoriteStar } from '@/components/favorite-star';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
@@ -14,7 +15,7 @@ import { deleteRecordingAudio, regenerateReport } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
 import { formatRecordedAt } from '@/lib/format-time';
 import { getStatusPresentation, TERMINAL_STATUSES } from '@/lib/recording-status';
-import { fetchRecordings, setFavorite, type RecordingRow } from '@/lib/recordings';
+import { fetchRecordings, setFavorite, shareRecordingAudio, type RecordingRow } from '@/lib/recordings';
 
 // Phase 3 Step 1: rows are now tappable, pushing `history/[id]` for the full
 // detail view (transcript/feedback/metrics/playback). `onPress` is threaded
@@ -40,6 +41,9 @@ function RecordingListItem({
   onDeleteAudio,
   deletingAudio,
   deleteAudioError,
+  onDownloadAudio,
+  downloadingAudio,
+  downloadAudioError,
 }: {
   recording: RecordingRow;
   onPress: () => void;
@@ -51,6 +55,9 @@ function RecordingListItem({
   onDeleteAudio: () => void;
   deletingAudio: boolean;
   deleteAudioError?: string;
+  onDownloadAudio: () => void;
+  downloadingAudio: boolean;
+  downloadAudioError?: string;
 }) {
   const theme = useTheme();
   const status = getStatusPresentation(recording.status, theme);
@@ -73,17 +80,25 @@ function RecordingListItem({
           <ThemedText type="small" themeColor="textSecondary">
             {recording.mode}
           </ThemedText>
-          {/* Per-row audio actions — reserved space for both the bin (this
-              step) and the Step 6 download icon to sit side by side here,
-              separate from the identity/status cluster above (favorite,
-              status badge). Nothing renders once audio_deleted is true —
-              there's no audio left to act on. */}
+          {/* Per-row audio actions — download (Step 6) and delete (Step 5)
+              sit side by side here, separate from the identity/status
+              cluster above (favorite, status badge). Nothing renders once
+              audio_deleted is true — there's no audio left to act on, for
+              either action. */}
           {!recording.audio_deleted && (
             <View style={styles.audioActionsRow}>
+              {recording.audio_path && (
+                <DownloadAudioButton onDownload={onDownloadAudio} pending={downloadingAudio} size={18} />
+              )}
               <DeleteAudioButton onDelete={onDeleteAudio} pending={deletingAudio} size={18} />
             </View>
           )}
         </View>
+        {downloadAudioError && (
+          <ThemedText type="small" style={{ color: '#e5484d' }}>
+            {downloadAudioError}
+          </ThemedText>
+        )}
         {deleteAudioError && (
           <ThemedText type="small" style={{ color: '#e5484d' }}>
             {deleteAudioError}
@@ -137,6 +152,11 @@ export default function HistoryScreen() {
   // as the regenerate state above.
   const [deletingAudioIds, setDeletingAudioIds] = useState<Set<string>>(new Set());
   const [deleteAudioErrors, setDeleteAudioErrors] = useState<Record<string, string>>({});
+
+  // Phase 3 Step 6 — per-row audio-download in-flight/error state, same
+  // shape as delete/regenerate above (independent per row, keyed by id).
+  const [downloadingAudioIds, setDownloadingAudioIds] = useState<Set<string>>(new Set());
+  const [downloadAudioErrors, setDownloadAudioErrors] = useState<Record<string, string>>({});
 
   // Step 7: monotonically-increasing id for each `load()` call, so a
   // response can tell whether a *newer* request has been issued since it
@@ -310,6 +330,42 @@ export default function HistoryScreen() {
     }
   }
 
+  // Phase 3 Step 6 — downloads a recording's audio and opens the native
+  // share sheet (see `shareRecordingAudio` in src/lib/recordings.ts for the
+  // full flow and why a cancelled share sheet isn't treated as a failure
+  // here — the promise resolves the same way on cancel as on a completed
+  // share, so there's nothing to special-case in this handler). Guards on
+  // `audioPath` even though the button is only rendered when one exists
+  // (`RecordingListItem` above) — defensive, matching how the rest of this
+  // file treats a theoretically-missing audio_path.
+  async function handleDownloadAudio(id: string, audioPath: string | null) {
+    if (!audioPath) {
+      setDownloadAudioErrors((prev) => ({ ...prev, [id]: 'No audio file to download.' }));
+      return;
+    }
+    setDownloadingAudioIds((prev) => new Set(prev).add(id));
+    setDownloadAudioErrors((prev) => {
+      if (!(id in prev)) return prev;
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
+    try {
+      await shareRecordingAudio(audioPath);
+    } catch (err) {
+      setDownloadAudioErrors((prev) => ({
+        ...prev,
+        [id]: err instanceof Error ? err.message : 'Could not download audio — try again.',
+      }));
+    } finally {
+      setDownloadingAudioIds((prev) => {
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
+    }
+  }
+
   const showInitialLoading = loading && recordings === null;
   const showEmpty = !loading && !error && recordings?.length === 0;
 
@@ -355,6 +411,9 @@ export default function HistoryScreen() {
                 onDeleteAudio={() => handleDeleteAudio(item.id)}
                 deletingAudio={deletingAudioIds.has(item.id)}
                 deleteAudioError={deleteAudioErrors[item.id]}
+                onDownloadAudio={() => handleDownloadAudio(item.id, item.audio_path)}
+                downloadingAudio={downloadingAudioIds.has(item.id)}
+                downloadAudioError={downloadAudioErrors[item.id]}
               />
             )}
             contentContainerStyle={styles.listContent}

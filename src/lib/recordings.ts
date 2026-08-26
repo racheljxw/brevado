@@ -1,4 +1,5 @@
-import { File } from 'expo-file-system';
+import { File, Paths } from 'expo-file-system';
+import * as Sharing from 'expo-sharing';
 
 import { supabase } from '@/lib/supabase';
 
@@ -43,7 +44,9 @@ export class RecordingUploadError extends Error {
 // just the detail screen) since the star toggle now lives on both.
 // `audio_deleted` was added in Phase 3 Step 5 — the list needs to know
 // whether a row still has audio to show/hide the delete action and (Step 6)
-// the download action correctly per row.
+// the download action correctly per row. `audio_path` was added in Step 6 —
+// the list needs the actual Storage path to download from, not just the
+// boolean; the detail screen already selected it (`RecordingDetail` below).
 export type RecordingRow = {
   id: string;
   mode: string;
@@ -51,12 +54,13 @@ export type RecordingRow = {
   created_at: string;
   favorite: boolean;
   audio_deleted: boolean;
+  audio_path: string | null;
 };
 
 export async function fetchRecordings(userId: string): Promise<RecordingRow[]> {
   const { data, error } = await supabase
     .from('recordings')
-    .select('id, mode, status, created_at, favorite, audio_deleted')
+    .select('id, mode, status, created_at, favorite, audio_deleted, audio_path')
     .eq('user_id', userId)
     .order('created_at', { ascending: false });
   if (error) {
@@ -182,6 +186,63 @@ function extensionOf(localUri: string): string {
 // timestamp so we don't need a pre-existing recording id to name the file.
 export function buildAudioPath(userId: string, localUri: string): string {
   return `${userId}/${Date.now()}.${extensionOf(localUri)}`;
+}
+
+/**
+ * Phase 3 Step 6 — downloads a recording's audio to a temp local file and
+ * hands it to the native share sheet so the user can save/export it
+ * wherever they want (Files app, AirDrop, Messages, etc.).
+ *
+ * Deliberately not a raw blob/data-URI download — per docs/PROJECT_PLAN.md's
+ * approach, that pattern (works fine on web) is unreliable on iOS, which is
+ * the only platform this app runs on via Expo Go (see docs/CLAUDE.md's
+ * Conventions section). The reliable path is: get a signed Storage URL (the
+ * same helper `AudioSection`'s playback already uses), download it to a
+ * real file on-device with `expo-file-system`, then open the OS share sheet
+ * on that local file with `expo-sharing` — the same two packages the
+ * project plan calls for.
+ *
+ * The downloaded file goes in `Paths.cache`, not `Paths.document` — it only
+ * needs to survive long enough for the share sheet to hand it off, and the
+ * cache directory is the one the OS is allowed to reclaim under storage
+ * pressure. It's named uniquely per call (`Date.now()`) so two downloads
+ * fired close together (e.g. one per row, tapped quickly) can't collide on
+ * the same path mid-flight, and it's deleted again once the share sheet
+ * closes, whether or not anything was actually shared — no reason to
+ * accumulate temp copies of already-uploaded audio in the cache.
+ *
+ * Cancelling the share sheet is NOT a failure worth surfacing: iOS's
+ * `UIActivityViewController` (via `expo-sharing`'s native module) resolves
+ * this same promise on a clean dismiss exactly the way it does on a
+ * completed share — there is no separate "user cancelled" rejection to
+ * catch. Only a genuine failure (no network, a bad/expired signed URL,
+ * sharing unavailable on this device) throws here.
+ */
+export async function shareRecordingAudio(audioPath: string): Promise<void> {
+  const canShare = await Sharing.isAvailableAsync();
+  if (!canShare) {
+    throw new Error("Sharing isn't available on this device.");
+  }
+
+  const url = await getRecordingAudioUrl(audioPath);
+  const extension = extensionOf(audioPath);
+  const destination = new File(Paths.cache, `brevado-recording-${Date.now()}.${extension}`);
+
+  const downloaded = await File.downloadFileAsync(url, destination, { idempotent: true });
+  try {
+    await Sharing.shareAsync(downloaded.uri, {
+      mimeType: CONTENT_TYPES_BY_EXTENSION[extension] ?? 'application/octet-stream',
+      dialogTitle: 'Save recording',
+    });
+  } finally {
+    try {
+      downloaded.delete();
+    } catch {
+      // Best-effort cleanup only — a leftover cache file isn't worth
+      // surfacing an error over, and the OS can reclaim Paths.cache under
+      // storage pressure regardless.
+    }
+  }
 }
 
 /**

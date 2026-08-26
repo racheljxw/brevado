@@ -5,6 +5,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { AudioPlaybackControls } from '@/components/audio-playback-controls';
 import { DeleteAudioButton } from '@/components/delete-audio-button';
+import { DownloadAudioButton } from '@/components/download-audio-button';
 import { FavoriteStar } from '@/components/favorite-star';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
@@ -18,6 +19,7 @@ import {
   fetchRecordingById,
   getRecordingAudioUrl,
   setFavorite,
+  shareRecordingAudio,
   type RecordingDetail,
   type RecordingMetrics,
 } from '@/lib/recordings';
@@ -60,11 +62,17 @@ function AudioSection({
   onDeleteAudio,
   deletingAudio,
   deleteAudioError,
+  onDownloadAudio,
+  downloadingAudio,
+  downloadAudioError,
 }: {
   recording: RecordingDetail;
   onDeleteAudio: () => void;
   deletingAudio: boolean;
   deleteAudioError: string | null;
+  onDownloadAudio: () => void;
+  downloadingAudio: boolean;
+  downloadAudioError: string | null;
 }) {
   const theme = useTheme();
   const [audioState, setAudioState] = useState<AudioState>('idle');
@@ -115,6 +123,27 @@ function AudioSection({
     );
   }
 
+  // Phase 3 Step 6 — the download/export action, rendered above delete
+  // (below) for the same reason both exist in the list's `audioActionsRow`
+  // side by side — this pairs naturally with delete as an "export before
+  // delete" flow, though the two are fully independent (no forced
+  // ordering, no dependency between them). Rendered in every playback state
+  // just like delete — audio exists to download whether or not the
+  // playback signed URL happened to load successfully.
+  const downloadRow = (
+    <View style={styles.deleteAudioRow}>
+      <DownloadAudioButton onDownload={onDownloadAudio} pending={downloadingAudio} />
+      <ThemedText type="small" themeColor="textSecondary">
+        Download audio
+      </ThemedText>
+      {downloadAudioError && (
+        <ThemedText type="small" style={{ color: '#e5484d' }}>
+          {downloadAudioError}
+        </ThemedText>
+      )}
+    </View>
+  );
+
   // Phase 3 Step 5 — the delete action itself, rendered below playback
   // regardless of whether playback is still loading/ready/errored (audio
   // exists in all three of those states, so there's always something to
@@ -140,6 +169,7 @@ function AudioSection({
         <View style={styles.centerRow}>
           <ActivityIndicator color={theme.textSecondary} />
         </View>
+        {downloadRow}
         {deleteRow}
       </>
     );
@@ -154,6 +184,7 @@ function AudioSection({
             <ThemedText type="linkPrimary">Retry</ThemedText>
           </Pressable>
         </ThemedView>
+        {downloadRow}
         {deleteRow}
       </>
     );
@@ -162,6 +193,7 @@ function AudioSection({
   return (
     <>
       <AudioPlaybackControls uri={audioUrl!} />
+      {downloadRow}
       {deleteRow}
     </>
   );
@@ -290,6 +322,8 @@ export default function RecordingDetailScreen() {
   const [favoritePending, setFavoritePending] = useState(false);
   const [deletingAudio, setDeletingAudio] = useState(false);
   const [deleteAudioError, setDeleteAudioError] = useState<string | null>(null);
+  const [downloadingAudio, setDownloadingAudio] = useState(false);
+  const [downloadAudioError, setDownloadAudioError] = useState<string | null>(null);
 
   // Shared with the silent poll below, same purpose as the History list's
   // own `requestSeqRef` (Phase 2 Step 7): only the response matching the
@@ -420,6 +454,27 @@ export default function RecordingDetailScreen() {
     }
   }, [recording]);
 
+  // Phase 3 Step 6 — same "not an error" reasoning as the list's
+  // `handleDownloadAudio` (`history/index.tsx`): `shareRecordingAudio`
+  // resolves the same way whether the user actually shared the file or
+  // dismissed the share sheet, so there's nothing to special-case for a
+  // cancel here either — only a genuine failure lands in `downloadAudioError`.
+  const handleDownloadAudio = useCallback(async () => {
+    if (!recording?.audio_path) {
+      setDownloadAudioError('No audio file to download.');
+      return;
+    }
+    setDownloadingAudio(true);
+    setDownloadAudioError(null);
+    try {
+      await shareRecordingAudio(recording.audio_path);
+    } catch (err) {
+      setDownloadAudioError(err instanceof Error ? err.message : 'Could not download audio — try again.');
+    } finally {
+      setDownloadingAudio(false);
+    }
+  }, [recording]);
+
   const status = recording ? getStatusPresentation(recording.status, theme) : null;
 
   return (
@@ -477,6 +532,9 @@ export default function RecordingDetailScreen() {
                 onDeleteAudio={handleDeleteAudio}
                 deletingAudio={deletingAudio}
                 deleteAudioError={deleteAudioError}
+                onDownloadAudio={handleDownloadAudio}
+                downloadingAudio={downloadingAudio}
+                downloadAudioError={downloadAudioError}
               />
             </View>
 
