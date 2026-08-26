@@ -1,4 +1,4 @@
-import { useFocusEffect } from 'expo-router';
+import { useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, FlatList, Platform, Pressable, RefreshControl, StyleSheet, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -9,66 +9,45 @@ import { WebBadge } from '@/components/web-badge';
 import { BottomTabInset, MaxContentWidth, Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import { useAuth } from '@/lib/auth-context';
+import { formatRecordedAt } from '@/lib/format-time';
+import { getStatusPresentation } from '@/lib/recording-status';
 import { fetchRecordings, type RecordingRow } from '@/lib/recordings';
-
-function formatRecordedAt(isoString: string): string {
-  const date = new Date(isoString);
-  const dateLabel = date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-  const timeLabel = date.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
-  return `${dateLabel} · ${timeLabel}`;
-}
 
 // A row is done polling for status once it lands here — see the `load()`
 // interval below.
 const TERMINAL_STATUSES = new Set(['done', 'failed']);
 
-// Step 7: `failed` needs to visually jump out from `pending`/`processing` —
-// it's the thing that means the (Phase 3) "Regenerate report" action is
-// actually needed, not just "still working". Raw hex here (not a theme
-// token) matches the existing convention for status-ish color elsewhere in
-// the app (e.g. the red record/error accents in index.tsx) — these colors
-// are deliberately the same in light and dark mode.
-function getStatusPresentation(
-  status: string,
-  theme: ReturnType<typeof useTheme>
-): { backgroundColor: string; textColor: string; label: string } {
-  switch (status) {
-    case 'failed':
-      return { backgroundColor: 'rgba(229, 72, 77, 0.16)', textColor: '#e5484d', label: 'Failed' };
-    case 'done':
-      return { backgroundColor: 'rgba(48, 164, 108, 0.16)', textColor: '#30a46c', label: 'Done' };
-    case 'processing':
-      return { backgroundColor: theme.backgroundSelected, textColor: theme.textSecondary, label: 'Processing…' };
-    case 'pending':
-    default:
-      return { backgroundColor: theme.backgroundSelected, textColor: theme.textSecondary, label: 'Pending' };
-  }
-}
-
-function RecordingListItem({ recording }: { recording: RecordingRow }) {
+// Phase 3 Step 1: rows are now tappable, pushing `history/[id]` for the full
+// detail view (transcript/feedback/metrics/playback). `onPress` is threaded
+// through rather than reading `useRouter()` in here so this stays a plain
+// presentational component.
+function RecordingListItem({ recording, onPress }: { recording: RecordingRow; onPress: () => void }) {
   const theme = useTheme();
   const status = getStatusPresentation(recording.status, theme);
 
   return (
-    <ThemedView type="backgroundElement" style={styles.row}>
-      <View style={styles.rowHeader}>
-        <ThemedText type="smallBold">{formatRecordedAt(recording.created_at)}</ThemedText>
-        <View style={[styles.statusBadge, { backgroundColor: status.backgroundColor }]}>
-          <ThemedText type="smallBold" style={{ color: status.textColor }}>
-            {status.label}
-          </ThemedText>
+    <Pressable onPress={onPress} style={({ pressed }) => pressed && styles.pressed}>
+      <ThemedView type="backgroundElement" style={styles.row}>
+        <View style={styles.rowHeader}>
+          <ThemedText type="smallBold">{formatRecordedAt(recording.created_at)}</ThemedText>
+          <View style={[styles.statusBadge, { backgroundColor: status.backgroundColor }]}>
+            <ThemedText type="smallBold" style={{ color: status.textColor }}>
+              {status.label}
+            </ThemedText>
+          </View>
         </View>
-      </View>
-      <ThemedText type="small" themeColor="textSecondary">
-        {recording.mode}
-      </ThemedText>
-    </ThemedView>
+        <ThemedText type="small" themeColor="textSecondary">
+          {recording.mode}
+        </ThemedText>
+      </ThemedView>
+    </Pressable>
   );
 }
 
 export default function HistoryScreen() {
   const { user } = useAuth();
   const theme = useTheme();
+  const router = useRouter();
 
   // null = not fetched yet, distinct from "fetched and empty".
   const [recordings, setRecordings] = useState<RecordingRow[] | null>(null);
@@ -109,9 +88,10 @@ export default function HistoryScreen() {
   }, [user]);
 
   // Refetch every time this tab gains focus (e.g. arriving here right after
-  // an upload from the Home tab), not just on first mount — a plain mount
-  // effect wouldn't see recordings created since the screen last loaded,
-  // since tabs stay mounted in the background rather than remounting.
+  // an upload from the Home tab, or backing out of a detail screen), not
+  // just on first mount — a plain mount effect wouldn't see recordings
+  // created since the screen last loaded, since tabs stay mounted in the
+  // background rather than remounting on switch.
   useFocusEffect(
     useCallback(() => {
       load();
@@ -192,7 +172,12 @@ export default function HistoryScreen() {
           <FlatList
             data={recordings ?? []}
             keyExtractor={(item) => item.id}
-            renderItem={({ item }) => <RecordingListItem recording={item} />}
+            renderItem={({ item }) => (
+              <RecordingListItem
+                recording={item}
+                onPress={() => router.push({ pathname: '/history/[id]', params: { id: item.id } })}
+              />
+            )}
             contentContainerStyle={styles.listContent}
             refreshControl={
               <RefreshControl refreshing={refreshing} onRefresh={handleRefresh} tintColor={theme.textSecondary} />
@@ -254,5 +239,8 @@ const styles = StyleSheet.create({
     padding: Spacing.three,
     borderRadius: Spacing.three,
     marginBottom: Spacing.two,
+  },
+  pressed: {
+    opacity: 0.7,
   },
 });

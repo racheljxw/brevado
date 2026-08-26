@@ -1,17 +1,10 @@
-import {
-  AudioModule,
-  RecordingPresets,
-  setAudioModeAsync,
-  useAudioPlayer,
-  useAudioPlayerStatus,
-  useAudioRecorder,
-  useAudioRecorderState,
-} from 'expo-audio';
+import { AudioModule, RecordingPresets, setAudioModeAsync, useAudioRecorder, useAudioRecorderState } from 'expo-audio';
 import { useRouter } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Animated, Linking, Platform, Pressable, StyleSheet, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { AudioPlaybackControls } from '@/components/audio-playback-controls';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { WebBadge } from '@/components/web-badge';
@@ -42,39 +35,13 @@ function RecordingPlayback({
   onDiscard: () => void;
 }) {
   const theme = useTheme();
-  const player = useAudioPlayer(uri);
-  const status = useAudioPlayerStatus(player);
-
-  const togglePlayback = () => {
-    if (status.playing) {
-      player.pause();
-      return;
-    }
-    if (status.didJustFinish) {
-      player.seekTo(0);
-    }
-    player.play();
-  };
-
-  const progress = status.duration > 0 ? status.currentTime / status.duration : 0;
   const isUploading = uploadState === 'uploading';
 
   return (
     <ThemedView type="backgroundElement" style={styles.playbackCard}>
       <ThemedText type="smallBold">{uploadState === 'done' ? 'Uploaded' : 'Recording ready'}</ThemedText>
 
-      <Pressable
-        style={({ pressed }) => [styles.playButton, { borderColor: theme.text }, pressed && styles.pressed]}
-        onPress={togglePlayback}>
-        <ThemedText type="smallBold">{status.playing ? 'Pause' : 'Play'}</ThemedText>
-      </Pressable>
-
-      <View style={[styles.progressTrack, { backgroundColor: theme.backgroundSelected }]}>
-        <View style={[styles.progressFill, { backgroundColor: theme.text, width: `${progress * 100}%` }]} />
-      </View>
-      <ThemedText type="small" themeColor="textSecondary">
-        {formatDuration(status.currentTime)} / {formatDuration(status.duration)}
-      </ThemedText>
+      <AudioPlaybackControls uri={uri} />
 
       <ThemedText type="code" themeColor="textSecondary" style={styles.uriLabel} numberOfLines={2}>
         {uri}
@@ -416,15 +383,6 @@ const styles = StyleSheet.create({
     paddingVertical: Spacing.two,
     borderRadius: Spacing.five,
     borderWidth: StyleSheet.hairlineWidth,
-  },
-  progressTrack: {
-    alignSelf: 'stretch',
-    height: 4,
-    borderRadius: 2,
-    overflow: 'hidden',
-  },
-  progressFill: {
-    height: '100%',
   },
   uriLabel: {
     textAlign: 'center',

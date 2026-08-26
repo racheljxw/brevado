@@ -46,6 +46,69 @@ export async function fetchRecordings(userId: string): Promise<RecordingRow[]> {
   return data ?? [];
 }
 
+// Shape stored in `recordings.metrics` (Phase 2 Step 4) — see
+// docs/CLAUDE.md's "Metrics" section for what each field means and why
+// `words_per_minute` in particular can come back null.
+export type RecordingMetrics = {
+  filler_word_rate: number | null;
+  words_per_minute: number | null;
+  repetition_count: number | null;
+  word_count: number | null;
+};
+
+// The full row, for the Phase 3 Step 1 detail screen — everything
+// `RecordingRow` has plus the fields the list view doesn't need.
+export type RecordingDetail = {
+  id: string;
+  mode: string;
+  question: string | null;
+  status: string;
+  created_at: string;
+  transcript: string | null;
+  feedback: string | null;
+  metrics: RecordingMetrics | null;
+  audio_path: string | null;
+  audio_deleted: boolean;
+  favorite: boolean;
+};
+
+/**
+ * Fetches a single recording by id for the detail screen.
+ *
+ * Deliberately doesn't filter by `user_id` itself — RLS ("Users can view
+ * their own recordings", 0001_initial_schema.sql) already scopes the select
+ * to `auth.uid()`, so a bad id and someone else's id both just come back as
+ * no row, which `maybeSingle()` surfaces as `null` instead of throwing. That
+ * gives the not-found screen for free rather than needing a second check.
+ */
+export async function fetchRecordingById(id: string): Promise<RecordingDetail | null> {
+  const { data, error } = await supabase
+    .from('recordings')
+    .select('id, mode, question, status, created_at, transcript, feedback, metrics, audio_path, audio_deleted, favorite')
+    .eq('id', id)
+    .maybeSingle();
+  if (error) {
+    throw error;
+  }
+  return data;
+}
+
+/**
+ * Signed, time-limited URL for playing back a recording's audio from the
+ * private `recordings-audio` bucket. Storage RLS ("Users can read their own
+ * audio files", 0002_storage_bucket.sql) means this only succeeds for the
+ * calling user's own files, same as the table-level RLS above.
+ */
+export async function getRecordingAudioUrl(audioPath: string): Promise<string> {
+  const { data, error } = await supabase.storage
+    .from(RECORDINGS_BUCKET)
+    .createSignedUrl(audioPath, 60 * 60); // 1 hour — comfortably longer than anyone spends on this screen
+  if (error || !data?.signedUrl) {
+    throw new Error(error?.message ?? 'Could not create a playback link for this recording.');
+  }
+  return data.signedUrl;
+}
+
 function extensionOf(localUri: string): string {
   const match = localUri.match(/\.([a-zA-Z0-9]+)$/);
   return match ? match[1].toLowerCase() : 'm4a';

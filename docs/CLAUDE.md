@@ -26,11 +26,15 @@ below for exactly what's real. **No stubs remain anywhere in the pipeline** — 
 metrics -> feedback are all real Gemini/code calls end to end, `status: done` means the full
 pipeline actually ran (retrying once inline if either Gemini-calling stage fails), and the
 frontend reflects that status accurately and promptly without flashing stale data.
-**Phase 3 (history, retention & retry UI) is next** — notably, the "Regenerate report" 3-dot-menu
-flow described in docs/PROJECT_PLAN.md Section 3 does **not exist yet**, backend or frontend; only
-the automatic in-pipeline retry (Step 6, this phase) is built so far. See
-[Background processing](#background-processing) for what Phase 3 will need to wire up. We're
-working phase-by-phase and step-by-step within a phase; don't reach ahead without being asked.
+**Phase 3 — History, retention & retry — in progress. Step 1 (full history detail view) is done**;
+see [History](#history)'s "Detail screen" bullet for exactly what it shows. The "Regenerate
+report" 3-dot-menu flow described in docs/PROJECT_PLAN.md Section 3 does **not exist yet**,
+backend or frontend (that's Step 2); only the automatic in-pipeline retry (Phase 2 Step 6) is
+built so far. See [Background processing](#background-processing) for what Step 2 will need to
+wire up, and note docs/PROJECT_PLAN.md Section 6's phase descriptions are stale (still describe
+the old Celery/time-based retention plan) — Sections 3, 4, 5, and 7 reflect the current
+zero-cost, cap-based, manual-delete architecture and are the ones to trust. We're working
+phase-by-phase and step-by-step within a phase; don't reach ahead without being asked.
 
 ## Tech stack
 
@@ -116,9 +120,11 @@ live under a `{user_id}/...` path prefix, enforced by storage RLS policies in
   reach for out of habit — see Conventions below).
 - The recording screen lives at `src/app/(tabs)/index.tsx` (the Home tab) — it replaces the
   template's placeholder content rather than living at a separate route, since recording is the
-  core home-screen action per the project plan. `RecordingPlayback`, the play/pause + progress UI
-  shown after stopping, is a private component in the same file; split it out only if another
-  screen needs it.
+  core home-screen action per the project plan. `RecordingPlayback`, the upload/keep/discard UI
+  shown after stopping, is a private component in the same file, but its play/pause + progress bar
+  controls now live in `AudioPlaybackControls` (`src/components/audio-playback-controls.tsx`),
+  extracted in Phase 3 Step 1 once the History detail screen needed the exact same controls for a
+  recording's already-uploaded audio — see [History](#history).
 - Flow: `useAudioRecorder(RecordingPresets.HIGH_QUALITY)` + `useAudioRecorderState` drive
   record/stop and the elapsed-time counter; on stop, `recorder.uri` (the local file URI) is kept
   in state and handed to a `useAudioPlayer`-backed playback view, which now also carries the
@@ -167,21 +173,25 @@ live under a `{user_id}/...` path prefix, enforced by storage RLS policies in
 
 ## History
 
-- Lives at `src/app/(tabs)/history.tsx` — this **replaces the scaffold's placeholder "Explore"
-  tab** rather than adding a third tab (`app-tabs.tsx` and `app-tabs.web.tsx` were updated
-  accordingly: `NativeTabs.Trigger`/`TabTrigger` name and route both renamed `explore` →
-  `history`). The tab still reuses the scaffold's `explore.png` icon — there's no dedicated
-  history icon asset yet; swap it whenever one exists.
+- The list lives at `src/app/(tabs)/history/index.tsx` — this **replaces the scaffold's
+  placeholder "Explore" tab** rather than adding a third tab (`app-tabs.tsx` and
+  `app-tabs.web.tsx` were updated accordingly: `NativeTabs.Trigger`/`TabTrigger` name and route
+  both renamed `explore` → `history`). The tab still reuses the scaffold's `explore.png` icon —
+  there's no dedicated history icon asset yet; swap it whenever one exists. As of Phase 3 Step 1,
+  `history.tsx` became this directory (plus `[id].tsx` and `_layout.tsx` — see the detail-screen
+  bullet below) so a tapped row can push a nested route; `NativeTabs.Trigger name="history"` /
+  `TabTrigger href="/history"` still resolve to this directory's `index.tsx` exactly as before,
+  so nothing about the tab itself changed.
 - Query logic is `fetchRecordings()` in `src/lib/recordings.ts`, alongside the upload logic —
-  selects `id, mode, status, created_at` for the current user ordered by `created_at desc`. It
-  only selects those four columns; widen it (or use `select('*')`) once Phase 3's detail view
-  needs `transcript`/`feedback`/`metrics` too.
+  selects `id, mode, status, created_at` for the current user ordered by `created_at desc`. It's
+  intentionally still just those four columns for the list — the detail screen (below) widens to
+  the full row with its own separate query, `fetchRecordingById()`, rather than this one growing a
+  `select('*')` the list itself doesn't need.
 - **What it shows right now, deliberately sparse**: date/time, mode, and status per row in a flat
-  list — no transcript/feedback text shown yet even though the pipeline now generates real ones
-  (Phase 3 adds the detail view that surfaces them), and rows aren't tappable yet either. Mode
-  still always reads `miscellaneous` since Phase 4's mode selection doesn't exist yet — that part
-  is still expected, not a bug — but `status` now genuinely moves `pending` -> `processing` ->
-  `done`/`failed` as the real backend pipeline runs, not a placeholder value.
+  list — no transcript/feedback text inline (the Phase 3 Step 1 detail screen, below, is where that
+  lives). Mode still always reads `miscellaneous` since Phase 4's mode selection doesn't exist yet
+  — that part is still expected, not a bug — but `status` now genuinely moves `pending` ->
+  `processing` -> `done`/`failed` as the real backend pipeline runs, not a placeholder value.
 - **Status is visually distinct per state (Step 7):** `RecordingListItem`'s status badge colors
   `failed` red and `done` green (raw hex, not theme tokens, matching the same red already used for
   the record/error accents elsewhere in the app; same in light and dark mode) so a failed recording
@@ -221,6 +231,40 @@ live under a `{user_id}/...` path prefix, enforced by storage RLS policies in
   "done" confirmation state is intentionally left in place (not reset) underneath — tabbing back
   to Home still shows "Uploaded" + the recording id + "Record another", rather than silently
   resetting a screen the user didn't touch.
+- **Detail screen (Phase 3 Step 1, done):** tapping a row pushes `src/app/(tabs)/history/[id].tsx`
+  (`router.push({ pathname: '/history/[id]', params: { id } })` from `RecordingListItem`), a
+  dynamic Expo Router route sitting alongside `index.tsx` in the same `history/` directory —
+  `history/_layout.tsx` wraps both in a headerless `Stack` (matching every other screen's
+  no-native-header convention) rather than letting the default nested-stack header appear only
+  here. It fetches the full row with a new `fetchRecordingById()` (`src/lib/recordings.ts`;
+  relies on the existing `recordings` select RLS policy to make a bad id or another user's id come
+  back as `null` instead of a 403 the frontend has to special-case) and shows date/time, mode, a
+  status badge (`getStatusPresentation`, pulled out of the list into `src/lib/recording-status.ts`
+  so both screens render status identically), audio playback, transcript, feedback, and metrics
+  (filler-word rate shown as a rounded percentage, words-per-minute, and repetition count — plain
+  text/numbers, no charts or scoring visuals, which is Phase 5). Loading and not-found/error states
+  (bad id, RLS-blocked id, or a genuine fetch failure) are all handled explicitly, the last two with
+  a Retry action.
+  - **`status === 'failed'`** shows a clear failed notice instead of a transcript/feedback/metrics
+    section — there isn't one, since a transcription failure marks the row failed with nothing else
+    attempted (see [AI processing endpoint](#ai-processing-endpoint)) — and notes that a manual
+    "Regenerate report" action doesn't exist yet (Phase 3 Step 2). `pending`/`processing` (a row can
+    be tapped into straight from History before the pipeline finishes) shows a plain "still
+    processing" notice instead, rather than rendering `null` transcript/feedback as if that were the
+    real, finished content.
+  - **Audio playback reuses the exact `expo-audio` pattern from the Phase 1 record-and-preview
+    flow**, now extracted into a shared `AudioPlaybackControls` component
+    (`src/components/audio-playback-controls.tsx`; see [Recording](#recording)) so this screen and
+    the Home tab's post-recording preview don't duplicate the play/pause/progress-bar logic.
+    Playback here is driven by a signed Storage URL (`getRecordingAudioUrl()`, 1-hour expiry,
+    `src/lib/recordings.ts` — the `recordings-audio` bucket is private, so this is how the client
+    gets a fetchable URI at all) rather than a local file, but `useAudioPlayer(uri)` doesn't care
+    which kind of URI it's given, so no extra branching was needed in the shared component itself.
+  - **`audio_deleted` is checked and shows a clear "audio deleted" message in place of playback
+    controls**, built now even though nothing sets that flag `true` yet (Phase 3 Step 5, manual
+    delete, isn't built) — so this screen doesn't need revisiting once it is. A missing
+    `audio_path` on an otherwise-real row (shouldn't happen, given upload-then-insert — see
+    [Upload](#upload)) is handled the same defensive way rather than crashing.
 
 ## Backend
 
