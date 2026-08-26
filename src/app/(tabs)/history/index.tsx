@@ -8,20 +8,38 @@ import { ThemedView } from '@/components/themed-view';
 import { WebBadge } from '@/components/web-badge';
 import { BottomTabInset, MaxContentWidth, Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
+import { regenerateReport } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
 import { formatRecordedAt } from '@/lib/format-time';
-import { getStatusPresentation } from '@/lib/recording-status';
+import { getStatusPresentation, TERMINAL_STATUSES } from '@/lib/recording-status';
 import { fetchRecordings, type RecordingRow } from '@/lib/recordings';
-
-// A row is done polling for status once it lands here — see the `load()`
-// interval below.
-const TERMINAL_STATUSES = new Set(['done', 'failed']);
 
 // Phase 3 Step 1: rows are now tappable, pushing `history/[id]` for the full
 // detail view (transcript/feedback/metrics/playback). `onPress` is threaded
 // through rather than reading `useRouter()` in here so this stays a plain
 // presentational component.
-function RecordingListItem({ recording, onPress }: { recording: RecordingRow; onPress: () => void }) {
+//
+// Phase 3 Step 2: a `failed` row also gets its own "Regenerate report"
+// affordance, nested inside the row's outer `Pressable` (which still
+// navigates to the detail view on tap elsewhere in the row) — React
+// Native's touch responder system gives the inner `Pressable` exclusive
+// claim on its own taps, so pressing it doesn't also trigger navigation.
+// The spec calls for this living in a 3-dot menu; a plain inline text
+// action reads just as clearly at this app's scale and needs no new menu
+// component, so that's what's here for now.
+function RecordingListItem({
+  recording,
+  onPress,
+  onRegenerate,
+  regenerating,
+  regenerateError,
+}: {
+  recording: RecordingRow;
+  onPress: () => void;
+  onRegenerate: () => void;
+  regenerating: boolean;
+  regenerateError?: string;
+}) {
   const theme = useTheme();
   const status = getStatusPresentation(recording.status, theme);
 
@@ -39,6 +57,23 @@ function RecordingListItem({ recording, onPress }: { recording: RecordingRow; on
         <ThemedText type="small" themeColor="textSecondary">
           {recording.mode}
         </ThemedText>
+
+        {recording.status === 'failed' && (
+          <View style={styles.regenerateRow}>
+            <Pressable onPress={onRegenerate} disabled={regenerating} hitSlop={8}>
+              {regenerating ? (
+                <ActivityIndicator size="small" color={theme.textSecondary} />
+              ) : (
+                <ThemedText type="linkPrimary">Regenerate report</ThemedText>
+              )}
+            </Pressable>
+            {regenerateError && (
+              <ThemedText type="small" style={{ color: '#e5484d' }}>
+                {regenerateError}
+              </ThemedText>
+            )}
+          </View>
+        )}
       </ThemedView>
     </Pressable>
   );
@@ -54,6 +89,13 @@ export default function HistoryScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Phase 3 Step 2: per-row "Regenerate report" state — keyed by recording
+  // id since any number of failed rows could be regenerated independently
+  // (each gets its own in-flight spinner / error message, not a single
+  // list-wide one).
+  const [regeneratingIds, setRegeneratingIds] = useState<Set<string>>(new Set());
+  const [regenerateErrors, setRegenerateErrors] = useState<Record<string, string>>({});
 
   // Step 7: monotonically-increasing id for each `load()` call, so a
   // response can tell whether a *newer* request has been issued since it
@@ -139,6 +181,38 @@ export default function HistoryScreen() {
     load();
   }
 
+  async function handleRegenerate(id: string) {
+    setRegeneratingIds((prev) => new Set(prev).add(id));
+    setRegenerateErrors((prev) => {
+      if (!(id in prev)) return prev;
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
+    try {
+      await regenerateReport(id);
+      // Optimistically flip this row to 'processing' (what
+      // `process_recording()` sets as its first step regardless of entry
+      // point — see `src/lib/api.ts`) so it reads as back in progress
+      // immediately and so the polling effect above — which already
+      // refetches whenever *any* row is non-terminal — picks it up on its
+      // very next tick instead of waiting on a stale 'failed' row to be
+      // overwritten by a slower background update.
+      setRecordings((prev) => prev?.map((row) => (row.id === id ? { ...row, status: 'processing' } : row)) ?? prev);
+    } catch (err) {
+      setRegenerateErrors((prev) => ({
+        ...prev,
+        [id]: err instanceof Error ? err.message : 'Could not regenerate.',
+      }));
+    } finally {
+      setRegeneratingIds((prev) => {
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
+    }
+  }
+
   const showInitialLoading = loading && recordings === null;
   const showEmpty = !loading && !error && recordings?.length === 0;
 
@@ -176,6 +250,9 @@ export default function HistoryScreen() {
               <RecordingListItem
                 recording={item}
                 onPress={() => router.push({ pathname: '/history/[id]', params: { id: item.id } })}
+                onRegenerate={() => handleRegenerate(item.id)}
+                regenerating={regeneratingIds.has(item.id)}
+                regenerateError={regenerateErrors[item.id]}
               />
             )}
             contentContainerStyle={styles.listContent}
@@ -233,6 +310,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.two,
     paddingVertical: Spacing.half,
     borderRadius: Spacing.three,
+  },
+  regenerateRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.two,
+    marginTop: Spacing.half,
   },
   errorCard: {
     gap: Spacing.two,

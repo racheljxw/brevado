@@ -1,5 +1,5 @@
-import { useLocalSearchParams, useRouter } from 'expo-router';
-import { useCallback, useEffect, useState } from 'react';
+import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Platform, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -9,8 +9,9 @@ import { ThemedView } from '@/components/themed-view';
 import { WebBadge } from '@/components/web-badge';
 import { BottomTabInset, MaxContentWidth, Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
+import { regenerateReport } from '@/lib/api';
 import { formatRecordedAt } from '@/lib/format-time';
-import { getStatusPresentation } from '@/lib/recording-status';
+import { getStatusPresentation, TERMINAL_STATUSES } from '@/lib/recording-status';
 import {
   fetchRecordingById,
   getRecordingAudioUrl,
@@ -130,7 +131,19 @@ function AudioSection({ recording }: { recording: RecordingDetail }) {
 // nothing else attempted); `pending`/`processing` shows a plain "still
 // working" notice since a row can be tapped into straight from History
 // before the pipeline finishes.
-function ReportSection({ recording }: { recording: RecordingDetail }) {
+function ReportSection({
+  recording,
+  onRegenerate,
+  regenerating,
+  regenerateError,
+}: {
+  recording: RecordingDetail;
+  onRegenerate: () => void;
+  regenerating: boolean;
+  regenerateError: string | null;
+}) {
+  const theme = useTheme();
+
   if (recording.status === 'failed') {
     return (
       <ThemedView type="backgroundElement" style={styles.card}>
@@ -139,9 +152,27 @@ function ReportSection({ recording }: { recording: RecordingDetail }) {
         </ThemedText>
         <ThemedText type="small" themeColor="textSecondary">
           This recording has no transcript, metrics, or feedback — generating its report failed even after an
-          automatic retry. A manual &quot;Regenerate report&quot; action isn&apos;t available yet (coming in a
-          later Phase 3 step).
+          automatic retry.
         </ThemedText>
+        {regenerateError && (
+          <ThemedText type="small" style={{ color: '#e5484d' }}>
+            {regenerateError}
+          </ThemedText>
+        )}
+        <Pressable
+          style={({ pressed }) => [
+            styles.regenerateButton,
+            { borderColor: theme.text },
+            (pressed || regenerating) && styles.pressed,
+          ]}
+          disabled={regenerating}
+          onPress={onRegenerate}>
+          {regenerating ? (
+            <ActivityIndicator size="small" color={theme.text} />
+          ) : (
+            <ThemedText type="smallBold">Regenerate report</ThemedText>
+          )}
+        </Pressable>
       </ThemedView>
     );
   }
@@ -211,16 +242,26 @@ export default function RecordingDetailScreen() {
   const [screenState, setScreenState] = useState<ScreenState>('loading');
   const [recording, setRecording] = useState<RecordingDetail | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [regenerating, setRegenerating] = useState(false);
+  const [regenerateError, setRegenerateError] = useState<string | null>(null);
+
+  // Shared with the silent poll below, same purpose as the History list's
+  // own `requestSeqRef` (Phase 2 Step 7): only the response matching the
+  // most recently *issued* request is ever applied, so a slower, older
+  // fetch resolving after a newer one can't briefly overwrite fresh state.
+  const requestSeqRef = useRef(0);
 
   const load = useCallback(async () => {
     if (!id) {
       setScreenState('not-found');
       return;
     }
+    const requestId = ++requestSeqRef.current;
     setScreenState('loading');
     setLoadError(null);
     try {
       const row = await fetchRecordingById(id);
+      if (requestId !== requestSeqRef.current) return;
       if (!row) {
         setScreenState('not-found');
         return;
@@ -228,6 +269,7 @@ export default function RecordingDetailScreen() {
       setRecording(row);
       setScreenState('loaded');
     } catch (err) {
+      if (requestId !== requestSeqRef.current) return;
       setLoadError(err instanceof Error ? err.message : 'Could not load this recording.');
       setScreenState('error');
     }
@@ -236,6 +278,64 @@ export default function RecordingDetailScreen() {
   useEffect(() => {
     load();
   }, [load]);
+
+  // Phase 3 Step 2: this screen's own analogue of the History list's Step 7
+  // polling. The list's polling is scoped to whatever's in the list's own
+  // state and only runs while the list tab is focused — it does nothing for
+  // a screen further up the stack, so a recording regenerated from here
+  // (see `handleRegenerate` below) wouldn't otherwise be seen moving through
+  // `processing` -> `done`/`failed` unless the user backed out to History
+  // and back in. Same shape as the list's: a flat 1.5s interval, gated on
+  // this screen being focused, that stops once `recording.status` is
+  // terminal (`TERMINAL_STATUSES`) and silently updates `recording` in place
+  // (no `screenState`/loading-spinner flicker) rather than calling `load()`.
+  const recordingRef = useRef<RecordingDetail | null>(null);
+  useEffect(() => {
+    recordingRef.current = recording;
+  }, [recording]);
+
+  useFocusEffect(
+    useCallback(() => {
+      const interval = setInterval(() => {
+        const current = recordingRef.current;
+        if (!id || !current || TERMINAL_STATUSES.has(current.status)) return;
+        const requestId = ++requestSeqRef.current;
+        fetchRecordingById(id)
+          .then((row) => {
+            if (requestId !== requestSeqRef.current || !row) return;
+            setRecording(row);
+          })
+          .catch(() => {
+            // A transient poll failure shouldn't interrupt an otherwise-
+            // healthy pipeline run or flip the whole screen into an error
+            // state — the manual Retry action already covers a genuine
+            // load failure; this tick just tries again in 1.5s.
+          });
+      }, 1500);
+      return () => clearInterval(interval);
+    }, [id])
+  );
+
+  const handleRegenerate = useCallback(async () => {
+    if (!recording) return;
+    setRegenerating(true);
+    setRegenerateError(null);
+    try {
+      await regenerateReport(recording.id);
+      // Optimistically reflect the pipeline restarting immediately, rather
+      // than waiting for the next poll tick — `process_recording()` flips
+      // status straight to `processing` as its first step (see
+      // `backend/app/services/processing.py`), so this mirrors exactly what
+      // the backend is about to do and reuses the pending/processing UI
+      // already built into this component (status badge + the "still
+      // processing" branch above) with no new "regenerating" display needed.
+      setRecording((prev) => (prev ? { ...prev, status: 'processing' } : prev));
+    } catch (err) {
+      setRegenerateError(err instanceof Error ? err.message : 'Could not start regeneration.');
+    } finally {
+      setRegenerating(false);
+    }
+  }, [recording]);
 
   const status = recording ? getStatusPresentation(recording.status, theme) : null;
 
@@ -289,7 +389,12 @@ export default function RecordingDetailScreen() {
               <AudioSection recording={recording} />
             </View>
 
-            <ReportSection recording={recording} />
+            <ReportSection
+              recording={recording}
+              onRegenerate={handleRegenerate}
+              regenerating={regenerating}
+              regenerateError={regenerateError}
+            />
           </ScrollView>
         )}
 
@@ -359,5 +464,16 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
+  },
+  regenerateButton: {
+    alignSelf: 'flex-start',
+    marginTop: Spacing.one,
+    paddingHorizontal: Spacing.four,
+    paddingVertical: Spacing.two,
+    borderRadius: Spacing.five,
+    borderWidth: StyleSheet.hairlineWidth,
+  },
+  pressed: {
+    opacity: 0.7,
   },
 });

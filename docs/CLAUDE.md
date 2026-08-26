@@ -26,15 +26,18 @@ below for exactly what's real. **No stubs remain anywhere in the pipeline** — 
 metrics -> feedback are all real Gemini/code calls end to end, `status: done` means the full
 pipeline actually ran (retrying once inline if either Gemini-calling stage fails), and the
 frontend reflects that status accurately and promptly without flashing stale data.
-**Phase 3 — History, retention & retry — in progress. Step 1 (full history detail view) is done**;
-see [History](#history)'s "Detail screen" bullet for exactly what it shows. The "Regenerate
-report" 3-dot-menu flow described in docs/PROJECT_PLAN.md Section 3 does **not exist yet**,
-backend or frontend (that's Step 2); only the automatic in-pipeline retry (Phase 2 Step 6) is
-built so far. See [Background processing](#background-processing) for what Step 2 will need to
-wire up, and note docs/PROJECT_PLAN.md Section 6's phase descriptions are stale (still describe
-the old Celery/time-based retention plan) — Sections 3, 4, 5, and 7 reflect the current
-zero-cost, cap-based, manual-delete architecture and are the ones to trust. We're working
-phase-by-phase and step-by-step within a phase; don't reach ahead without being asked.
+**Phase 3 — History, retention & retry — in progress. Steps 1 and 2 are done.** Step 1 (full
+history detail view) — see [History](#history)'s "Detail screen" bullet for exactly what it
+shows. **Step 2 (manual "Regenerate report") is now built, backend and frontend** — see
+[Background processing](#background-processing)'s "Regenerate report" bullet and
+[AI processing endpoint](#ai-processing-endpoint)'s "Regenerate endpoint" bullet for exactly what
+exists. This closes out docs/PROJECT_PLAN.md Section 3's "Retry behavior" in full: the automatic
+one-inline-retry-per-stage from Phase 2 Step 6 handles transient failures without any user action,
+and this step's manual regenerate covers anything still `failed` after that, retryable without
+limit. Note docs/PROJECT_PLAN.md Section 6's phase descriptions are stale (still describe the old
+Celery/time-based retention plan) — Sections 3, 4, 5, and 7 reflect the current zero-cost,
+cap-based, manual-delete architecture and are the ones to trust. We're working phase-by-phase and
+step-by-step within a phase; don't reach ahead without being asked.
 
 ## Tech stack
 
@@ -195,9 +198,23 @@ live under a `{user_id}/...` path prefix, enforced by storage RLS policies in
 - **Status is visually distinct per state (Step 7):** `RecordingListItem`'s status badge colors
   `failed` red and `done` green (raw hex, not theme tokens, matching the same red already used for
   the record/error accents elsewhere in the app; same in light and dark mode) so a failed recording
-  — the one case that (once Phase 3 builds it) needs the "Regenerate report" action — doesn't read
-  as just another line of text next to `pending`/`processing`. `pending`/`processing` stay a
-  neutral badge (`processing` additionally reads "Processing…" rather than the bare status word).
+  doesn't read as just another line of text next to `pending`/`processing`. `pending`/`processing`
+  stay a neutral badge (`processing` additionally reads "Processing…" rather than the bare status
+  word).
+- **"Regenerate report" per row (Phase 3 Step 2, done):** a `failed` row also renders an inline
+  "Regenerate report" text action directly in `RecordingListItem` — the plan's spec calls for a
+  3-dot menu, but a plain inline action was judged to read just as clearly at this app's scale
+  without a new menu component, so that's what's built. It's nested inside the row's outer
+  `Pressable` (which navigates to the detail view on tap elsewhere in the row); React Native's
+  touch responder system gives the inner `Pressable` exclusive claim on its own taps, so pressing
+  it doesn't also navigate. Calls the same `regenerateReport()` (`src/lib/api.ts`) as the detail
+  screen's button — see that screen's own "Regenerate report" bullet above and
+  [Background processing](#background-processing)'s bullet for the backend side — with per-row
+  in-flight/error state (`regeneratingIds`/`regenerateErrors`, keyed by recording id, in
+  `HistoryScreen`) so regenerating one failed row doesn't affect any other. On success, the row is
+  optimistically flipped to `processing` in local state, which the existing Step 7 polling below
+  already picks up on its very next tick — nothing about that polling needed to change to support
+  this.
 - Refresh: the list refetches on every focus (`useFocusEffect`, not a mount-only effect) so
   landing here from a fresh upload — or tabbing back after a second recording — always shows
   current data, since tab screens stay mounted in the background rather than remounting on
@@ -247,11 +264,37 @@ live under a `{user_id}/...` path prefix, enforced by storage RLS policies in
   a Retry action.
   - **`status === 'failed'`** shows a clear failed notice instead of a transcript/feedback/metrics
     section — there isn't one, since a transcription failure marks the row failed with nothing else
-    attempted (see [AI processing endpoint](#ai-processing-endpoint)) — and notes that a manual
-    "Regenerate report" action doesn't exist yet (Phase 3 Step 2). `pending`/`processing` (a row can
-    be tapped into straight from History before the pipeline finishes) shows a plain "still
-    processing" notice instead, rather than rendering `null` transcript/feedback as if that were the
-    real, finished content.
+    attempted (see [AI processing endpoint](#ai-processing-endpoint)) — plus, as of Phase 3 Step 2,
+    a "Regenerate report" button right alongside it (`ReportSection` in `history/[id].tsx`).
+    `pending`/`processing` (a row can be tapped into straight from History before the pipeline
+    finishes) shows a plain "still processing" notice instead, rather than rendering `null`
+    transcript/feedback as if that were the real, finished content.
+  - **"Regenerate report" (Phase 3 Step 2, done):** the failed-state button above calls
+    `regenerateReport()` (`src/lib/api.ts`) against the new `POST /recordings/{id}/regenerate`
+    endpoint (see [AI processing endpoint](#ai-processing-endpoint)'s "Regenerate endpoint" bullet
+    and [Background processing](#background-processing)'s "Regenerate report" bullet for the
+    backend side), with its own in-flight spinner and inline error text scoped to the button
+    (`regenerating`/`regenerateError` state in `RecordingDetailScreen`) — a failure here doesn't
+    disturb the rest of the screen. On success, the screen optimistically flips its local
+    `recording.status` to `processing` (matching what `process_recording()` sets as its own first
+    step — see [Background processing](#background-processing)) so the existing pending/processing
+    UI above takes over immediately with no separate "regenerating" display to build. The same
+    action is also available per-row directly from the History **list** — see the list's status
+    bullet below — so it's reachable whether the user is looking at a row in the list or has
+    already tapped into its detail view.
+  - **This screen's own polling (Phase 3 Step 2):** the History list's Step 7 polling (below) is
+    scoped to the list's own component state and only runs while the list tab itself is focused —
+    it does nothing for a screen further up the navigation stack, so it would **not** have picked
+    up this recording moving `processing` -> `done`/`failed` if the user stayed on the detail
+    screen after tapping "Regenerate report" rather than backing out to History. This screen
+    therefore has its own equivalent, small polling effect (same shape: a flat 1.5s interval, gated
+    on this screen being focused via `useFocusEffect`, an out-of-order-response guard via a shared
+    `requestSeqRef`, stopping once `recording.status` is terminal per `TERMINAL_STATUSES` — now
+    exported from `src/lib/recording-status.ts` so both screens use the same definition — and
+    updating `recording` in place with no loading-spinner flicker). If the user instead backs out
+    to the list after regenerating, the list's own Step 7 polling picks the row up correctly with
+    no changes needed there — its `stillInFlight` check only cares whether *any* row is
+    non-terminal, regardless of what put a row into that state.
   - **Audio playback reuses the exact `expo-audio` pattern from the Phase 1 record-and-preview
     flow**, now extracted into a shared `AudioPlaybackControls` component
     (`src/components/audio-playback-controls.tsx`; see [Recording](#recording)) so this screen and
@@ -420,6 +463,13 @@ live under a `{user_id}/...` path prefix, enforced by storage RLS policies in
   seconds, this app has a handful of test users, and a push mechanism would add real infra
   (a persistent connection, or a DB trigger/webhook to invalidate on) for a savings that isn't
   needed at this scale.
+- **Regenerate endpoint (Phase 3 Step 2, done):** `POST /recordings/{recording_id}/regenerate`
+  sits alongside `/process` in the same router, sharing its auth/ownership check but requiring
+  `status == 'failed'` instead of `'pending'`, and scheduling the identical
+  `process_recording()` background task — see
+  [Background processing](#background-processing)'s "Regenerate report" bullet for the full
+  detail (including why no extra state needs resetting first) and [History](#history) for where
+  the frontend calls it from.
 - `EXPO_PUBLIC_API_URL` (root `.env`/`.env.example`) is the backend's base URL as seen from the
   Expo app — a LAN IP for local dev against a physical phone (Expo Go can't reach your laptop's
   `localhost`), or the deployed Render URL. See the comments in `.env.example` for both cases and
@@ -543,8 +593,9 @@ pure string-building with no network call of its own, so it's easy to unit-test 
   `BackgroundTasks` call that's already running — there's no separate re-triggered request and no
   intermediate `failed` write, so a caller polling `status` never sees `failed` unless *both*
   attempts of a stage failed. If the retry also fails, the recording is left `failed` with no
-  report, and (once Phase 3 builds it) the "Regenerate report" 3-dot-menu flow covers retrying
-  again later — see the next paragraph for exactly how that will plug in.
+  report, and (Phase 3 Step 2, done) the manual "Regenerate report" action covers retrying again
+  later, without limit — see the "Regenerate report" bullet further down for exactly how that
+  plugs in.
   - **Stage-level, not whole-pipeline retry:** a feedback-generation failure retries only the
     feedback call — reusing the transcript/metrics already computed and written to the row on the
     first pass — rather than re-downloading audio and re-running a second, wasted transcription
@@ -570,19 +621,39 @@ pure string-building with no network call of its own, so it's easy to unit-test 
     (succeeds first try / recovers on retry / gives up after both attempts fail / doesn't retry an
     unrelated exception) with fake flaky callables — no live Gemini/Supabase calls, same spirit as
     `test_metrics.py`/`test_feedback.py`.
-- **"Regenerate report" (Phase 3, not built yet):** docs/PROJECT_PLAN.md Section 3 describes a
-  3-dot-menu "Regenerate report" option for a `failed` recording, retryable without limit — as of
-  Step 6 this exists **only as a plan, with no backend endpoint or frontend UI built for it yet**
-  (Phase 3 is "History, retention & retry" — next up after this Phase 2 close-out; don't assume it
-  exists). Two things worth knowing before building it: (1) today's `POST /recordings/{id}/process`
-  (`start_processing` in `app/routers/recordings.py`) 409s on anything but `status == 'pending'`,
-  so it does not yet accept a `failed` recording — Phase 3's endpoint will need to either accept
-  `failed` too or reset the row to `pending` first. (2) Whatever triggers it, calling
-  `process_recording()` again is safe and won't "double up" retries in a confusing way: the
-  one-inline-retry state lives entirely inside a single `process_recording()` call and isn't
-  persisted anywhere, so each manual regenerate invocation gets its own fresh, independent
-  one-retry cycle — never more than 2 attempts per call, whether that call was triggered by the
-  original upload or a later manual regenerate.
+- **"Regenerate report" (Phase 3 Step 2, done):** docs/PROJECT_PLAN.md Section 3 describes a
+  manual "Regenerate report" option for a `failed` recording, retryable without limit — this now
+  exists end to end, backend and frontend, and **closes out Section 3's "Retry behavior" in full**
+  together with Phase 2 Step 6's automatic retry above: Step 6 handles transient failures
+  automatically with zero user action (one inline retry per stage, immediately, within the same
+  pipeline run), and this step covers anything still `failed` after that, with no retry-count
+  limit on how many times a user can trigger it manually.
+  - **Endpoint:** `POST /recordings/{recording_id}/regenerate`
+    (`regenerate_report` in `app/routers/recordings.py`) — same bearer-token auth and
+    ownership check as `/process` (factored into a shared `_fetch_authorized_recording` helper so
+    both endpoints give a caller an identical 403 for a nonexistent vs. someone-else's recording;
+    see [AI processing endpoint](#ai-processing-endpoint)'s "Auth" bullet), but the mirror image on
+    the status check: valid only from `status == 'failed'` (409 otherwise, e.g. calling it on a
+    `pending`/`processing`/`done` recording), where `/process` is valid only from `pending`. On
+    success it schedules the exact same `process_recording()` background task as `/process` and
+    returns `202` immediately the same way — no separate "regenerate" pipeline function.
+  - **No extra reset needed before retrying:** confirmed by reading `process_recording()` itself,
+    not assumed — it already starts every run by flipping `status` straight to `processing` (not
+    `pending`; there's no intermediate `pending` state on a regenerate, unlike a fresh upload) as
+    its very first write, then overwrites `transcript` unconditionally the moment transcription
+    succeeds, `metrics` unconditionally right after, and `feedback` only alongside the final
+    `status: done` write. There's no separate failure-reason column or other failure-related state
+    on the `recordings` row (see `supabase/migrations/0001_initial_schema.sql`) to clear first. The
+    one nuance: if a regenerate run itself fails again at the feedback stage, whatever `transcript`/
+    `metrics` that run just (re)computed stay on the row — same "don't discard good partial work"
+    principle as the original run, just re-applied on a second pass.
+  - **Frontend:** `regenerateReport()` (`src/lib/api.ts`, sharing a private `postRecordingAction`
+    helper with `startProcessing()` — same request shape, different path) is called from both the
+    History **list** (`RecordingListItem`, per failed row) and the **detail screen**
+    (`ReportSection`'s failed-state button) — see [History](#history)'s "Regenerate report" bullets
+    under both the list and the detail screen for exactly how each is wired, including why the
+    detail screen needed its own small polling effect that the list's Step 7 polling doesn't
+    already cover.
 - The same pattern (no cron) applies to the v2 question-pool top-up: it fires from a
   `BackgroundTasks` call triggered by mode selection running low on unused questions, not a
   scheduled job. See plan Section 5's "Question pool" subsection.

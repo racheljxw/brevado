@@ -1,5 +1,12 @@
 import type { useTheme } from '@/hooks/use-theme';
 
+// A recording is done moving through the pipeline once it reaches one of
+// these — shared by the History list's polling (`history/index.tsx`, Phase 2
+// Step 7) and the detail screen's own polling (`history/[id].tsx`, Phase 3
+// Step 2), so "should I keep polling this row?" means the same thing in both
+// places.
+export const TERMINAL_STATUSES = new Set(['done', 'failed']);
+
 // Status badge colors/label, shared by the History list (`history/index.tsx`)
 // and the Phase 3 Step 1 detail screen (`history/[id].tsx`) so a recording's
 // status reads identically wherever it's shown. Extracted out of the list
