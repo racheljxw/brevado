@@ -1,5 +1,5 @@
 import { useFocusEffect } from 'expo-router';
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, FlatList, Platform, Pressable, RefreshControl, StyleSheet, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -18,14 +18,46 @@ function formatRecordedAt(isoString: string): string {
   return `${dateLabel} · ${timeLabel}`;
 }
 
+// A row is done polling for status once it lands here — see the `load()`
+// interval below.
+const TERMINAL_STATUSES = new Set(['done', 'failed']);
+
+// Step 7: `failed` needs to visually jump out from `pending`/`processing` —
+// it's the thing that means the (Phase 3) "Regenerate report" action is
+// actually needed, not just "still working". Raw hex here (not a theme
+// token) matches the existing convention for status-ish color elsewhere in
+// the app (e.g. the red record/error accents in index.tsx) — these colors
+// are deliberately the same in light and dark mode.
+function getStatusPresentation(
+  status: string,
+  theme: ReturnType<typeof useTheme>
+): { backgroundColor: string; textColor: string; label: string } {
+  switch (status) {
+    case 'failed':
+      return { backgroundColor: 'rgba(229, 72, 77, 0.16)', textColor: '#e5484d', label: 'Failed' };
+    case 'done':
+      return { backgroundColor: 'rgba(48, 164, 108, 0.16)', textColor: '#30a46c', label: 'Done' };
+    case 'processing':
+      return { backgroundColor: theme.backgroundSelected, textColor: theme.textSecondary, label: 'Processing…' };
+    case 'pending':
+    default:
+      return { backgroundColor: theme.backgroundSelected, textColor: theme.textSecondary, label: 'Pending' };
+  }
+}
+
 function RecordingListItem({ recording }: { recording: RecordingRow }) {
+  const theme = useTheme();
+  const status = getStatusPresentation(recording.status, theme);
+
   return (
     <ThemedView type="backgroundElement" style={styles.row}>
       <View style={styles.rowHeader}>
         <ThemedText type="smallBold">{formatRecordedAt(recording.created_at)}</ThemedText>
-        <ThemedView type="backgroundSelected" style={styles.statusBadge}>
-          <ThemedText type="small">{recording.status}</ThemedText>
-        </ThemedView>
+        <View style={[styles.statusBadge, { backgroundColor: status.backgroundColor }]}>
+          <ThemedText type="smallBold" style={{ color: status.textColor }}>
+            {status.label}
+          </ThemedText>
+        </View>
       </View>
       <ThemedText type="small" themeColor="textSecondary">
         {recording.mode}
@@ -44,17 +76,35 @@ export default function HistoryScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Step 7: monotonically-increasing id for each `load()` call, so a
+  // response can tell whether a *newer* request has been issued since it
+  // went out. The interval below can have more than one `fetchRecordings()`
+  // in flight at once (e.g. a manual pull-to-refresh landing mid-poll), and
+  // network timing doesn't guarantee they resolve in the order they were
+  // sent — without this, a slower, older request resolving after a faster,
+  // newer one briefly overwrites fresh state with stale status (the
+  // flashing bug flagged in Step 3's review). Only the response matching the
+  // most recently *issued* request is applied; anything else is discarded
+  // as stale. A ref, not state, since bumping it should never itself
+  // trigger a re-render.
+  const requestSeqRef = useRef(0);
+
   const load = useCallback(async () => {
     if (!user) return;
+    const requestId = ++requestSeqRef.current;
     setError(null);
     try {
       const rows = await fetchRecordings(user.id);
+      if (requestId !== requestSeqRef.current) return; // a newer request has since been issued — discard
       setRecordings(rows);
     } catch (err) {
+      if (requestId !== requestSeqRef.current) return;
       setError(err instanceof Error ? err.message : 'Could not load your history.');
     } finally {
-      setLoading(false);
-      setRefreshing(false);
+      if (requestId === requestSeqRef.current) {
+        setLoading(false);
+        setRefreshing(false);
+      }
     }
   }, [user]);
 
@@ -65,6 +115,42 @@ export default function HistoryScreen() {
   useFocusEffect(
     useCallback(() => {
       load();
+    }, [load])
+  );
+
+  // A ref (not state) so the poll interval below can read the latest list
+  // on every tick without needing to be torn down and recreated each time
+  // `recordings` changes.
+  const recordingsRef = useRef<RecordingRow[] | null>(null);
+  useEffect(() => {
+    recordingsRef.current = recordings;
+  }, [recordings]);
+
+  // Phase 2 Step 7 (was a flat "poll while anything's in flight" loop since
+  // Step 2): refetch on an interval while any row is still pending/
+  // processing, so status visibly moves pending -> processing -> done
+  // without a manual pull-to-refresh. Only runs while this tab is focused.
+  //
+  // Per-row stop condition: fetching is one query for the whole list, not
+  // one request per row, so there's no separate "stop polling this row"
+  // switch to build — the granularity that matters is whether *any* row is
+  // still non-terminal, which is what `stillInFlight` checks. Once every
+  // row has reached `done`/`failed` (TERMINAL_STATUSES), this stops firing
+  // `load()` at all. A finished row riding along in an in-flight tick's
+  // response costs nothing extra (same one query either way), so there's no
+  // benefit to scoping the query itself down to just the non-terminal rows
+  // at this app's scale (max 30 rows/user) — that'd be added complexity for
+  // no real savings.
+  useFocusEffect(
+    useCallback(() => {
+      const interval = setInterval(() => {
+        const rows = recordingsRef.current ?? [];
+        const stillInFlight = rows.some((row) => !TERMINAL_STATUSES.has(row.status));
+        if (stillInFlight) {
+          load();
+        }
+      }, 1500);
+      return () => clearInterval(interval);
     }, [load])
   );
 

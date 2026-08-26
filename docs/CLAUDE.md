@@ -12,13 +12,25 @@ more context than what's here.
 
 ## Current phase
 
-**Phase 2 — AI pipeline, Step 1 (FastAPI skeleton) done.** Phase 1 (auth, recording UI, upload,
-minimal history) is complete. Phase 2 continues with Gemini transcription + feedback generation,
-deterministic metrics, and a processing status indicator, run via FastAPI's `BackgroundTasks` (see
-[Background processing](#background-processing)) — no queue/broker/worker setup needed. Only
-Step 1 of Phase 2 (the bare FastAPI skeleton, deployed and reachable) exists so far; see
-[Backend](#backend) below for exactly what does and doesn't exist yet. We're working
-phase-by-phase and step-by-step within a phase; don't reach ahead without being asked.
+**Phase 2 — AI pipeline — complete, Step 7 (frontend status polling) was the closing step.**
+Phase 1 (auth, recording UI, upload, minimal history) is complete. Step 1 (bare FastAPI skeleton),
+Step 2 (the upload -> process -> poll plumbing), Step 3 (real Gemini transcription, replacing the
+stub transcript), Step 4 (deterministic filler-word/WPM/repetition metrics, computed in code from
+the transcript), Step 5 (real mode-aware Gemini feedback, replacing the stub feedback string),
+Step 6 (the real one-inline-retry failure policy from docs/PROJECT_PLAN.md Section 3 — see
+[Background processing](#background-processing)), and Step 7 (out-of-order-safe, per-row-aware
+History polling, plus a visually distinct `failed` status — see [History](#history) and the
+"Frontend polling" bullet under [AI processing endpoint](#ai-processing-endpoint)) all exist now — see
+[AI processing endpoint](#ai-processing-endpoint), [Metrics](#metrics), and [Backend](#backend)
+below for exactly what's real. **No stubs remain anywhere in the pipeline** — transcribe ->
+metrics -> feedback are all real Gemini/code calls end to end, `status: done` means the full
+pipeline actually ran (retrying once inline if either Gemini-calling stage fails), and the
+frontend reflects that status accurately and promptly without flashing stale data.
+**Phase 3 (history, retention & retry UI) is next** — notably, the "Regenerate report" 3-dot-menu
+flow described in docs/PROJECT_PLAN.md Section 3 does **not exist yet**, backend or frontend; only
+the automatic in-pipeline retry (Step 6, this phase) is built so far. See
+[Background processing](#background-processing) for what Phase 3 will need to wire up. We're
+working phase-by-phase and step-by-step within a phase; don't reach ahead without being asked.
 
 ## Tech stack
 
@@ -54,7 +66,8 @@ source of truth; don't assume a table shape without checking there first, and ad
 changes as a new numbered migration file rather than editing an applied one.
 
 - `recordings` — one row per practice session: mode, question/topic, `audio_path`, `status`
-  (`pending`/`processing`/`done`/`failed`), `transcript`, `feedback`, `metrics` (jsonb, Phase 2),
+  (`pending`/`processing`/`done`/`failed`), `transcript`, `feedback`, `metrics` (jsonb, Phase 2
+  Step 4 — see [Metrics](#metrics) for the exact shape stored),
   `favorite`/`audio_deleted` flags. `favorite` is a personal star marker (renamed from `saved`,
   which used to mean "exempt from the old 7-day auto-delete") — it's no longer tied to any
   deletion behavior. `report_generated_at` has been removed — it only existed to compute the old
@@ -164,16 +177,41 @@ live under a `{user_id}/...` path prefix, enforced by storage RLS policies in
   only selects those four columns; widen it (or use `select('*')`) once Phase 3's detail view
   needs `transcript`/`feedback`/`metrics` too.
 - **What it shows right now, deliberately sparse**: date/time, mode, and status per row in a flat
-  list — no transcript/feedback (Phase 2 doesn't generate any yet), and rows aren't tappable
-  (Phase 3 adds the detail view). Every row currently reads `miscellaneous` / `pending` because
-  that's all Upload can produce before Phase 2's processing pipeline and Phase 4's mode selection
-  exist — this is expected, not a bug, until those phases land.
+  list — no transcript/feedback text shown yet even though the pipeline now generates real ones
+  (Phase 3 adds the detail view that surfaces them), and rows aren't tappable yet either. Mode
+  still always reads `miscellaneous` since Phase 4's mode selection doesn't exist yet — that part
+  is still expected, not a bug — but `status` now genuinely moves `pending` -> `processing` ->
+  `done`/`failed` as the real backend pipeline runs, not a placeholder value.
+- **Status is visually distinct per state (Step 7):** `RecordingListItem`'s status badge colors
+  `failed` red and `done` green (raw hex, not theme tokens, matching the same red already used for
+  the record/error accents elsewhere in the app; same in light and dark mode) so a failed recording
+  — the one case that (once Phase 3 builds it) needs the "Regenerate report" action — doesn't read
+  as just another line of text next to `pending`/`processing`. `pending`/`processing` stay a
+  neutral badge (`processing` additionally reads "Processing…" rather than the bare status word).
 - Refresh: the list refetches on every focus (`useFocusEffect`, not a mount-only effect) so
   landing here from a fresh upload — or tabbing back after a second recording — always shows
   current data, since tab screens stay mounted in the background rather than remounting on
-  switch. Pull-to-refresh (`RefreshControl`) covers the same case manually. Both call the same
-  `fetchRecordings()` — no real-time subscription yet; that's more naturally Phase 2's job, once
-  there's a `status` that actually changes after the row is created.
+  switch. Pull-to-refresh (`RefreshControl`) covers the same case manually.
+- **Status polling (Step 7, done):** while this tab is focused, a 1.5s interval refetches the list
+  as long as any row is still `pending`/`processing` (`TERMINAL_STATUSES` = `done`/`failed`) —
+  stops firing entirely once every row has reached a terminal state, and resumes automatically if
+  a new non-terminal row shows up (e.g. a fresh upload). This is list-level, not literally
+  per-row — `fetchRecordings()` is one query for the whole list, not one request per row, so
+  there's no separate "stop polling this one row" mechanism to build; a finished row riding along
+  in an in-flight tick's response is free (same one query either way), which is why the query
+  itself isn't scoped down to just non-terminal rows — not worth the complexity at this app's
+  scale (max 30 rows/user). Guards against out-of-order responses: each `load()` call gets a
+  monotonically increasing id (`requestSeqRef`), and a response is only applied if it's still the
+  most recently *issued* request when it resolves — otherwise it's discarded as stale. This fixes
+  the flashing-stale-status bug flagged in Step 3's review (a slower, older request resolving after
+  a faster, newer one used to briefly overwrite fresh state). Polling only runs while the tab is
+  focused (kept from Step 2 — no reason to poll a screen the user isn't looking at). A flat 1.5s
+  interval was kept rather than backoff (e.g. faster right after upload, slower the longer a row
+  stays non-terminal): the pipeline normally finishes in well under a minute, so a flat interval
+  costs at most a few dozen cheap Supabase queries per recording — backoff would be complexity
+  without a real payoff at this scale. Worth revisiting only if a `pending`/`processing` row is
+  ever seen sitting non-terminal for an unusually long time (more likely a sign of a stuck backend
+  process than something polling interval tuning would fix).
 - Loading (first fetch only, not on subsequent focus refetches — those update the list silently
   once data arrives so switching tabs doesn't re-blank it), empty, and fetch-error (with a Retry
   action, and without clearing any previously-loaded list) states are all handled explicitly.
@@ -191,20 +229,44 @@ live under a `{user_id}/...` path prefix, enforced by storage RLS policies in
   own `.gitignore`) sharing git history with the Expo app rather than living in its own repo;
   don't mix backend code into `src/` or frontend code into `backend/`.
 - Structure: a small package rather than a single file, since Phase 2 will grow this a lot —
-  `backend/app/main.py` creates the FastAPI app and includes routers from `backend/app/routers/`
-  (currently just `health.py`); `backend/app/config.py` holds a `pydantic-settings` `Settings`
-  object reading from `.env`. Add new endpoints as new router modules under `app/routers/`
-  rather than growing `main.py` directly.
+  `backend/app/main.py` creates the FastAPI app (and now also configures root logging — see
+  [AI processing endpoint](#ai-processing-endpoint)) and includes routers from
+  `backend/app/routers/` (`health.py`, `recordings.py`); `backend/app/config.py` holds a
+  `pydantic-settings` `Settings` object reading from `.env`. `backend/app/supabase_client.py`
+  builds the one shared service-role Supabase client, `backend/app/gemini_client.py` (Step 3)
+  builds the one shared Gemini client the same way, `backend/app/auth.py` holds the bearer-token
+  verification dependency, and `backend/app/services/` holds background-work logic —
+  `processing.py` (the pipeline orchestration), `metrics.py` (Step 4, pure deterministic-metrics
+  logic — see [Metrics](#metrics)), and `feedback.py` (Step 5, mode-aware feedback-prompt building
+  and the Gemini call that generates it — see [AI processing endpoint](#ai-processing-endpoint)).
+  `metrics.py` and `feedback.py` are both kept as their own modules rather than folded into
+  `processing.py` for the same reason: neither has any Supabase/network call of its own beyond (for
+  `feedback.py`) the single Gemini call, both are easy to unit-test in isolation, and
+  `processing.py` is already growing across Steps 3–6 as pure orchestration — kept out of the
+  router module too, since it isn't itself request/response handling. Add new endpoints as new
+  router modules under `app/routers/` rather than growing `main.py` directly.
 - Dependencies are pinned in `backend/requirements.txt` (plain pip, not `pyproject.toml` — this
   is a small service without a package to publish, so `pip install -r requirements.txt` is the
-  simplest thing that works and matches Render's default Python build).
+  simplest thing that works and matches Render's default Python build). Includes `supabase`
+  (`supabase-py`, added in Step 2), `google-genai` (added in Step 3 — see
+  [AI processing endpoint](#ai-processing-endpoint) for why this package specifically, not the
+  older `google-generativeai`), and `mutagen` (added in Step 4 — see [Metrics](#metrics) for why).
+  Test-only dependencies (`pytest`) live in a separate `backend/requirements-dev.txt`, not
+  installed on Render, since the deployed service never runs tests — install both files locally
+  (`pip install -r requirements.txt -r requirements-dev.txt`) to run `pytest` from `backend/`.
 - Config: `backend/.env` (gitignored; see `backend/.env.example`) holds `PORT` (local dev only —
-  Render injects its own `$PORT`) plus `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY` placeholders.
-  Those two are **unused as of Step 1** — reserved for whenever the processing pipeline needs to
-  read/write `recordings` rows and Storage objects directly, bypassing RLS.
+  Render injects its own `$PORT`) plus `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY` /
+  `GEMINI_API_KEY`. All three are now live as of Step 3 — read `.env.example` before filling them
+  in, it says exactly where to get each value and warns that the service-role key and Gemini key
+  are both secret (must never reach the Expo app or any client-side code). `render.yaml` declares
+  all three as `sync: false` env vars, so a deployed service needs them pasted into Render's
+  dashboard separately — they aren't synced from the repo. See
+  [AI processing endpoint](#ai-processing-endpoint) for how they're used.
 - Run locally: from `backend/`, `python -m venv .venv`, activate it, `pip install -r
   requirements.txt`, then `uvicorn app.main:app --reload`. Confirm it's alive by hitting
-  `GET http://localhost:8000/health` → `{"status": "ok"}`.
+  `GET http://localhost:8000/health` → `{"status": "ok"}`. To test from Expo Go on a physical
+  phone, run with `--host 0.0.0.0` instead (so it listens on your LAN interface, not just
+  loopback) — see `EXPO_PUBLIC_API_URL` in the root `.env.example`.
 - Deploy target: Render, as a free-tier Python web service, configured via the `render.yaml`
   Blueprint at `backend/render.yaml` (chosen over manual dashboard setup so the service config
   lives in version control and Render re-syncs it automatically on push, rather than dashboard
@@ -213,11 +275,208 @@ live under a `{user_id}/...` path prefix, enforced by storage RLS policies in
   the actual assigned URL). Confirm a deploy is alive the same way as local: hit that URL's
   `/health` and expect `{"status": "ok"}`. Free tier sleeps after inactivity, so the first hit
   after a while can take ~30s to wake up.
-- **What exists after Step 1, and what doesn't yet:** just the FastAPI app and the `/health`
-  endpoint, deployed and reachable. No Gemini calls, no upload/processing endpoints, nothing that
-  talks to Supabase — the backend "does nothing" at this point by design. Those land in Step 2
-  onward within Phase 2, using `BackgroundTasks` (see [Background processing](#background-processing))
-  rather than any separate queue/worker; don't be surprised the API has no real endpoints yet.
+- **What exists after Step 6:** the FastAPI app, `/health`, and `POST /recordings/{id}/process`
+  (bearer-token verification, ownership/status checks, and a `BackgroundTasks`-scheduled
+  `process_recording()`) — see [AI processing endpoint](#ai-processing-endpoint). Upload and
+  row-creation still happen entirely on the frontend against Supabase directly
+  (`src/lib/recordings.ts`); this backend is only involved from the moment a row already exists.
+  **`process_recording()`'s transcript, metrics, and feedback steps are all real** (downloads the
+  audio from Storage once, sends it to Gemini for a transcript, computes deterministic metrics
+  from that transcript and the same audio bytes, then sends the transcript/metrics/mode/question
+  to Gemini again for mode-aware feedback, storing each result as it succeeds — see
+  [Metrics](#metrics)) — **no stub logic remains in the pipeline, and each Gemini-calling stage now
+  retries once inline on failure before the recording is marked `failed`** — see
+  [Background processing](#background-processing) for the retry policy itself.
+
+## AI processing endpoint
+
+- `POST /recordings/{recording_id}/process` (`backend/app/routers/recordings.py`) is what the Expo
+  app calls right after its existing upload + row-creation flow (`src/lib/recordings.ts`)
+  succeeds — see `startProcessing()` in `src/lib/api.ts`, called from the Home tab
+  (`src/app/(tabs)/index.tsx`) right after `uploadRecording()` resolves. Upload and row creation
+  are still entirely frontend-to-Supabase; this endpoint is only the trigger for what happens
+  next.
+- **Auth:** the Expo app sends the user's current Supabase access token as
+  `Authorization: Bearer <token>` (via `supabase.auth.getSession()`). `app/auth.py`'s
+  `get_current_user_id` FastAPI dependency verifies it by handing the token to Supabase's own
+  `auth.get_user(token)` call — this validates the token against Supabase's Auth API directly,
+  so the backend never needs to handle the project's JWT secret or verify signatures itself.
+  Returns 401 if the header is missing/malformed or Supabase rejects the token.
+- The endpoint fetches the recording row (service-role client, bypassing RLS), then checks
+  `recording.user_id` against the verified caller and `status == 'pending'` before doing anything
+  else. A recording that doesn't exist and one that exists but belongs to someone else return the
+  **same** 403 response — a caller's token should never be able to tell those two cases apart. A
+  recording that's already `processing`/`done`/`failed` gets 409 rather than being reprocessed.
+- **Why the service-role key:** `app/supabase_client.py` builds one shared Supabase client from
+  `SUPABASE_SERVICE_ROLE_KEY`, not the anon key — this backend process is trusted and needs to
+  read/write *any* user's `recordings` row, which RLS (scoped to `auth.uid()`) would otherwise
+  block. The bearer-token check above is what actually authorizes the request; the service-role
+  client is what lets the now-authorized request act on that user's row. See `.env.example` (both
+  root and `backend/`) for exactly where to paste the real key and why it must never reach the
+  Expo app or any client-side code.
+- On a valid, authorized, pending recording, the endpoint schedules a `BackgroundTasks` call to
+  `process_recording()` (`backend/app/services/processing.py`) and returns `202 Accepted`
+  immediately, without waiting for that work to finish.
+- **`process_recording()`'s transcript, metrics, and feedback steps are all real as of Step 5, and
+  each Gemini-calling stage retries once inline on failure as of Step 6 — no stub steps and no
+  "fail on the first error" remain.** It flips the row `pending` -> `processing`, downloads the
+  recording's audio from Storage once (`recordings.audio_path`, via the service-role client),
+  sends it to Gemini (native audio input — one call, no separate transcription service) for a
+  transcript, stores that transcript immediately, then computes deterministic metrics (see
+  [Metrics](#metrics)) from that transcript and the same already-downloaded audio bytes and stores
+  those too, then sends the transcript, metrics, mode, and question to Gemini a second time for
+  mode-aware free-text feedback (`app/services/feedback.py` — interview -> directness/structure,
+  story -> narrative arc/pacing, miscellaneous -> general clarity/conciseness, per
+  docs/PROJECT_PLAN.md Section 3), and only then sets `status: done` with that real feedback
+  attached. `status: done` now means the full pipeline actually ran, transcript through feedback.
+  Each stage's result is written to the row as soon as it succeeds (transcript, then metrics), so
+  a later stage failing can never lose or overwrite earlier, already-successful work — the same
+  "don't discard good partial work" principle applies to a feedback failure as it already did to a
+  transcription failure. If the transcription Gemini call fails, times out, or returns an
+  empty/unusable transcript (`TranscriptionError`), or if the feedback Gemini call fails or
+  returns empty/unusable text after transcript and metrics have already succeeded
+  (`FeedbackGenerationError`), that stage is retried exactly once, immediately, within the same
+  `process_recording()` call — see [Background processing](#background-processing) for the retry
+  policy itself (`_run_with_one_retry` in `processing.py`) and why it retries only the failed
+  stage rather than the whole pipeline. Only if the retry also fails does the recording get marked
+  `failed` — a transcription failure marks it directly with nothing else attempted, and a feedback
+  failure (after retry) still leaves the already-written transcript and metrics in place, only
+  `status` reflecting the failure. Logging (requests sent, responses received, errors, and now
+  which attempt a retry is on) goes through the standard `logging` module, configured in
+  `app/main.py`, so it shows up in Render's log stream in production and stdout locally — check
+  there when a recording ends up `failed`; the log lines are worded to distinguish a first-attempt
+  failure ("retrying once immediately") from a final, both-attempts-exhausted failure ("giving up,
+  marking failed").
+- **Gemini client config:** `backend/app/gemini_client.py` builds one shared `google.genai.Client`
+  from `GEMINI_API_KEY` (`app/config.py`), the same lazy-singleton pattern
+  `app/supabase_client.py` uses for the Supabase client. Uses the **`google-genai`** SDK
+  (Google's current unified Gen AI SDK) rather than the older, now-legacy
+  `google-generativeai` package — see the comment at the top of `gemini_client.py` for the
+  migration-guide link. Get a free key from Google AI Studio
+  (https://aistudio.google.com/apikey, no credit card required) and paste it into
+  `backend/.env`'s `GEMINI_API_KEY` — see `backend/.env.example` for the full instructions.
+  **Model id is config-driven**, not hardcoded: `settings.gemini_model` (`app/config.py`,
+  `GEMINI_MODEL` env var, defaults to `gemini-3.6-flash`) is what both
+  `app/services/processing.py` (transcription) and `app/services/feedback.py` (feedback
+  generation, Step 5) pass to `generate_content` — one model id for the whole pipeline, no reason
+  for feedback generation (a single text-in/text-out call) to use a different model. This was
+  deliberate, not just tidiness — during Step 3 testing
+  (2026-08-25) `gemini-2.5-flash` (the model originally chosen for its confirmed native-audio +
+  free-tier support) started 404ing with "no longer available to new users, use
+  gemini-3.6-flash", so model ids clearly get retired/renamed over time. If it happens again,
+  bump the default in `app/config.py` (or set `GEMINI_MODEL` in `.env`/Render) — a one-line
+  config change, no code edit. If you're reading this later and wondering why the model choice
+  doesn't match some older note that said `gemini-2.5-flash`: that's why.
+- **Frontend polling (Step 7, done):** the History screen (`src/app/(tabs)/history.tsx`) refetches
+  on a 1.5s interval whenever any visible row is `pending`/`processing`, so status visibly moves to
+  `done`/`failed` without a manual pull-to-refresh — see [History](#history) for the full behavior
+  (out-of-order-response guard, per-row stop condition, focus-gating) and why a flat interval
+  (rather than backoff) was kept. Still a plain interval, not SSE/WebSockets/real-time — that
+  tradeoff was reconsidered for this step and kept: the pipeline finishes in seconds to tens of
+  seconds, this app has a handful of test users, and a push mechanism would add real infra
+  (a persistent connection, or a DB trigger/webhook to invalidate on) for a savings that isn't
+  needed at this scale.
+- `EXPO_PUBLIC_API_URL` (root `.env`/`.env.example`) is the backend's base URL as seen from the
+  Expo app — a LAN IP for local dev against a physical phone (Expo Go can't reach your laptop's
+  `localhost`), or the deployed Render URL. See the comments in `.env.example` for both cases and
+  how to switch.
+
+## Metrics
+
+Phase 2 Step 4. Deterministic metrics, computed purely in code from the transcript (and, for
+words-per-minute, the audio) — no Gemini call involved, per docs/PROJECT_PLAN.md Section 3
+("Processing & feedback"). Logic lives in `backend/app/services/metrics.py`, kept separate from
+`app/services/processing.py` since it has no Supabase/Gemini/network calls of its own and is easy
+to unit-test in isolation (see `backend/tests/test_metrics.py`) — `processing.py` is already
+growing across Steps 3–6, so this keeps that module from also owning pure text-analysis logic.
+
+- **Storage shape:** stored as-is into the `recordings.metrics` jsonb column:
+  ```json
+  {"filler_word_rate": 0.08, "words_per_minute": 142, "repetition_count": 3, "word_count": 210}
+  ```
+  `filler_word_rate` is a **fraction (0.0–1.0), not a percentage** — 0.08 means 8%. `word_count` is
+  included alongside the two fields derived from it since the feedback prompt (see
+  [Feedback generation](#feedback-generation)) and Phase 5's scoring both want it directly rather
+  than re-deriving it from the transcript. This exact shape is what `app/services/feedback.py`
+  reads as feedback-prompt grounding — changing key names or the rate/percentage convention later
+  means updating both that prompt and Phase 5 scoring, not just this module.
+- **Filler word list:** `FILLER_WORDS` at the top of `metrics.py` — a deliberately simple starter
+  list (`um`, `uh`, `like`, `you know`, `sort of`, `kind of`, `i mean`, `basically`, `actually`,
+  `literally`, etc.), matched via plain case-insensitive word-boundary regex, no context awareness.
+  `like` and `so`-style words will also match legitimate non-filler uses ("I like pizza") — a known
+  limitation of a starter list. Tune the list directly in `metrics.py` as real transcripts show
+  what actually needs adjusting; it's the one place this logic lives.
+- **Repetition:** `compute_repetition_count` counts immediate word/short-phrase repeats only (e.g.
+  "the the", "I think I think") — checked longest-phrase-first (3/2/1 words) with the scan jumping
+  past each match, so a repeat isn't double-counted at multiple phrase lengths. Deliberately not a
+  general NLP repetition/disfluency detector — see the function's docstring for the exact algorithm.
+- **Words-per-minute's duration:** read directly from the downloaded audio file's own metadata via
+  `mutagen` (`get_audio_duration_seconds`, added to `backend/requirements.txt`), **not** from
+  Gemini's transcription response — that response is plain text with no timing/duration metadata,
+  and requesting timestamps would mean a second, more expensive Gemini call just to get one number.
+  `process_recording` (`processing.py`) downloads the audio from Storage once and reuses those same
+  bytes for both the Gemini call and this duration lookup — no second Storage round-trip.
+- **Failure handling:** metrics computation is wrapped in its own try/except in `process_recording`,
+  separate from the transcript-storing step before it. A metrics failure (most likely: audio
+  duration can't be determined, so `words_per_minute` comes back `None`) never fails the recording
+  or discards the transcript — it's logged and `metrics` is stored as whatever was computed (or
+  `None` for a total failure), while processing continues on to feedback generation and `status`
+  still ends up `done` on success. This was a deliberate choice, not the stricter alternative
+  (failing the recording): the transcript is the expensive, valuable part (a real Gemini call
+  against the user's actual speech), and metrics are a derived input to the feedback prompt (see
+  [Feedback generation](#feedback-generation)) — losing them is a much smaller loss than
+  re-requiring a full re-transcription over what's likely a narrow audio-parsing edge case. Note
+  this is a metrics-*computation* failure specifically (caught in `process_recording`, not inside
+  `compute_metrics` itself) — a *feedback*-generation failure afterward is handled differently,
+  since by that point there's real work (transcript, and metrics if they succeeded) worth
+  preserving; see [Feedback generation](#feedback-generation).
+- **Tests:** `backend/tests/test_metrics.py` (pytest, `requirements-dev.txt`) covers filler-rate,
+  repetition, word-count, and WPM/duration logic against hand-written sample transcripts and a
+  synthetic WAV file (built with the stdlib `wave` module, no fixture files needed) — run with
+  `pytest` from `backend/` after installing both requirements files.
+
+## Feedback generation
+
+Phase 2 Step 5 — the final, previously-stubbed piece of the pipeline; **no stub logic remains
+anywhere in processing now.** Logic lives in `backend/app/services/feedback.py`, kept as its own
+module for the same reason as `metrics.py` (see [Metrics](#metrics)): `build_feedback_prompt` is
+pure string-building with no network call of its own, so it's easy to unit-test in isolation (see
+`backend/tests/test_feedback.py`) independent of the actual Gemini call.
+
+- **Prompt inputs:** the transcript, the computed metrics dict (or `None` — see [Metrics](#metrics)
+  for when that happens), `mode`, and `question` (the recording's chosen question/topic, currently
+  always `null` — see [Current phase](#current-phase) — but the prompt handles a real question too,
+  for when Phase 4 adds mode selection). Metrics are turned into a natural-language grounding
+  sentence (e.g. "spoke at approximately 142 words per minute") by `_format_metrics_grounding`
+  rather than handed to Gemini as raw numbers or left for it to recount from the transcript itself,
+  per docs/PROJECT_PLAN.md Section 3. `question` being `null` renders as "the speaker chose their
+  own topic" rather than being silently omitted.
+- **Mode-specific criteria:** `MODE_CRITERIA` in `feedback.py` — interview -> directness/structure,
+  story -> narrative arc/pacing, miscellaneous -> general clarity/conciseness, per
+  docs/PROJECT_PLAN.md Section 3. All three branches are built and tested now even though every
+  real recording today is `mode='miscellaneous'` (Phase 1's placeholder recording flow — Phase 4
+  hasn't built real mode selection yet), so Phase 4 doesn't need this rebuilt.
+- **Output:** free-text prose feedback only (2-4 short paragraphs, no headers/bullets/numeric
+  scores) — structured, criteria-based scoring is explicitly Phase 5 of the project plan (a
+  different "Phase 5" than this Step 5; see docs/PROJECT_PLAN.md's phase list), not this step.
+- **Model:** reuses the same shared Gemini client and `settings.gemini_model` as transcription (see
+  [AI processing endpoint](#ai-processing-endpoint)) — a single text-in/text-out call has no reason
+  to use a different model from transcription.
+- **Failure handling:** `FeedbackGenerationError` (mirroring `TranscriptionError` in
+  `processing.py`) is raised for a failed Gemini call or an empty/unusable response. Critically,
+  `process_recording` stores the transcript and metrics to the row *before* attempting feedback
+  generation, so a `FeedbackGenerationError` never loses or overwrites that already-successful
+  work — only `status` moves to `failed`. Same "don't discard good partial work" principle as a
+  transcription failure, applied one stage later. As of Step 6, a `FeedbackGenerationError` gets
+  one immediate inline retry of just the feedback call (reusing the transcript/metrics already in
+  hand, no re-transcription) before the recording is marked `failed` — see
+  [Background processing](#background-processing).
+- **Tests:** `backend/tests/test_feedback.py` (pytest) checks `build_feedback_prompt` and
+  `_format_metrics_grounding` directly — that the built prompt string contains the right
+  mode-specific criteria, handles a `null` question vs. a real one, includes the transcript
+  verbatim, and reflects the metrics grounding correctly (including `None` metrics and a `None`
+  `words_per_minute`) — for all three modes. Does **not** call the live Gemini API; run with
+  `pytest` from `backend/` alongside the metrics tests.
 
 ## Background processing
 
@@ -226,12 +485,60 @@ live under a `{user_id}/...` path prefix, enforced by storage RLS policies in
   service that serves everything else. Chosen because Render has no free tier for a background
   worker (minimum ~$7/month), and this project stays at $0/month at its current scale (builder +
   a few test accounts).
-- Trigger point: the upload endpoint (Phase 2, not yet built) creates/updates the `recordings` row
-  first, then schedules a `BackgroundTasks` call to do the Gemini transcription + feedback work —
-  same request/response cycle, no separate dispatch step.
-- Retry: one inline retry on failure (plain try/except around the Gemini call), not a queue retry
-  policy. If the retry also fails, the recording is left with no report; the existing
-  "Regenerate report" 3-dot-menu flow (Phase 3) covers retrying again later.
+- Trigger point: `POST /recordings/{id}/process` (see
+  [AI processing endpoint](#ai-processing-endpoint)), called by the Expo app once its own
+  upload + row-creation already succeeded — the row therefore already exists by the time this
+  fires. The endpoint schedules a `BackgroundTasks` call to do the Gemini transcription + feedback
+  work in that same request/response cycle, no separate dispatch step. As of Step 5, that call
+  target, `process_recording()`, is real end to end — transcription, metrics, and feedback
+  generation — see that section.
+- **Retry (Phase 2 Step 6, done):** each of the two Gemini-calling stages —
+  transcription and feedback generation — gets one immediate inline retry if it raises
+  `TranscriptionError`/`FeedbackGenerationError`, via `_run_with_one_retry()` in
+  `app/services/processing.py`. Both attempts happen synchronously inside the same
+  `BackgroundTasks` call that's already running — there's no separate re-triggered request and no
+  intermediate `failed` write, so a caller polling `status` never sees `failed` unless *both*
+  attempts of a stage failed. If the retry also fails, the recording is left `failed` with no
+  report, and (once Phase 3 builds it) the "Regenerate report" 3-dot-menu flow covers retrying
+  again later — see the next paragraph for exactly how that will plug in.
+  - **Stage-level, not whole-pipeline retry:** a feedback-generation failure retries only the
+    feedback call — reusing the transcript/metrics already computed and written to the row on the
+    first pass — rather than re-downloading audio and re-running a second, wasted transcription
+    Gemini call over speech that was already transcribed correctly. A transcription failure
+    retries the download+transcribe pair together (re-downloading audio is a cheap Storage
+    round-trip, not the expensive Gemini call this policy is trying to avoid wasting). This was a
+    deliberate choice between the two options considered: whole-pipeline retry (simpler, but
+    wastes a successful transcription on a feedback-only failure) vs. stage-level retry (the
+    approach taken) — stage-level wasn't meaningfully more complex *because* the pipeline was
+    already structured, since Steps 4–5, to store each stage's result to the row as soon as it
+    succeeds; that same structure is what lets a feedback retry just reuse in-memory
+    transcript/metrics instead of needing to re-fetch them.
+  - **Metrics computation is not part of this retry policy** — it isn't a Gemini call, and its own
+    failure handling (log + store `None`, never fail the recording) predates Step 6 and is
+    unchanged; see [Metrics](#metrics)'s "Failure handling" bullet.
+  - **Logging** distinguishes a first-attempt failure ("`... failed on first attempt (...) —
+    retrying once immediately`") from a both-attempts-exhausted failure ("`... failed again on
+    retry (...) — giving up, marking failed`", followed by `process_recording`'s own "`giving up
+    after retry, marking failed to ...`" line right before the `status: failed` write) — before
+    Step 6 these were indistinguishable in the logs, since every failure was a first-and-only
+    attempt.
+  - **Tests:** `backend/tests/test_processing.py` unit-tests `_run_with_one_retry` in isolation
+    (succeeds first try / recovers on retry / gives up after both attempts fail / doesn't retry an
+    unrelated exception) with fake flaky callables — no live Gemini/Supabase calls, same spirit as
+    `test_metrics.py`/`test_feedback.py`.
+- **"Regenerate report" (Phase 3, not built yet):** docs/PROJECT_PLAN.md Section 3 describes a
+  3-dot-menu "Regenerate report" option for a `failed` recording, retryable without limit — as of
+  Step 6 this exists **only as a plan, with no backend endpoint or frontend UI built for it yet**
+  (Phase 3 is "History, retention & retry" — next up after this Phase 2 close-out; don't assume it
+  exists). Two things worth knowing before building it: (1) today's `POST /recordings/{id}/process`
+  (`start_processing` in `app/routers/recordings.py`) 409s on anything but `status == 'pending'`,
+  so it does not yet accept a `failed` recording — Phase 3's endpoint will need to either accept
+  `failed` too or reset the row to `pending` first. (2) Whatever triggers it, calling
+  `process_recording()` again is safe and won't "double up" retries in a confusing way: the
+  one-inline-retry state lives entirely inside a single `process_recording()` call and isn't
+  persisted anywhere, so each manual regenerate invocation gets its own fresh, independent
+  one-retry cycle — never more than 2 attempts per call, whether that call was triggered by the
+  original upload or a later manual regenerate.
 - The same pattern (no cron) applies to the v2 question-pool top-up: it fires from a
   `BackgroundTasks` call triggered by mode selection running low on unused questions, not a
   scheduled job. See plan Section 5's "Question pool" subsection.
@@ -254,6 +561,8 @@ live under a `{user_id}/...` path prefix, enforced by storage RLS policies in
   boilerplate and better fit for this app's shallow, mostly-linear screen flow: home → record →
   processing → history/detail. See `src/app/` for routes, `src/components/` for shared UI,
   `src/lib/` for the Supabase client / future API calls, `src/types/` for shared TS types).
-- Supabase URL/anon key are read from `EXPO_PUBLIC_SUPABASE_URL` / `EXPO_PUBLIC_SUPABASE_ANON_KEY`
-  in `.env` (gitignored; see `.env.example`) — never hardcode them.
+- Supabase URL/anon key are read from `EXPO_PUBLIC_SUPABASE_URL` / `EXPO_PUBLIC_SUPABASE_ANON_KEY`,
+  and the backend's base URL from `EXPO_PUBLIC_API_URL`, all in `.env` (gitignored; see
+  `.env.example`) — never hardcode them. See [AI processing endpoint](#ai-processing-endpoint) for
+  what `EXPO_PUBLIC_API_URL` needs to be set to locally vs. deployed.
 - Full project plan, phases, and data-flow detail: [docs/PROJECT_PLAN.md](docs/PROJECT_PLAN.md).

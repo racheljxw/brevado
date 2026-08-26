@@ -17,6 +17,7 @@ import { ThemedView } from '@/components/themed-view';
 import { WebBadge } from '@/components/web-badge';
 import { BottomTabInset, MaxContentWidth, Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
+import { startProcessing } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
 import { formatDuration } from '@/lib/format-time';
 import { buildAudioPath, RecordingUploadError, uploadRecording, type RecordingUploadStage } from '@/lib/recordings';
@@ -233,6 +234,17 @@ export default function RecordScreen() {
       const result = await uploadRecording({ userId: user.id, localUri: recordedUri, audioPath: path });
       setUploadedRecordingId(result.id);
       setUploadState('done');
+
+      // Phase 2 Step 2: kick off backend processing now that the row exists.
+      // Best-effort — the recording is already safely uploaded and visible
+      // in History regardless, so a failure here shouldn't block navigating
+      // there. If it does fail, the row is simply left at 'pending' with no
+      // retry yet (that's a later step); this is enough to prove the wiring
+      // for now.
+      startProcessing(result.id).catch((err) => {
+        console.warn('Failed to start processing for recording', result.id, err);
+      });
+
       // Step 6: land on the history list so the new recording is visible
       // immediately, instead of stopping at a dead-end confirmation. This
       // screen's own state is left as "done" (not reset) so tabbing back
