@@ -4,6 +4,7 @@ import { ActivityIndicator, Platform, Pressable, ScrollView, StyleSheet, View } 
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { AudioPlaybackControls } from '@/components/audio-playback-controls';
+import { FavoriteStar } from '@/components/favorite-star';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { WebBadge } from '@/components/web-badge';
@@ -15,6 +16,7 @@ import { getStatusPresentation, TERMINAL_STATUSES } from '@/lib/recording-status
 import {
   fetchRecordingById,
   getRecordingAudioUrl,
+  setFavorite,
   type RecordingDetail,
   type RecordingMetrics,
 } from '@/lib/recordings';
@@ -244,6 +246,7 @@ export default function RecordingDetailScreen() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [regenerating, setRegenerating] = useState(false);
   const [regenerateError, setRegenerateError] = useState<string | null>(null);
+  const [favoritePending, setFavoritePending] = useState(false);
 
   // Shared with the silent poll below, same purpose as the History list's
   // own `requestSeqRef` (Phase 2 Step 7): only the response matching the
@@ -337,6 +340,25 @@ export default function RecordingDetailScreen() {
     }
   }, [recording]);
 
+  // Phase 3 Step 4 — same optimistic-then-persist pattern as the History
+  // list's `handleToggleFavorite` (`history/index.tsx`): flip local state
+  // immediately so the star responds without waiting on a round-trip, then
+  // persist via the same `setFavorite` direct Supabase update, reverting on
+  // failure.
+  const handleToggleFavorite = useCallback(async () => {
+    if (!recording) return;
+    const nextFavorite = !recording.favorite;
+    setRecording((prev) => (prev ? { ...prev, favorite: nextFavorite } : prev));
+    setFavoritePending(true);
+    try {
+      await setFavorite(recording.id, nextFavorite);
+    } catch {
+      setRecording((prev) => (prev ? { ...prev, favorite: !nextFavorite } : prev));
+    } finally {
+      setFavoritePending(false);
+    }
+  }, [recording]);
+
   const status = recording ? getStatusPresentation(recording.status, theme) : null;
 
   return (
@@ -375,10 +397,13 @@ export default function RecordingDetailScreen() {
           <ScrollView contentContainerStyle={styles.scrollContent}>
             <View style={styles.headerRow}>
               <ThemedText type="subtitle">{formatRecordedAt(recording.created_at)}</ThemedText>
-              <View style={[styles.statusBadge, { backgroundColor: status.backgroundColor }]}>
-                <ThemedText type="smallBold" style={{ color: status.textColor }}>
-                  {status.label}
-                </ThemedText>
+              <View style={styles.headerRowRight}>
+                <View style={[styles.statusBadge, { backgroundColor: status.backgroundColor }]}>
+                  <ThemedText type="smallBold" style={{ color: status.textColor }}>
+                    {status.label}
+                  </ThemedText>
+                </View>
+                <FavoriteStar favorite={recording.favorite} onToggle={handleToggleFavorite} disabled={favoritePending} />
               </View>
             </View>
             <ThemedText type="small" themeColor="textSecondary" style={styles.modeLabel}>
@@ -442,6 +467,11 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
+    gap: Spacing.two,
+  },
+  headerRowRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
     gap: Spacing.two,
   },
   modeLabel: {

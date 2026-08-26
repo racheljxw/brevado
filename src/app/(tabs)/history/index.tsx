@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, FlatList, Platform, Pressable, RefreshControl, StyleSheet, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { FavoriteStar } from '@/components/favorite-star';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { WebBadge } from '@/components/web-badge';
@@ -12,7 +13,7 @@ import { regenerateReport } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
 import { formatRecordedAt } from '@/lib/format-time';
 import { getStatusPresentation, TERMINAL_STATUSES } from '@/lib/recording-status';
-import { fetchRecordings, type RecordingRow } from '@/lib/recordings';
+import { fetchRecordings, setFavorite, type RecordingRow } from '@/lib/recordings';
 
 // Phase 3 Step 1: rows are now tappable, pushing `history/[id]` for the full
 // detail view (transcript/feedback/metrics/playback). `onPress` is threaded
@@ -30,12 +31,16 @@ import { fetchRecordings, type RecordingRow } from '@/lib/recordings';
 function RecordingListItem({
   recording,
   onPress,
+  onToggleFavorite,
+  favoritePending,
   onRegenerate,
   regenerating,
   regenerateError,
 }: {
   recording: RecordingRow;
   onPress: () => void;
+  onToggleFavorite: () => void;
+  favoritePending: boolean;
   onRegenerate: () => void;
   regenerating: boolean;
   regenerateError?: string;
@@ -48,10 +53,13 @@ function RecordingListItem({
       <ThemedView type="backgroundElement" style={styles.row}>
         <View style={styles.rowHeader}>
           <ThemedText type="smallBold">{formatRecordedAt(recording.created_at)}</ThemedText>
-          <View style={[styles.statusBadge, { backgroundColor: status.backgroundColor }]}>
-            <ThemedText type="smallBold" style={{ color: status.textColor }}>
-              {status.label}
-            </ThemedText>
+          <View style={styles.rowHeaderRight}>
+            <View style={[styles.statusBadge, { backgroundColor: status.backgroundColor }]}>
+              <ThemedText type="smallBold" style={{ color: status.textColor }}>
+                {status.label}
+              </ThemedText>
+            </View>
+            <FavoriteStar favorite={recording.favorite} onToggle={onToggleFavorite} disabled={favoritePending} size={20} />
           </View>
         </View>
         <ThemedText type="small" themeColor="textSecondary">
@@ -96,6 +104,10 @@ export default function HistoryScreen() {
   // list-wide one).
   const [regeneratingIds, setRegeneratingIds] = useState<Set<string>>(new Set());
   const [regenerateErrors, setRegenerateErrors] = useState<Record<string, string>>({});
+
+  // Phase 3 Step 4 — per-row favorite-toggle in-flight state, same shape as
+  // the regenerate state above (independent per row, keyed by id).
+  const [favoritingIds, setFavoritingIds] = useState<Set<string>>(new Set());
 
   // Step 7: monotonically-increasing id for each `load()` call, so a
   // response can tell whether a *newer* request has been issued since it
@@ -213,6 +225,28 @@ export default function HistoryScreen() {
     }
   }
 
+  // Phase 3 Step 4: optimistic, responsive favorite toggle — flip local
+  // state immediately (no waiting on a refetch/poll tick), then persist via
+  // `setFavorite` (direct Supabase update, see src/lib/recordings.ts). On
+  // failure, revert the optimistic flip rather than leaving the UI showing
+  // a state that didn't actually save.
+  async function handleToggleFavorite(id: string, nextFavorite: boolean) {
+    setRecordings((prev) => prev?.map((row) => (row.id === id ? { ...row, favorite: nextFavorite } : row)) ?? prev);
+    setFavoritingIds((prev) => new Set(prev).add(id));
+    try {
+      await setFavorite(id, nextFavorite);
+    } catch {
+      // Revert — the update didn't actually persist.
+      setRecordings((prev) => prev?.map((row) => (row.id === id ? { ...row, favorite: !nextFavorite } : row)) ?? prev);
+    } finally {
+      setFavoritingIds((prev) => {
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
+    }
+  }
+
   const showInitialLoading = loading && recordings === null;
   const showEmpty = !loading && !error && recordings?.length === 0;
 
@@ -250,6 +284,8 @@ export default function HistoryScreen() {
               <RecordingListItem
                 recording={item}
                 onPress={() => router.push({ pathname: '/history/[id]', params: { id: item.id } })}
+                onToggleFavorite={() => handleToggleFavorite(item.id, !item.favorite)}
+                favoritePending={favoritingIds.has(item.id)}
                 onRegenerate={() => handleRegenerate(item.id)}
                 regenerating={regeneratingIds.has(item.id)}
                 regenerateError={regenerateErrors[item.id]}
@@ -305,6 +341,11 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
+  },
+  rowHeaderRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.two,
   },
   statusBadge: {
     paddingHorizontal: Spacing.two,

@@ -39,23 +39,47 @@ export class RecordingUploadError extends Error {
 
 // Only the columns the Step 6 history list needs. Widen this (or select('*'))
 // once Phase 3's detail view needs transcript/feedback/metrics too.
+// `favorite` was added in Phase 3 Step 4 — the list needs it directly (not
+// just the detail screen) since the star toggle now lives on both.
 export type RecordingRow = {
   id: string;
   mode: string;
   status: string;
   created_at: string;
+  favorite: boolean;
 };
 
 export async function fetchRecordings(userId: string): Promise<RecordingRow[]> {
   const { data, error } = await supabase
     .from('recordings')
-    .select('id, mode, status, created_at')
+    .select('id, mode, status, created_at, favorite')
     .eq('user_id', userId)
     .order('created_at', { ascending: false });
   if (error) {
     throw error;
   }
   return data ?? [];
+}
+
+/**
+ * Toggles the `favorite` marker on a single recording (Phase 3 Step 4).
+ *
+ * A direct Supabase update, not a backend endpoint — same judgment call as
+ * `getActiveRecordingCount` above: RLS ("Users can update their own
+ * recordings", 0001_initial_schema.sql) already scopes this to the calling
+ * user, there's no Gemini/Storage/other-service work involved (unlike
+ * `/process` and `/regenerate`, which exist as backend endpoints precisely
+ * *because* they kick off Gemini calls the backend holds the API key for),
+ * and `favorite` is purely a personal marker with no logic attached to it
+ * anywhere else in the app (see docs/CLAUDE.md's History section) — so a
+ * backend round-trip would add latency without adding correctness or any
+ * shared logic worth centralizing.
+ */
+export async function setFavorite(id: string, favorite: boolean): Promise<void> {
+  const { error } = await supabase.from('recordings').update({ favorite }).eq('id', id);
+  if (error) {
+    throw error;
+  }
 }
 
 /**

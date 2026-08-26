@@ -26,8 +26,8 @@ below for exactly what's real. **No stubs remain anywhere in the pipeline** — 
 metrics -> feedback are all real Gemini/code calls end to end, `status: done` means the full
 pipeline actually ran (retrying once inline if either Gemini-calling stage fails), and the
 frontend reflects that status accurately and promptly without flashing stale data.
-**Phase 3 — History, retention & retry — in progress. Steps 1, 2, and 3 are done.** Step 1 (full
-history detail view) — see [History](#history)'s "Detail screen" bullet for exactly what it
+**Phase 3 — History, retention & retry — in progress. Steps 1, 2, 3, and 4 are done.** Step 1
+(full history detail view) — see [History](#history)'s "Detail screen" bullet for exactly what it
 shows. **Step 2 (manual "Regenerate report") is now built, backend and frontend** — see
 [Background processing](#background-processing)'s "Regenerate report" bullet and
 [AI processing endpoint](#ai-processing-endpoint)'s "Regenerate endpoint" bullet for exactly what
@@ -38,10 +38,15 @@ limit. **Step 3 (per-user recording cap enforcement) is now built** — `MAX_REC
 (30) is checked before a new recording can even start, and enforced again independently by a
 Postgres trigger as a safety net — see [Recording cap](#recording-cap) for the full detail
 (including exactly where the frontend check lives and the note-to-self about Phase 4 needing to
-move it). Note docs/PROJECT_PLAN.md Section 6's phase descriptions are stale (still describe the
-old Celery/time-based retention plan) — Sections 3, 4, 5, and 7 reflect the current zero-cost,
-cap-based, manual-delete architecture and are the ones to trust. We're working phase-by-phase and
-step-by-step within a phase; don't reach ahead without being asked.
+move it). **Step 4 (favorite toggle) is now built, list and detail** — a star icon on each History
+list row and on the detail screen, both calling the same direct-Supabase `setFavorite()` — see
+[History](#history)'s "Favorite toggle" bullets for exactly where and how, and note it's a
+**purely cosmetic personal marker with no automated behavior attached** — no retention exemption,
+no confirmation gate before Step 5 deletes a favorited recording's audio; favorite and delete are
+fully independent. Note docs/PROJECT_PLAN.md Section 6's phase descriptions are stale (still
+describe the old Celery/time-based retention plan) — Sections 3, 4, 5, and 7 reflect the current
+zero-cost, cap-based, manual-delete architecture and are the ones to trust. We're working
+phase-by-phase and step-by-step within a phase; don't reach ahead without being asked.
 
 ## Tech stack
 
@@ -81,7 +86,13 @@ changes as a new numbered migration file rather than editing an applied one.
   Step 4 — see [Metrics](#metrics) for the exact shape stored),
   `favorite`/`audio_deleted` flags. `favorite` is a personal star marker (renamed from `saved`,
   which used to mean "exempt from the old 7-day auto-delete") — it's no longer tied to any
-  deletion behavior. `report_generated_at` has been removed — it only existed to compute the old
+  deletion behavior. As of Phase 3 Step 4 it's toggleable from the History list and detail screen
+  (star icon, direct Supabase update via `setFavorite()` in `src/lib/recordings.ts` — see
+  [History](#history)'s "Favorite toggle" bullets) — **it is purely a manual marker for the user's
+  own reference, with no automated behavior tied to it anywhere**: no retention exemption, no
+  confirmation step before Step 5 deletes a favorited recording's audio. Don't let a future step
+  assume favoriting protects a recording from anything. `report_generated_at` has been removed — it
+  only existed to compute the old
   7-day window. Retention is now a per-user cap, `MAX_RECORDINGS_PER_USER = 30` (counting rows
   where `audio_deleted = false`) — as of Phase 3 Step 3 this is enforced, not just defined; see
   [Recording cap](#recording-cap) for where and how. Deletion is manual only (bin icon per history
@@ -291,6 +302,19 @@ never be able to record + hit upload and only then learn they're blocked.
   optimistically flipped to `processing` in local state, which the existing Step 7 polling below
   already picks up on its very next tick — nothing about that polling needed to change to support
   this.
+- **Favorite toggle (Phase 3 Step 4, done):** each row also renders a star icon
+  (`FavoriteStar`, `src/components/favorite-star.tsx` — shared with the detail screen below,
+  filled `star.fill` vs. outline `star` via `expo-symbols`, same SF Symbols pattern already used by
+  `Collapsible`) next to the status badge. Tapping it calls `setFavorite()` (`src/lib/recordings.ts`)
+  — a **direct Supabase update, not a backend endpoint**: same reasoning as the recording-cap check
+  in [Recording cap](#recording-cap) — RLS already scopes the update to the calling user, there's no
+  Gemini/Storage call involved (unlike `/process`/`/regenerate`, which exist as backend endpoints
+  specifically to hold the Gemini API key), so a backend round-trip would only add latency. The
+  toggle is optimistic: local state flips immediately on tap (`handleToggleFavorite` in
+  `HistoryScreen`, per-row in-flight tracked in `favoritingIds`) and reverts only if the update
+  itself fails — no waiting on a refetch/poll tick to see the new state. **Purely a personal
+  marker** — favoriting a recording has no effect on the cap, retention, or delete behavior (Step
+  5); favorite and delete are fully independent, by design (see [Database](#database)).
 - Refresh: the list refetches on every focus (`useFocusEffect`, not a mount-only effect) so
   landing here from a fresh upload — or tabbing back after a second recording — always shows
   current data, since tab screens stay mounted in the background rather than remounting on
@@ -371,6 +395,14 @@ never be able to record + hit upload and only then learn they're blocked.
     to the list after regenerating, the list's own Step 7 polling picks the row up correctly with
     no changes needed there — its `stillInFlight` check only cares whether *any* row is
     non-terminal, regardless of what put a row into that state.
+  - **Favorite toggle (Phase 3 Step 4, done):** the same `FavoriteStar` component sits next to
+    the status badge in this screen's header row, wired to its own `handleToggleFavorite` —
+    identical optimistic-then-persist pattern as the list (flip `recording.favorite` locally,
+    call `setFavorite()`, revert on failure) so the star responds instantly here too. Since the
+    list refetches on every focus and this screen refetches fresh on mount (`fetchRecordingById`
+    already selects `favorite`), toggling in either place is reflected in the other without any
+    extra plumbing — a favorite set from the list shows correctly here on push, and one set here
+    shows correctly in the list on navigating back.
   - **Audio playback reuses the exact `expo-audio` pattern from the Phase 1 record-and-preview
     flow**, now extracted into a shared `AudioPlaybackControls` component
     (`src/components/audio-playback-controls.tsx`; see [Recording](#recording)) so this screen and
