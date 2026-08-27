@@ -67,11 +67,16 @@ still needs a manual on-device pass before trusting it completely.
 Note docs/PROJECT_PLAN.md Section 6's phase descriptions are stale (still describe the old
 Celery/time-based retention plan) — Sections 3, 4, 5, and 7 reflect the current zero-cost,
 cap-based, manual-delete architecture and are the ones to trust.
-**Phase 4 — v1 polish — started. Step 1 (hardcoded question pool) is now built** — the 25
-interview + 25 story questions live as static in-app data, not the `questions` DB table; see
-[Question pool (v1)](#question-pool-v1) for exactly where and why. This step is data + structure
-only — no mode selection UI, no selection logic (excluding the immediate-previous question), and
-no wiring into the recording flow yet; those are Steps 2–5. We're working phase-by-phase and
+**Phase 4 — v1 polish — started.** Step 1 (hardcoded question pool) is built — the 25 interview +
+25 story questions live as static in-app data, not the `questions` DB table; see [Question pool
+(v1)](#question-pool-v1) for exactly where and why. **Step 2 (mode-selection screen) is now
+built** — the Home tab's old bare record button is replaced by a real Interview/Story/Miscellaneous
+entry point, and the Phase 3 Step 3 recording-cap check has moved here from the old record button
+(there is now exactly one place it's enforced on the frontend) — see [Mode
+selection](#mode-selection) for the full detail, including what Interview/Story's placeholder
+next-screen looks like and the mode/question plumbing gap Step 5 still needs to fill in. Steps 3–5
+(real question-selection logic, question-selection UI beyond the placeholder, and wiring real
+mode/question data into the upload) are not built yet. We're working phase-by-phase and
 step-by-step within a phase; don't reach ahead without being asked.
 
 ## Tech stack
@@ -164,11 +169,14 @@ live under a `{user_id}/...` path prefix, enforced by storage RLS policies in
   reach for out of habit — see Conventions below).
 - The recording screen lives at `src/app/(tabs)/index.tsx` (the Home tab) — it replaces the
   template's placeholder content rather than living at a separate route, since recording is the
-  core home-screen action per the project plan. `RecordingPlayback`, the upload/keep/discard UI
-  shown after stopping, is a private component in the same file, but its play/pause + progress bar
-  controls now live in `AudioPlaybackControls` (`src/components/audio-playback-controls.tsx`),
-  extracted in Phase 3 Step 1 once the History detail screen needed the exact same controls for a
-  recording's already-uploaded audio — see [History](#history).
+  core home-screen action per the project plan. As of Phase 4 Step 2, it's one of a few local
+  "screens" this same file renders (behind mode selection — see [Mode
+  selection](#mode-selection)), reached only after picking Miscellaneous (Interview/Story currently
+  dead-end at a placeholder instead). `RecordingPlayback`, the upload/keep/discard UI shown after
+  stopping, is a private component in the same file, but its play/pause + progress bar controls now
+  live in `AudioPlaybackControls` (`src/components/audio-playback-controls.tsx`), extracted in
+  Phase 3 Step 1 once the History detail screen needed the exact same controls for a recording's
+  already-uploaded audio — see [History](#history).
 - Flow: `useAudioRecorder(RecordingPresets.HIGH_QUALITY)` + `useAudioRecorderState` drive
   record/stop and the elapsed-time counter; on stop, `recorder.uri` (the local file URI) is kept
   in state and handed to a `useAudioPlayer`-backed playback view, which now also carries the
@@ -222,15 +230,16 @@ Phase 3 Step 3 — enforces `MAX_RECORDINGS_PER_USER` (30, counting rows where
 retention" subsection). Checked **before** a recording can start, not after upload — a user should
 never be able to record + hit upload and only then learn they're blocked.
 
-- **Where the check currently lives, precisely: `handleStartRecording()` in
-  `src/app/(tabs)/index.tsx` (the Home tab's record button), the first thing it does before
-  requesting mic permission or calling `recorder.record()`.** This is the "natural checkpoint"
-  only because Phase 4 hasn't built mode selection yet — **when Phase 4 replaces this button with
-  a mode-selection screen as the real entry point into recording, this check (the
-  `getActiveRecordingCount` call, the `MAX_RECORDINGS_PER_USER` comparison, and the
-  block-with-message behavior) needs to move to that screen's entry point.** Don't let this get
-  forgotten when Phase 4 starts — it's easy to build the new screen and only notice the cap check
-  never made the jump once someone actually hits 30 recordings again.
+- **Where the check lives, precisely: `handleSelectMode()` in `src/app/(tabs)/index.tsx`, the
+  first thing it does when the user taps Interview, Story, or Miscellaneous on the mode-selection
+  screen.** This is a relocation, done in Phase 4 Step 2 as planned — it originally lived in
+  `handleStartRecording()` (the old bare record button, Phase 3 Step 3) before that button was
+  replaced by mode selection as the real entry point into recording — see [Mode
+  selection](#mode-selection) for the full detail on that screen. The `getActiveRecordingCount`
+  call, the `MAX_RECORDINGS_PER_USER` comparison, and the block-with-message behavior all moved
+  together, unchanged in logic — only the trigger point changed. There is exactly one place this
+  is enforced on the frontend now; `handleStartRecording()` (still in the same file, now only
+  reachable after the cap check has already passed) no longer does any cap check of its own.
 - **Frontend check:** `getActiveRecordingCount(userId)` (`src/lib/recordings.ts`) — a direct
   Supabase count query (`select('id', { count: 'exact', head: true })`), not a backend endpoint.
   Chosen over adding e.g. `GET /recordings/cap-status` to the FastAPI backend because RLS ("Users
@@ -241,21 +250,20 @@ never be able to record + hit upload and only then learn they're blocked.
   rather than fetched from the backend's copy (`backend/app/config.py`) — same accepted duplication
   as `RECORDINGS_BUCKET` already being defined separately in both projects (see
   [Backend](#backend)).
-  - On a cap hit, `handleStartRecording` sets local state that swaps the entire record button out
-    for a `CapBlockedCard` (same file) — a clear "You've reached your 30 recording limit. Delete
-    some audio from History to record more." message plus a "Go to History" button
-    (`router.navigate('/history')`). The recording UI (mic permission prompt, `recorder.record()`)
-    is never reached in this state.
-  - If the count query itself fails (network blip), the check **fails open** — recording is
-    allowed to proceed rather than blocking someone over a check that couldn't complete. The
+  - On a cap hit, `handleSelectMode` sets local state that swaps the mode options out for a
+    `CapBlockedCard` (same file) — a clear "You've reached your 30 recording limit. Delete some
+    audio from History to record more." message plus a "Go to History" button
+    (`router.navigate('/history')`). No mode's recording UI is ever reached in this state.
+  - If the count query itself fails (network blip), the check **fails open** — proceeding into the
+    chosen mode is allowed rather than blocking someone over a check that couldn't complete. The
     Postgres trigger below is what makes that safe to do.
   - The blocked state resets on every screen focus (`useFocusEffect`), so navigating back from
-    History (e.g. after a future manual delete frees a slot) shows the normal record button again;
+    History (e.g. after a future manual delete frees a slot) shows the normal mode options again;
     the next tap re-checks for real rather than trusting the stale cleared state.
-  - Under the cap, this is invisible: the count query runs once, inline, at tap time, and the
-    button behaves exactly as before — no separate loading UI was added for it, since it's a single
-    indexed count query and resolves well within the time the user spends granting mic permission
-    anyway.
+  - Under the cap, this is invisible: the count query runs once, inline, at tap time, and mode
+    selection behaves exactly as before — no separate loading UI was added for it, since it's a
+    single indexed count query and resolves well within the time the user spends granting mic
+    permission anyway (for Miscellaneous) or reading the placeholder (for Interview/Story).
 - **Backend/DB safety net:** a Postgres trigger, `recordings_enforce_cap` (function
   `enforce_recording_cap()`, `supabase/migrations/0004_recording_cap_enforcement.sql`), fires
   `before insert on recordings` and raises (blocking the insert) if the inserting user already has
@@ -287,6 +295,52 @@ never be able to record + hit upload and only then learn they're blocked.
   to make hitting the cap practical by hand, confirmed both that recording is blocked with the
   clear message at the cap and that recording still works normally below it, then the constant was
   set back to `30` in all three places before calling this step done.
+
+## Mode selection
+
+Phase 4 Step 2 — replaces the old bare record button with a real entry point into the recording
+flow: three options, Interview / Story / Miscellaneous, on the Home tab.
+
+- **Lives in the same file, `src/app/(tabs)/index.tsx` — not a new route.** The Home tab renders
+  one of three "screens" via local component state (`FlowScreen`:
+  `'mode-select' | 'placeholder' | 'record'`), the same pattern this file already used before this
+  step for switching between its record button / cap-blocked card / playback card. This was
+  deliberate, not an oversight — this flow doesn't need a distinct URL, a real back-stack entry, or
+  deep-linkability the way [History](#history)'s list -> detail push does (that's why *that* flow
+  uses a real nested route and this one doesn't); worth reconsidering only if Step 3's real
+  question-selection screen turns out to need any of that.
+  - `'mode-select'` (default): the three mode option cards (`ModeSelect`) — Interview, Story,
+    Miscellaneous — each with a one-line description.
+  - `'placeholder'`: shown after selecting Interview or Story. `ModePlaceholder` renders "Mode:
+    Interview" / "Mode: Story" plus a note that question selection isn't built yet, and a "‹
+    Change mode" link back to `'mode-select'`. Intentionally a dead end — Phase 4 Step 3 replaces
+    it with real question-selection logic (picking from `src/lib/questions.ts` via
+    `getQuestionsForMode`, excluding the immediately-previous question — see [Question pool
+    (v1)](#question-pool-v1)).
+  - `'record'`: shown after selecting Miscellaneous — the same record/playback/upload UI that used
+    to be the Home tab's only content, unmodified apart from the cap check no longer living here
+    (see below) and a new "‹ Change mode" link shown alongside the record button.
+- **Interview/Story don't reach recording at all yet** — deliberately: Step 3 is what turns the
+  placeholder into real question selection, and Step 5 is what wires a chosen question into the
+  upload. Only Miscellaneous reaches the `'record'` screen in this step, exactly as before.
+- **Cap check relocated here** from the old record button — see [Recording cap](#recording-cap)
+  for the full detail. It now runs once in `handleSelectMode`, before any mode is entered, rather
+  than in `handleStartRecording`.
+- **Gap flagged for Step 5:** the `'record'` screen and `uploadRecording()`
+  (`src/lib/recordings.ts`) have **no plumbing today for a real mode/question** —
+  `uploadRecording`'s insert still hardcodes `mode: 'miscellaneous', question: null` exactly as
+  Phase 1 left it (see [Upload](#upload)); this step didn't add any parameter or state to carry a
+  chosen mode or question into that call. For Step 5, that means: (1) pass the selected mode (and,
+  once Step 3 exists, the selected question) down into the `'record'` view instead of it being
+  mode-agnostic, and (2) thread that through `handleKeepAndUpload` into `uploadRecording()`'s
+  insert in place of the two hardcoded literals. Building that now would be building ahead of Step
+  3, which doesn't exist yet — so it's still a gap, not silently forgotten.
+- **Verification status:** frontend type-checks clean (`npx tsc --noEmit`). Not yet exercised in
+  Expo Go on the physical test iPhone — same caveat as several Phase 3 steps (see [Phase 3
+  assessment](#phase-3-assessment)) — including re-confirming the cap check still blocks/unblocks
+  correctly at its new location. Suggested way to re-verify: the same
+  temporarily-lower-`MAX_RECORDINGS_PER_USER`-to-2 trick used to verify Phase 3 Step 3 (see that
+  section's "How this was tested" bullet) rather than just trusting this description.
 
 ## History
 
@@ -643,9 +697,10 @@ before starting Phase 4?
   a separate recording — trigger a failure and confirm "Regenerate report" recovers it. That single
   pass would cover Steps 1, 2, 4, 5, and 6 together.
 - **Nothing found that blocks starting Phase 4** — the shakiness above is "unverified," not
-  "known-broken." Phase 4 (mode selection) does have one concrete carry-over item already flagged
-  in [Recording cap](#recording-cap): the cap check currently lives in the Home tab's record button
-  and needs to move to whatever screen Phase 4 makes the new entry point into recording.
+  "known-broken." Phase 4's one concrete carry-over item, the cap check needing to move from the
+  Home tab's old record button to whatever screen becomes the new entry point into recording, is
+  now done as of Phase 4 Step 2 — see [Recording cap](#recording-cap) and [Mode
+  selection](#mode-selection).
 
 ## Question pool (v1)
 

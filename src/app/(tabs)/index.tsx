@@ -22,6 +22,26 @@ import {
   type RecordingUploadStage,
 } from '@/lib/recordings';
 
+// Phase 4 Step 2: the Home tab is now a small local flow rather than jumping
+// straight into recording — 'mode-select' (the new entry point) -> either
+// 'placeholder' (Interview/Story, pending Step 3's real question-selection
+// screen) or 'record' (Miscellaneous, and eventually Interview/Story once
+// Step 3 exists) -> the existing record/upload UI below. This is plain local
+// state, not separate Expo Router routes — matching how this same file
+// already switched between its record-button/playback/cap-blocked "screens"
+// before this step; see docs/CLAUDE.md's History section for the one place
+// in this app that *does* use real nested routes (list -> detail), which
+// needs an actual back stack and deep-linkable URL in a way this flow
+// doesn't (yet — Step 3 may revisit this once question selection needs its
+// own screen).
+type FlowScreen = 'mode-select' | 'placeholder' | 'record';
+type Mode = 'interview' | 'story' | 'miscellaneous';
+
+const MODE_LABELS: Record<'interview' | 'story', string> = {
+  interview: 'Interview',
+  story: 'Story',
+};
+
 type PermissionState = 'unknown' | 'granted' | 'denied';
 type UploadState = 'idle' | 'uploading' | 'error' | 'done';
 type UploadErrorInfo = { message: string; stage: RecordingUploadStage };
@@ -115,11 +135,11 @@ function RecordingPlayback({
   );
 }
 
-// Phase 3 Step 3 — shown in place of the record button once
-// `handleStartRecording` finds the user at/over MAX_RECORDINGS_PER_USER.
-// See docs/CLAUDE.md's Audio retention section: manual delete (Phase 3 Step
-// 5) is the only way to free a slot, so this is the entry point into
-// History to do that.
+// Phase 3 Step 3 — shown in place of the mode options once the cap check
+// (now run from mode selection, not the old record button — see
+// docs/CLAUDE.md's Recording cap section) finds the user at/over
+// MAX_RECORDINGS_PER_USER. Manual delete (Phase 3 Step 5) is the only way
+// to free a slot, so this is the entry point into History to do that.
 function CapBlockedCard({ onGoToHistory }: { onGoToHistory: () => void }) {
   const theme = useTheme();
   return (
@@ -138,6 +158,57 @@ function CapBlockedCard({ onGoToHistory }: { onGoToHistory: () => void }) {
   );
 }
 
+// Phase 4 Step 2 — the new entry point into the recording flow, replacing
+// the old bare record button. Three options: Interview, Story,
+// Miscellaneous. `onSelectMode` runs the (now-relocated) recording-cap
+// check before letting any of them proceed — see docs/CLAUDE.md's Recording
+// cap section.
+function ModeSelect({ onSelectMode }: { onSelectMode: (mode: Mode) => void }) {
+  const theme = useTheme();
+
+  const options: { mode: Mode; label: string; description: string }[] = [
+    { mode: 'interview', label: 'Interview', description: 'Answer an interview-style question.' },
+    { mode: 'story', label: 'Story', description: 'Tell a personal story on a given prompt.' },
+    { mode: 'miscellaneous', label: 'Miscellaneous', description: 'Free topic — no question, just talk.' },
+  ];
+
+  return (
+    <View style={styles.modeList}>
+      {options.map((option) => (
+        <Pressable
+          key={option.mode}
+          style={({ pressed }) => [styles.modeCard, { borderColor: theme.text }, pressed && styles.pressed]}
+          onPress={() => onSelectMode(option.mode)}>
+          <ThemedText type="smallBold">{option.label}</ThemedText>
+          <ThemedText type="small" themeColor="textSecondary">
+            {option.description}
+          </ThemedText>
+        </Pressable>
+      ))}
+    </View>
+  );
+}
+
+// Phase 4 Step 2 — stub next screen for Interview/Story until Step 3 builds
+// real question-selection logic (picking a question from
+// src/lib/questions.ts, excluding the immediate previous one). Deliberately
+// nothing more than a label confirming which mode was chosen.
+function ModePlaceholder({ mode, onBack }: { mode: 'interview' | 'story'; onBack: () => void }) {
+  return (
+    <ThemedView type="backgroundElement" style={styles.playbackCard}>
+      <ThemedText type="smallBold">Mode: {MODE_LABELS[mode]}</ThemedText>
+      <ThemedText type="small" themeColor="textSecondary" style={styles.uriLabel}>
+        Question selection isn&apos;t built yet — that&apos;s the next step.
+      </ThemedText>
+      <Pressable style={({ pressed }) => [styles.discardButton, pressed && styles.pressed]} onPress={onBack}>
+        <ThemedText type="smallBold" themeColor="textSecondary">
+          ‹ Change mode
+        </ThemedText>
+      </Pressable>
+    </ThemedView>
+  );
+}
+
 export default function RecordScreen() {
   const { user, signOut } = useAuth();
   const theme = useTheme();
@@ -146,22 +217,27 @@ export default function RecordScreen() {
   const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
   const recorderState = useAudioRecorderState(recorder, 200);
 
+  const [flowScreen, setFlowScreen] = useState<FlowScreen>('mode-select');
+  const [placeholderMode, setPlaceholderMode] = useState<'interview' | 'story' | null>(null);
+
   const [permission, setPermission] = useState<PermissionState>('unknown');
   const [canAskAgain, setCanAskAgain] = useState(true);
   const [recordedUri, setRecordedUri] = useState<string | null>(null);
 
-  // Phase 3 Step 3: per-user recording cap (MAX_RECORDINGS_PER_USER) — see
-  // docs/CLAUDE.md's Audio retention section. `checkingCap` guards against a
-  // double-tap firing two count queries at once; `blockedByCap` swaps the
-  // whole record entry point for a blocking message once we know the user
-  // is at/over the cap.
+  // Phase 3 Step 3, relocated here in Phase 4 Step 2: per-user recording cap
+  // (MAX_RECORDINGS_PER_USER) — see docs/CLAUDE.md's Recording cap section.
+  // This now runs from mode selection (handleSelectMode below), the real
+  // entry point into recording, instead of the old bare record button.
+  // `checkingCap` guards against a double-tap firing two count queries at
+  // once; `blockedByCap` swaps the mode options for a blocking message once
+  // we know the user is at/over the cap.
   const [checkingCap, setCheckingCap] = useState(false);
   const [blockedByCap, setBlockedByCap] = useState(false);
 
   // Re-arm the check on every focus (e.g. coming back from History after
   // freeing a slot) so a stale "blocked" state doesn't linger — the next
-  // record tap re-checks for real via handleStartRecording below, this just
-  // clears the message so the normal record button reappears.
+  // mode tap re-checks for real via handleSelectMode below, this just
+  // clears the message so the normal mode options reappear.
   useFocusEffect(
     useCallback(() => {
       setBlockedByCap(false);
@@ -210,14 +286,19 @@ export default function RecordScreen() {
     setUploadedRecordingId(null);
   }
 
-  async function handleStartRecording() {
+  function handleBackToModeSelect() {
+    setPlaceholderMode(null);
+    setFlowScreen('mode-select');
+  }
+
+  // Phase 4 Step 2: the recording-cap check now runs here — before any mode
+  // is entered — rather than in handleStartRecording below. This is the
+  // real entry point into the recording flow now, replacing the old bare
+  // record button (see docs/CLAUDE.md's Recording cap section for the
+  // "note to self" this closes out).
+  async function handleSelectMode(mode: Mode) {
     if (!user || checkingCap) return;
 
-    // Phase 3 Step 3: check the per-user recording cap BEFORE opening the
-    // recording UI at all — not after recording + upload, per
-    // docs/CLAUDE.md's Audio retention section. This is the "natural
-    // checkpoint" until Phase 4's mode-selection screen replaces this
-    // button as the entry point (see the note left there for that).
     setCheckingCap(true);
     try {
       const count = await getActiveRecordingCount(user.id);
@@ -226,7 +307,7 @@ export default function RecordScreen() {
         return;
       }
     } catch (err) {
-      // Fail open: don't block recording over a cap check that itself
+      // Fail open: don't block proceeding over a cap check that itself
       // couldn't complete (e.g. a network blip) — the Postgres trigger
       // (supabase/migrations/0004_recording_cap_enforcement.sql) is the
       // real safety net if this ever lets someone squeak past the cap.
@@ -234,6 +315,20 @@ export default function RecordScreen() {
     } finally {
       setCheckingCap(false);
     }
+
+    if (mode === 'miscellaneous') {
+      setFlowScreen('record');
+      return;
+    }
+
+    // Interview/Story: real question-selection logic is Phase 4 Step 3 —
+    // for now, just show which mode was chosen.
+    setPlaceholderMode(mode);
+    setFlowScreen('placeholder');
+  }
+
+  async function handleStartRecording() {
+    if (!user) return;
 
     if (permission !== 'granted') {
       const response = await AudioModule.requestRecordingPermissionsAsync();
@@ -312,58 +407,81 @@ export default function RecordScreen() {
             </ThemedText>
           ) : null}
 
-          {!recordedUri && blockedByCap && <CapBlockedCard onGoToHistory={() => router.navigate('/history')} />}
+          {flowScreen === 'mode-select' &&
+            (blockedByCap ? (
+              <CapBlockedCard onGoToHistory={() => router.navigate('/history')} />
+            ) : (
+              <ModeSelect onSelectMode={handleSelectMode} />
+            ))}
 
-          {!recordedUri && !blockedByCap && (
-            <View style={styles.recordArea}>
-              <Animated.View style={{ opacity: pulseAnim }}>
-                <Pressable
-                  style={({ pressed }) => [
-                    styles.recordButton,
-                    { borderColor: theme.text },
-                    recorderState.isRecording && styles.recordButtonActive,
-                    pressed && styles.pressed,
-                  ]}
-                  onPress={recorderState.isRecording ? handleStopRecording : handleStartRecording}>
-                  <View style={recorderState.isRecording ? styles.stopIcon : styles.recordIcon} />
-                </Pressable>
-              </Animated.View>
-
-              <ThemedText type="small" themeColor="textSecondary">
-                {recorderState.isRecording ? 'Recording… tap to stop' : 'Tap to start recording'}
-              </ThemedText>
-
-              {recorderState.isRecording && (
-                <ThemedText type="subtitle" style={styles.timer}>
-                  {elapsed}
-                </ThemedText>
-              )}
-
-              {permission === 'denied' && (
-                <ThemedView type="backgroundElement" style={styles.permissionCard}>
-                  <ThemedText type="small">
-                    Brevado needs microphone access to record practice sessions, and it&apos;s currently
-                    turned off. {canAskAgain ? 'Tap the record button to try again.' : 'Enable it in Settings to continue.'}
-                  </ThemedText>
-                  {!canAskAgain && Platform.OS !== 'web' && (
-                    <Pressable onPress={() => Linking.openSettings()}>
-                      <ThemedText type="linkPrimary">Open Settings</ThemedText>
-                    </Pressable>
-                  )}
-                </ThemedView>
-              )}
-            </View>
+          {flowScreen === 'placeholder' && placeholderMode && (
+            <ModePlaceholder mode={placeholderMode} onBack={handleBackToModeSelect} />
           )}
 
-          {recordedUri && (
-            <RecordingPlayback
-              uri={recordedUri}
-              uploadState={uploadState}
-              uploadError={uploadError}
-              uploadedRecordingId={uploadedRecordingId}
-              onKeep={handleKeepAndUpload}
-              onDiscard={resetRecordingState}
-            />
+          {flowScreen === 'record' && (
+            <>
+              {!recordedUri && (
+                <View style={styles.recordArea}>
+                  <Animated.View style={{ opacity: pulseAnim }}>
+                    <Pressable
+                      style={({ pressed }) => [
+                        styles.recordButton,
+                        { borderColor: theme.text },
+                        recorderState.isRecording && styles.recordButtonActive,
+                        pressed && styles.pressed,
+                      ]}
+                      onPress={recorderState.isRecording ? handleStopRecording : handleStartRecording}>
+                      <View style={recorderState.isRecording ? styles.stopIcon : styles.recordIcon} />
+                    </Pressable>
+                  </Animated.View>
+
+                  <ThemedText type="small" themeColor="textSecondary">
+                    {recorderState.isRecording ? 'Recording… tap to stop' : 'Tap to start recording'}
+                  </ThemedText>
+
+                  {recorderState.isRecording && (
+                    <ThemedText type="subtitle" style={styles.timer}>
+                      {elapsed}
+                    </ThemedText>
+                  )}
+
+                  {permission === 'denied' && (
+                    <ThemedView type="backgroundElement" style={styles.permissionCard}>
+                      <ThemedText type="small">
+                        Brevado needs microphone access to record practice sessions, and it&apos;s currently
+                        turned off. {canAskAgain ? 'Tap the record button to try again.' : 'Enable it in Settings to continue.'}
+                      </ThemedText>
+                      {!canAskAgain && Platform.OS !== 'web' && (
+                        <Pressable onPress={() => Linking.openSettings()}>
+                          <ThemedText type="linkPrimary">Open Settings</ThemedText>
+                        </Pressable>
+                      )}
+                    </ThemedView>
+                  )}
+
+                  {!recorderState.isRecording && (
+                    <Pressable
+                      style={({ pressed }) => [styles.discardButton, pressed && styles.pressed]}
+                      onPress={handleBackToModeSelect}>
+                      <ThemedText type="smallBold" themeColor="textSecondary">
+                        ‹ Change mode
+                      </ThemedText>
+                    </Pressable>
+                  )}
+                </View>
+              )}
+
+              {recordedUri && (
+                <RecordingPlayback
+                  uri={recordedUri}
+                  uploadState={uploadState}
+                  uploadError={uploadError}
+                  uploadedRecordingId={uploadedRecordingId}
+                  onKeep={handleKeepAndUpload}
+                  onDiscard={resetRecordingState}
+                />
+              )}
+            </>
           )}
         </ThemedView>
 
@@ -405,6 +523,18 @@ const styles = StyleSheet.create({
   },
   title: {
     textAlign: 'center',
+  },
+  modeList: {
+    alignSelf: 'stretch',
+    gap: Spacing.three,
+  },
+  modeCard: {
+    alignSelf: 'stretch',
+    paddingHorizontal: Spacing.four,
+    paddingVertical: Spacing.three,
+    borderRadius: Spacing.three,
+    borderWidth: StyleSheet.hairlineWidth,
+    gap: Spacing.one,
   },
   recordArea: {
     alignItems: 'center',

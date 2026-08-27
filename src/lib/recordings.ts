@@ -9,10 +9,12 @@ const RECORDINGS_BUCKET = 'recordings-audio';
 // separate constant here for the same reason RECORDINGS_BUCKET above is:
 // this frontend and the backend are separate projects with no shared module
 // to import a constant from (see docs/CLAUDE.md's "Backend" section).
-// Checked before a new recording starts (src/app/(tabs)/index.tsx, Phase 3
-// Step 3) and enforced again, independently, by a Postgres trigger
+// Checked before a new recording starts (src/app/(tabs)/index.tsx —
+// originally the record button in Phase 3 Step 3, relocated to the mode
+// selection screen's `handleSelectMode` in Phase 4 Step 2, same file either
+// way) and enforced again, independently, by a Postgres trigger
 // (supabase/migrations/0004_recording_cap_enforcement.sql) as a safety
-// net — see docs/CLAUDE.md's Audio retention section for why this one
+// net — see docs/CLAUDE.md's Recording cap section for why this one
 // number ends up duplicated in three places, and update all three if it
 // ever changes.
 export const MAX_RECORDINGS_PER_USER = 30;
