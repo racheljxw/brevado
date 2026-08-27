@@ -80,10 +80,12 @@ chosen question, and — since testing that exclusion meaningfully requires a re
 the database — threads the selected mode and question through `uploadRecording()`'s insert in
 place of the old hardcoded `'miscellaneous'`/`null`. See [Question selection](#question-selection)
 for exactly how selection/exclusion works and [Mode selection](#mode-selection) for the
-now-real Interview/Story screen. **Custom topic input (typing your own question instead of picking
-from the pool) is still Step 4 and is NOT built** — Interview/Story always pick from the pool
-right now, with no way to type a custom topic yet. Step 5 (any further mode/question UI polish
-beyond what Step 3 already wired up) is also not built. We're working phase-by-phase and
+now-real Interview/Story screen. **Step 4 (custom topic/question input) is now built** — the
+QuestionSelect screen's free-text input + "Use this instead" action, coexisting with the pool pick
+rather than replacing it — see [Question selection](#question-selection)'s "Custom topic input"
+bullet for exactly where it lives and why no schema/upload changes were needed. This closes out
+Phase 4's custom-topic/question-input scope item in full. Step 5 (any further mode/question UI
+polish beyond what Steps 3-4 already wired up) is not built. We're working phase-by-phase and
 step-by-step within a phase; don't reach ahead without being asked.
 
 ## Tech stack
@@ -406,19 +408,43 @@ still inserts `mode: 'miscellaneous', question: null`, unchanged).
   the hardcoded `'miscellaneous'`/`null` literals from Phase 1. `uploadRecording` itself just takes
   `mode`/`question` as parameters now and inserts them as-is; it has no selection logic of its own.
   See [Upload](#upload) and [Mode selection](#mode-selection).
-- **Custom topic input is still NOT built (Phase 4 Step 4).** Right now Interview/Story always pick
-  from the fixed pool — there's no way yet to type your own question/topic instead. Don't assume
-  that exists; it's the very next step.
-- **Verification status — the concrete test plan for this step:** select Interview, confirm a real
-  question renders (not a placeholder label), record and upload, then check the row in Supabase's
-  Table Editor — `mode` should read `'interview'` and `question` should contain the exact text
-  shown on screen. Repeat Interview a second time and confirm a **different** question appears
-  (proving exclusion worked against the first recording); a third time may legitimately repeat the
-  *first* question — only the immediate previous is excluded, not full history. Repeat all of that
-  for Story. Confirm Miscellaneous still inserts `mode: 'miscellaneous', question: null`. This has
-  not yet been run against the live Expo Go app + Supabase project — same caveat as several Phase 3
-  steps (see [Phase 3 assessment](#phase-3-assessment)) — frontend type-checking clean is the only
-  verification so far.
+- **Custom topic input (Phase 4 Step 4, done).** `QuestionSelect` (`src/app/(tabs)/index.tsx`)
+  renders a free-text input + "Use this instead" button alongside — not replacing — the pool
+  question + "Start recording" button, in every state (loading/error/loaded), since typing a
+  custom topic doesn't depend on the pool lookup having succeeded. Validation is just
+  trim-then-check-non-empty (`handleUseCustomPress` in `QuestionSelect`) — no length limit or
+  content filtering, consistent with how relaxed the rest of this app's input handling already is
+  (see [Auth](#auth)'s "keep it simple" framing). Tapping "Use this instead" calls
+  `handleUseCustomQuestion(mode, text)` (the screen's own component, not a new file), which builds
+  a `{ id: 'custom', mode, text }` object — same `Question` shape `selectedQuestion` already holds
+  for a pool pick, so `id` is just a placeholder never read anywhere — and advances straight to
+  `'record'`, mirroring what tapping the pool's "Start recording" already does.
+  - **No schema or `uploadRecording()` changes were needed, confirmed by reading the code, not
+    assumed.** `selectedQuestion` was already typed as `Question | null` and
+    `handleKeepAndUpload` already reads only `selectedQuestion?.text` when building the
+    `uploadRecording()` call (see [Upload](#upload)) — it has no idea whether that text came from
+    the pool or was typed by hand, and `uploadRecording()` itself just inserts whatever `question`
+    string it's given. A custom question flows through the exact same `mode`/`question` state and
+    insert path Step 3 already built; this step only added a second way to populate
+    `selectedQuestion`, alongside `loadQuestion`'s pool pick, not a new one.
+  - **Exclusion on the next recording in that mode still works, confirmed by reading
+    `pickQuestionForMode`, not assumed.** Its lookup reads whatever raw text is in the previous
+    recording's `question` column and filters it out of the pool by exact match (see this file's
+    own top-of-section note on exclusion) — it has no notion of "pool question" vs. "custom
+    question," so a custom-typed question stored today is excluded from tomorrow's suggestion
+    exactly like a pool question would be. In practice this exclusion rarely has a visible effect
+    for a custom question specifically, since custom text won't match a pool entry anyway — but it
+    does mean the *same* custom text won't be immediately re-suggested if a future step ever
+    surfaces past custom questions as suggestions.
+  - **Verification status — the concrete test plan for this step:** select Interview, type a
+    custom question, tap "Use this instead," record and upload, then check the row in Supabase's
+    Table Editor — `mode` should read `'interview'` and `question` should contain the exact custom
+    text. Select Interview again and confirm the suggested pool question is *not* that custom
+    text (proving exclusion still fires across the custom path). Separately confirm the pool-pick
+    path (ignoring the custom input entirely) still works exactly as Step 3 left it. This has not
+    yet been run against the live Expo Go app + Supabase project — same caveat as several Phase 3
+    steps (see [Phase 3 assessment](#phase-3-assessment)) and as Step 3 itself above — frontend
+    type-checking clean is the only verification so far.
 
 ## History
 

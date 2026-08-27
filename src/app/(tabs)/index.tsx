@@ -1,7 +1,7 @@
 import { AudioModule, RecordingPresets, setAudioModeAsync, useAudioRecorder, useAudioRecorderState } from 'expo-audio';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Animated, Linking, Platform, Pressable, StyleSheet, View } from 'react-native';
+import { ActivityIndicator, Animated, Linking, Platform, Pressable, StyleSheet, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { AudioPlaybackControls } from '@/components/audio-playback-controls';
@@ -196,6 +196,18 @@ function ModeSelect({ onSelectMode }: { onSelectMode: (mode: Mode) => void }) {
 // in-flight `pickQuestionForMode` call (src/lib/question-selection.ts) kicked
 // off by the parent the moment this mode was selected — this component is
 // purely presentational.
+//
+// Phase 4 Step 4 — adds a custom question/topic input alongside the pool
+// pick (not replacing it): a free-text field + "Use this instead" button
+// that coexists with the AI-suggested question and its "Start recording"
+// button, in every state (loading/error/loaded) — typing a custom topic
+// doesn't depend on the pool lookup having succeeded. Validation is just
+// "not empty/whitespace-only" (trimmed here), matching how relaxed the rest
+// of this app's input handling is (see docs/CLAUDE.md's auth section) — no
+// length limit, no content filtering. The only local state here is the
+// in-progress input text and its own inline validation error; the parent
+// (RecordScreen) owns what actually becomes `selectedQuestion` via
+// `onUseCustom`, exactly the same as `onStart` does for the pool pick.
 function QuestionSelect({
   mode,
   question,
@@ -203,6 +215,7 @@ function QuestionSelect({
   error,
   onRetry,
   onStart,
+  onUseCustom,
   onBack,
 }: {
   mode: 'interview' | 'story';
@@ -211,9 +224,23 @@ function QuestionSelect({
   error: string | null;
   onRetry: () => void;
   onStart: () => void;
+  onUseCustom: (text: string) => void;
   onBack: () => void;
 }) {
   const theme = useTheme();
+  const [customText, setCustomText] = useState('');
+  const [customError, setCustomError] = useState<string | null>(null);
+
+  function handleUseCustomPress() {
+    const trimmed = customText.trim();
+    if (!trimmed) {
+      setCustomError('Type a question or topic first.');
+      return;
+    }
+    setCustomError(null);
+    onUseCustom(trimmed);
+  }
+
   return (
     <ThemedView type="backgroundElement" style={styles.playbackCard}>
       <ThemedText type="smallBold">Mode: {MODE_LABELS[mode]}</ThemedText>
@@ -252,6 +279,33 @@ function QuestionSelect({
           </Pressable>
         </>
       )}
+
+      <View style={styles.customSection}>
+        <ThemedText type="small" themeColor="textSecondary">
+          Or type your own question or topic instead:
+        </ThemedText>
+        <TextInput
+          style={[styles.customInput, { borderColor: theme.text, color: theme.text }]}
+          placeholder="Type a question or topic…"
+          placeholderTextColor={theme.textSecondary}
+          value={customText}
+          onChangeText={(text) => {
+            setCustomText(text);
+            if (customError) setCustomError(null);
+          }}
+          multiline
+        />
+        {customError && (
+          <ThemedText type="small" style={styles.uriLabel}>
+            {customError}
+          </ThemedText>
+        )}
+        <Pressable
+          style={({ pressed }) => [styles.playButton, { borderColor: theme.text }, pressed && styles.pressed]}
+          onPress={handleUseCustomPress}>
+          <ThemedText type="smallBold">Use this instead</ThemedText>
+        </Pressable>
+      </View>
 
       <Pressable style={({ pressed }) => [styles.discardButton, pressed && styles.pressed]} onPress={onBack}>
         <ThemedText type="smallBold" themeColor="textSecondary">
@@ -369,6 +423,22 @@ export default function RecordScreen() {
     } finally {
       setQuestionLoading(false);
     }
+  }
+
+  // Phase 4 Step 4 — the "Use this instead" action on QuestionSelect's
+  // custom-topic input. Mirrors handleStart's role for the pool pick: builds
+  // a Question-shaped object (satisfies the same `Question` type
+  // `selectedQuestion` already holds, so nothing downstream — the record
+  // screen's question banner, handleKeepAndUpload's uploadRecording() call —
+  // needs to know or care whether this text came from the pool or was typed
+  // by the user) and advances straight to 'record', same as tapping "Start
+  // recording" does for the pool pick. `id: 'custom'` is never read anywhere
+  // (question.text is the only field uploadRecording() or the banner uses),
+  // it's just a placeholder satisfying the Question type.
+  function handleUseCustomQuestion(mode: 'interview' | 'story', text: string) {
+    setSelectedQuestion({ id: 'custom', mode, text });
+    setQuestionError(null);
+    setFlowScreen('record');
   }
 
   // Phase 4 Step 2: the recording-cap check now runs here — before any mode
@@ -509,6 +579,7 @@ export default function RecordScreen() {
               error={questionError}
               onRetry={() => loadQuestion(selectedMode)}
               onStart={() => setFlowScreen('record')}
+              onUseCustom={(text) => handleUseCustomQuestion(selectedMode, text)}
               onBack={handleBackToModeSelect}
             />
           )}
@@ -704,6 +775,21 @@ const styles = StyleSheet.create({
   },
   uriLabel: {
     textAlign: 'center',
+  },
+  customSection: {
+    alignSelf: 'stretch',
+    alignItems: 'center',
+    gap: Spacing.two,
+    marginTop: Spacing.two,
+  },
+  customInput: {
+    alignSelf: 'stretch',
+    minHeight: 44,
+    paddingHorizontal: Spacing.three,
+    paddingVertical: Spacing.two,
+    borderRadius: Spacing.three,
+    borderWidth: StyleSheet.hairlineWidth,
+    textAlignVertical: 'top',
   },
   errorCard: {
     alignSelf: 'stretch',
