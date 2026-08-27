@@ -526,6 +526,20 @@ export default function RecordingDetailScreen() {
               {recording.mode}
             </ThemedText>
 
+            {/* Phase 4 Step 5 exit-checkpoint review: `question` was already
+                fetched (`fetchRecordingById` selects it) but never rendered —
+                a gap left over from when every recording had `question: null`
+                (pre-Phase-4). A pool-picked or custom-typed question (Phase 4
+                Steps 3-4) is meaningful context for the transcript/feedback
+                below, so it's shown in full here, right under mode. Still
+                absent for miscellaneous, which has no question. */}
+            {recording.question && (
+              <View style={styles.section}>
+                <ThemedText type="smallBold">Question</ThemedText>
+                <ThemedText type="default">{recording.question}</ThemedText>
+              </View>
+            )}
+
             <View style={styles.section}>
               <AudioSection
                 recording={recording}

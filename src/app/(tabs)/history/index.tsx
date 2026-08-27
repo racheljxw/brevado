@@ -76,6 +76,16 @@ function RecordingListItem({
             <FavoriteStar favorite={recording.favorite} onToggle={onToggleFavorite} disabled={favoritePending} size={20} />
           </View>
         </View>
+        {/* Phase 4 Step 5 exit-checkpoint review: the question/topic (real as
+            of Phase 4 Steps 3-4 for interview/story; still null for
+            miscellaneous) is meaningful context when scanning past sessions,
+            so it gets a one-line, truncated preview here — the detail screen
+            (below) shows it in full. */}
+        {recording.question && (
+          <ThemedText type="small" themeColor="textSecondary" numberOfLines={1}>
+            {recording.question}
+          </ThemedText>
+        )}
         <View style={styles.rowFooter}>
           <ThemedText type="small" themeColor="textSecondary">
             {recording.mode}

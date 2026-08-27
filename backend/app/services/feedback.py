@@ -31,9 +31,10 @@ logger = logging.getLogger(__name__)
 
 # Mode-specific evaluation criteria, per docs/PROJECT_PLAN.md Section 3: interview answers
 # are judged on directness/structure, stories on narrative arc/pacing, miscellaneous on
-# general clarity/conciseness. Recordings are always mode='miscellaneous' with question=null
-# today (Phase 4 hasn't built real mode selection yet — see docs/CLAUDE.md's "Current
-# phase"), but all three branches are built now so Phase 4 doesn't need this rebuilt.
+# general clarity/conciseness. All three branches were built in Phase 2 Step 5, before
+# Phase 4's real mode/question selection existed (every recording was still
+# mode='miscellaneous', question=null then) — Phase 4 didn't need this rebuilt, and a real
+# interview/story mode+question now flows into this exactly as originally designed.
 MODE_CRITERIA: dict[str, str] = {
     "interview": (
         "This is an interview-practice answer. Evaluate it primarily on directness and "

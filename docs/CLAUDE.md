@@ -84,9 +84,16 @@ now-real Interview/Story screen. **Step 4 (custom topic/question input) is now b
 QuestionSelect screen's free-text input + "Use this instead" action, coexisting with the pool pick
 rather than replacing it — see [Question selection](#question-selection)'s "Custom topic input"
 bullet for exactly where it lives and why no schema/upload changes were needed. This closes out
-Phase 4's custom-topic/question-input scope item in full. Step 5 (any further mode/question UI
-polish beyond what Steps 3-4 already wired up) is not built. We're working phase-by-phase and
-step-by-step within a phase; don't reach ahead without being asked.
+Phase 4's custom-topic/question-input scope item in full. **Step 5 — full end-to-end device
+testing, the v1 exit checkpoint — is in progress.** A full-app read-through (see [Phase 4 exit
+checkpoint](#phase-4-exit-checkpoint)) found and fixed one real gap — History never displayed the
+`question` field anywhere, list or detail, left over from when it was always `null` pre-Phase-4 —
+plus two stale code comments; everything else held together with no broken links in the
+mode-select → question → record → upload → process → History journey. What's still outstanding is
+the actual on-device pass: nothing in this phase (or the still-unverified parts of Phase 3) has
+been exercised in Expo Go against the live Supabase project yet — see that section's full test
+script. We're working phase-by-phase and step-by-step within a phase; don't reach ahead without
+being asked.
 
 ## Tech stack
 
@@ -458,21 +465,34 @@ still inserts `mode: 'miscellaneous', question: null`, unchanged).
   `TabTrigger href="/history"` still resolve to this directory's `index.tsx` exactly as before,
   so nothing about the tab itself changed.
 - Query logic is `fetchRecordings()` in `src/lib/recordings.ts`, alongside the upload logic —
-  selects `id, mode, status, created_at` for the current user ordered by `created_at desc`. It's
-  intentionally still just those four columns for the list — the detail screen (below) widens to
-  the full row with its own separate query, `fetchRecordingById()`, rather than this one growing a
-  `select('*')` the list itself doesn't need.
-- **What it shows right now, deliberately sparse**: date/time, mode, and status per row in a flat
-  list — no transcript/feedback text inline (the Phase 3 Step 1 detail screen, below, is where that
-  lives). Mode still always reads `miscellaneous` since Phase 4's mode selection doesn't exist yet
-  — that part is still expected, not a bug — but `status` now genuinely moves `pending` ->
-  `processing` -> `done`/`failed` as the real backend pipeline runs, not a placeholder value.
+  selects `id, mode, question, status, created_at, favorite, audio_deleted, audio_path` for the
+  current user ordered by `created_at desc`. `question` was added in the Phase 4 Step 5
+  exit-checkpoint review (see [Phase 4 exit checkpoint](#phase-4-exit-checkpoint)) — everything
+  else here predates it. The list still doesn't need transcript/feedback/metrics; the detail screen
+  (below) widens to the full row with its own separate query, `fetchRecordingById()`, rather than
+  this one growing a `select('*')`.
+- **What it shows**: date/time, mode, status, and — as of the Phase 4 Step 5 checkpoint — a
+  one-line truncated preview of `question` per row (only rendered when non-null, so a
+  miscellaneous row, which has no question, shows nothing extra) — no transcript/feedback text
+  inline (the Phase 3 Step 1 detail screen, below, is where that lives, showing the question in
+  full rather than truncated). Mode read `miscellaneous` for every row through Phase 3 since Phase
+  4's mode selection didn't exist yet; as of Phase 4 Steps 2-4 it genuinely varies
+  (`interview`/`story`/`miscellaneous`), and `status` moves `pending` -> `processing` ->
+  `done`/`failed` as the real backend pipeline runs.
 - **Status is visually distinct per state (Step 7):** `RecordingListItem`'s status badge colors
   `failed` red and `done` green (raw hex, not theme tokens, matching the same red already used for
   the record/error accents elsewhere in the app; same in light and dark mode) so a failed recording
   doesn't read as just another line of text next to `pending`/`processing`. `pending`/`processing`
   stay a neutral badge (`processing` additionally reads "Processing…" rather than the bare status
   word).
+- **Question preview per row (Phase 4 Step 5 exit-checkpoint review, done):** `RecordingListItem`
+  renders `recording.question` (when non-null) as a single truncated line
+  (`numberOfLines={1}`) right below the date/status/favorite header row and above the
+  mode/audio-actions row — a plain `ThemedText`, not a new component, since it's simple display
+  text with no interaction. Absent entirely for miscellaneous rows (no question to show). This
+  needed `fetchRecordings()`'s `select()` widened to include `question` (see above) — it wasn't
+  in the list's original four columns since every recording had `question: null` when that query
+  was first written, pre-Phase-4.
 - **"Regenerate report" per row (Phase 3 Step 2, done):** a `failed` row also renders an inline
   "Regenerate report" text action directly in `RecordingListItem` — the plan's spec calls for a
   3-dot menu, but a plain inline action was judged to read just as clearly at this app's scale
@@ -563,11 +583,20 @@ still inserts `mode: 'miscellaneous', question: null`, unchanged).
   relies on the existing `recordings` select RLS policy to make a bad id or another user's id come
   back as `null` instead of a 403 the frontend has to special-case) and shows date/time, mode, a
   status badge (`getStatusPresentation`, pulled out of the list into `src/lib/recording-status.ts`
-  so both screens render status identically), audio playback, transcript, feedback, and metrics
-  (filler-word rate shown as a rounded percentage, words-per-minute, and repetition count — plain
-  text/numbers, no charts or scoring visuals, which is Phase 5). Loading and not-found/error states
-  (bad id, RLS-blocked id, or a genuine fetch failure) are all handled explicitly, the last two with
-  a Retry action.
+  so both screens render status identically), the full `question` text (when non-null — see below),
+  audio playback, transcript, feedback, and metrics (filler-word rate shown as a rounded percentage,
+  words-per-minute, and repetition count — plain text/numbers, no charts or scoring visuals, which
+  is Phase 5). Loading and not-found/error states (bad id, RLS-blocked id, or a genuine fetch
+  failure) are all handled explicitly, the last two with a Retry action.
+  - **Question display (Phase 4 Step 5 exit-checkpoint review, done):** `fetchRecordingById()` had
+    already selected `question` since Phase 3 Step 1 (`RecordingDetail` always included it), but
+    nothing actually rendered it — a gap left over from when every recording had `question: null`
+    pre-Phase-4, only caught during the Phase 4 exit checkpoint's full-app review (see
+    [Phase 4 exit checkpoint](#phase-4-exit-checkpoint)). Now a "Question" label + the full text
+    renders right under the mode line, above audio playback, whenever `recording.question` is
+    non-null — so the prompt you were answering is visible alongside the transcript/feedback that
+    answer it, not just the day/time and status. Still absent for miscellaneous, which has no
+    question.
   - **`status === 'failed'`** shows a clear failed notice instead of a transcript/feedback/metrics
     section — there isn't one, since a transcription failure marks the row failed with nothing else
     attempted (see [AI processing endpoint](#ai-processing-endpoint)) — plus, as of Phase 3 Step 2,
@@ -826,9 +855,128 @@ see [Scope](#scope--dont-let-v2-creep-into-v1-work)).
   `getQuestionById(id)`. Note the "exclude the immediately-previous question" selection logic is
   explicitly **not** here — that's Phase 4 Step 3's job, wherever the recording flow actually picks
   a question to show. This file stays data + plain lookup only.
-- **Not wired into anything yet** — no mode selection UI, no selection logic, no changes to the
-  recording flow (`src/app/(tabs)/index.tsx` still hardcodes `mode: 'miscellaneous'`, `question:
-  null` per [Upload](#upload)). Zero user-facing behavior change. That wiring is Phase 4 Steps 2–5.
+- **Wiring status:** this file was data + plain lookup only when Step 1 landed, with zero
+  user-facing behavior change until later steps wired it up — see [Mode selection](#mode-selection),
+  [Question selection](#question-selection), and the exit checkpoint below for Steps 2-5, all of
+  which are now done. Don't read this bullet as "still unwired" — it describes Step 1's own scope,
+  not the pool's current state.
+
+## Phase 4 exit checkpoint
+
+Phase 4 Step 5 — same spirit as the [Phase 3 assessment](#phase-3-assessment): does Phase 4's full
+scope (hardcoded question pool, mode selection, real question-selection logic with exclusion,
+custom topic input) hold together as one coherent user journey, and what's confirmed working versus
+still unverified before calling v1 done? This step was a full-app read-through (`index.tsx`,
+`history/index.tsx`, `history/[id].tsx`, `recordings.ts`, `question-selection.ts`,
+`recording-status.ts`, and the backend's `processing.py`/`feedback.py`/`recordings.py` router, read
+together as one user journey rather than file-by-file) plus a small number of fixes the review
+surfaced, not new feature work — Phase 4's actual features (Steps 1-4) were already built and
+documented in [Question pool (v1)](#question-pool-v1), [Mode selection](#mode-selection), and
+[Question selection](#question-selection) before this step started.
+
+- **Built and internally consistent, confirmed by reading the code, not assumed:** the full journey
+  — mode select → question (pool or custom) → record → upload → `startProcessing()` → backend
+  pipeline (transcribe → metrics → feedback, reading whatever real `mode`/`question` the row was
+  inserted with) → History list/detail → favorite/delete/download/regenerate — has no broken link
+  in it. Specifically checked, not assumed: `process_recording()` (`backend/app/services/
+  processing.py`) re-reads `mode`/`question` fresh from the row rather than assuming
+  `miscellaneous`/`null`, and passes them into `generate_feedback()` unchanged; `uploadRecording()`
+  and `pickQuestionForMode()` (see [Question selection](#question-selection)) never needed to
+  change for Step 4's custom-topic input, since both already treated `question` as an opaque
+  string regardless of where it came from.
+- **Gap found and fixed: History never displayed `question` anywhere.** `fetchRecordingById()` had
+  selected `question` since Phase 3 Step 1, but neither the detail screen nor the list ever
+  rendered it — harmless while every recording had `question: null` (pre-Phase-4), but a real gap
+  once Phase 4 Steps 3-4 gave interview/story recordings a real chosen or custom-typed question:
+  there was no way to see what prompt you'd answered anywhere in History, only the transcript/
+  feedback that resulted from it. Fixed as part of this checkpoint, not deferred: the detail screen
+  now shows the full question text (a "Question" label + text, right under mode, above audio
+  playback) and the list shows a one-line truncated preview per row — see
+  [History](#history)'s "Question display" and "Question preview per row" bullets for the exact
+  implementation. This needed one small, low-risk query change (`fetchRecordings()`'s `select()`
+  widened to include `question`, since the list's original four-column query predated Phase 4) —
+  everything else about `uploadRecording()`/`pickQuestionForMode()` was already correct and needed
+  no change, per the bullet above.
+- **Two stale code comments fixed, no behavior change:** `backend/app/services/feedback.py`'s
+  `MODE_CRITERIA` comment and a comment in `backend/tests/test_feedback.py` both still said
+  "Phase 4 hasn't built mode selection yet" / "every recording today has question=null" — true when
+  Step 5 of Phase 2 wrote them, stale now that Phase 4 Steps 2-4 exist. Reworded to describe what
+  was true *then* (Phase 2 Step 5, pre-Phase-4) rather than asserting it as still true now. Caught
+  by this step's full-file read-through — exactly the kind of "leftover state from an earlier step
+  that no longer makes sense" this checkpoint was looking for; nothing else in that sweep turned up
+  a similar staleness or naming mismatch.
+- **What's confirmed via type-checking/code review, not yet on-device:** everything in this phase.
+  `npx tsc --noEmit` is clean and the backend's full pytest suite (38 tests) passes, but — same
+  caveat as every Phase 3 step carried into [Phase 3 assessment](#phase-3-assessment) — "type-checks
+  and passes unit tests" and "confirmed working in Expo Go against the live Supabase project" are
+  different claims. Phase 3's own on-device gap (Steps 1, 2, 4, 5, 6 unverified) is still
+  outstanding too; it was never closed out by a manual pass, so this checkpoint's test script below
+  covers both phases' backlog in one run rather than layering a second separate pass on top.
+  Only Phase 3 Step 3 (recording cap) and Phase 1's core record/upload/auth loop have a confirmed
+  on-device pass behind them so far (see [Phase 3 assessment](#phase-3-assessment) and
+  [Upload](#upload)).
+- **Nothing found that blocks calling v1 feature-complete.** The one gap this review surfaced
+  (question display) is fixed above, not just flagged. Custom topic input's own edge case — does
+  typing a custom question still exclude correctly on the next pick? — was already reasoned through
+  and confirmed by reading `pickQuestionForMode` in [Question selection](#question-selection); this
+  checkpoint's full-app read-through didn't find anything that contradicts that. What remains is
+  purely the on-device verification pass below — no more code review or new features between here
+  and v1.
+
+**Full v1 end-to-end test script** (run in one pass; supersedes doing Phase 3's and Phase 4's
+individual step-by-step spot checks separately — see the assessments above for what each spot check
+would have covered on its own):
+
+1. Fresh app open, sign in (or sign up if needed) — confirm you land on the Home tab, not stuck on
+   a loading screen.
+2. Go to History — with fewer than 30 active recordings, confirm the list loads normally (or shows
+   the empty state on a brand-new account) with no cap-blocked message.
+3. Back on Home, tap **Interview** — confirm a real pool question renders (not a placeholder), then
+   record a short take, keep & upload it.
+4. Watch it process: either stay on Home and navigate to History manually, or go straight there —
+   confirm the new row appears `pending`/`processing` and moves to `done` within well under a
+   minute with no manual refresh needed (Step 7 polling).
+5. On that `done` row in the list: confirm mode reads `interview`, the pool question you were asked
+   shows as a one-line preview, and the status badge is green "Done".
+6. Tap into the detail screen: confirm date/time, mode, the **full** question text, audio playback
+   (plays back correctly), transcript, metrics (filler-word %, wpm, repetition count), and feedback
+   all render and look sane relative to what you actually said.
+7. Tap the star to favorite it — confirm it fills immediately, then back out to the list and confirm
+   it shows favorited there too without needing a refresh.
+8. Back on Home, tap **Story**, and this time type a **custom** question/topic instead of using the
+   suggested one (`"Use this instead"`) — confirm it advances straight to recording with your typed
+   text, not the pool question. Record and upload.
+9. Once that row is `done`, check its detail screen: confirm `question` shows your exact custom
+   text, and transcript/feedback/metrics still generated normally (the pipeline doesn't care that
+   the question was custom-typed).
+10. Select **Story** again: confirm the suggested pool question is *not* the custom text you just
+    typed in Step 8 (exclusion working across the custom-input path) — then back out via "‹ Change
+    mode" without recording.
+11. Pick **Miscellaneous**, record a short take, upload it — confirm its row shows mode
+    `miscellaneous` with no question preview/text anywhere (list or detail), and that it still
+    processes to `done` normally.
+12. On any one `done` recording: tap the download icon (list or detail) — confirm the native share
+    sheet opens; complete a save/share once and confirm no error. Then tap it again and cancel the
+    share sheet on purpose — confirm no error text appears either time.
+13. On that same recording, tap delete audio (list or detail) — confirm no confirmation prompt
+    appears (expected — this is deliberate, not a bug), the bin/download icons both disappear
+    immediately after, and checking the *other* screen (detail if you deleted from the list, or vice
+    versa) shows the same "audio deleted" state. Confirm the Storage object is actually gone in the
+    Supabase dashboard.
+14. Confirm `getActiveRecordingCount` dropped: check History's total active-recording count
+    informally (or re-run the temporarily-lower-the-cap trick from [Recording
+    cap](#recording-cap)'s "How this was tested" bullet if you want a precise before/after).
+15. Force a failure if you can (e.g. temporarily break `GEMINI_API_KEY` on the backend, or upload
+    silence/no speech, or interrupt around the audio-download step), producing one `failed` row —
+    confirm the red "Failed" badge, tap "Regenerate report" from **both** the list and the detail
+    screen (on two different failed rows, or the same one twice), and confirm each recovers to
+    `done` normally, with the row's `transcript`/`metrics`/`feedback` all correctly populated
+    afterward.
+16. Finally, spot-check Supabase's Table Editor directly against the `recordings` table: the
+    interview row's `question` matches the pool text shown on screen, the story row's `question`
+    matches your exact custom-typed text, and the miscellaneous row's `question` is `null` — this is
+    the concrete proof (not just UI inference) that Phase 4 Steps 3-4 write the right value in every
+    case.
 
 ## Backend
 

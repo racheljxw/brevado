@@ -86,9 +86,9 @@ def test_prompt_includes_miscellaneous_criteria():
 
 
 def test_prompt_handles_null_question_regardless_of_mode():
-    # Every recording today has question=null (Phase 4 hasn't built mode selection yet) —
-    # the prompt must handle this gracefully even for interview/story, not just
-    # miscellaneous.
+    # A null question is still possible for interview/story even post-Phase-4 (e.g. a
+    # lookup edge case), not just miscellaneous (which always passes question=null) — the
+    # prompt must handle this gracefully for every mode.
     prompt = build_feedback_prompt(
         mode="interview", question=None, transcript="Some answer.", metrics=SAMPLE_METRICS,
     )

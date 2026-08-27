@@ -58,9 +58,17 @@ export class RecordingUploadError extends Error {
 // the download action correctly per row. `audio_path` was added in Step 6 —
 // the list needs the actual Storage path to download from, not just the
 // boolean; the detail screen already selected it (`RecordingDetail` below).
+// `question` was added in the Phase 4 Step 5 exit-checkpoint review — the
+// detail screen already selected and stored it (`RecordingDetail` below,
+// since Phase 3 Step 1) but neither screen actually rendered it, a gap left
+// over from when every recording had `question: null` (pre-Phase-4). Now
+// that Interview/Story carry a real chosen or custom-typed question (Phase
+// 4 Steps 3-4), the list shows a one-line preview per row too, not just the
+// detail screen.
 export type RecordingRow = {
   id: string;
   mode: string;
+  question: string | null;
   status: string;
   created_at: string;
   favorite: boolean;
@@ -71,7 +79,7 @@ export type RecordingRow = {
 export async function fetchRecordings(userId: string): Promise<RecordingRow[]> {
   const { data, error } = await supabase
     .from('recordings')
-    .select('id, mode, status, created_at, favorite, audio_deleted, audio_path')
+    .select('id, mode, question, status, created_at, favorite, audio_deleted, audio_path')
     .eq('user_id', userId)
     .order('created_at', { ascending: false });
   if (error) {
