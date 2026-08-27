@@ -66,7 +66,12 @@ regenerate, cap enforcement, favorite, manual delete, and now download) is fully
 still needs a manual on-device pass before trusting it completely.
 Note docs/PROJECT_PLAN.md Section 6's phase descriptions are stale (still describe the old
 Celery/time-based retention plan) — Sections 3, 4, 5, and 7 reflect the current zero-cost,
-cap-based, manual-delete architecture and are the ones to trust. We're working phase-by-phase and
+cap-based, manual-delete architecture and are the ones to trust.
+**Phase 4 — v1 polish — started. Step 1 (hardcoded question pool) is now built** — the 25
+interview + 25 story questions live as static in-app data, not the `questions` DB table; see
+[Question pool (v1)](#question-pool-v1) for exactly where and why. This step is data + structure
+only — no mode selection UI, no selection logic (excluding the immediate-previous question), and
+no wiring into the recording flow yet; those are Steps 2–5. We're working phase-by-phase and
 step-by-step within a phase; don't reach ahead without being asked.
 
 ## Tech stack
@@ -641,6 +646,30 @@ before starting Phase 4?
   "known-broken." Phase 4 (mode selection) does have one concrete carry-over item already flagged
   in [Recording cap](#recording-cap): the cap check currently lives in the Home tab's record button
   and needs to move to whatever screen Phase 4 makes the new entry point into recording.
+
+## Question pool (v1)
+
+Phase 4 Step 1 — the fixed pool of 25 interview questions + 25 story questions
+docs/PROJECT_PLAN.md calls for in v1 (a dynamically-growing, AI-generated pool is v2, Phase 5 —
+see [Scope](#scope--dont-let-v2-creep-into-v1-work)).
+
+- **Lives in `src/lib/questions.ts` as static in-app data — deliberately NOT the `questions` DB
+  table stub** (see [Database](#database)). A fixed v1 pool doesn't need a DB round-trip on every
+  mode selection, and this matches docs/PROJECT_PLAN.md's "no AI cost, no scheduled jobs required"
+  framing for v1. The `questions` table stays exactly the stub it already was — reserved shape,
+  not queried anywhere yet — until Phase 5's dynamic pool needs real rows to track "answered"
+  against.
+- **Shape:** `type Question = { id: string; mode: 'interview' | 'story'; text: string }`. Ids
+  follow `interview-01`...`interview-25` / `story-01`...`story-25` — stable and zero-padded
+  specifically so this same data can seed the DB table cleanly in Phase 5 without renumbering
+  anything that by then might be referenced elsewhere (e.g. a user's answered-question history).
+- **Helpers, ready but unused:** `getQuestionsForMode(mode)` (filters the pool by mode) and
+  `getQuestionById(id)`. Note the "exclude the immediately-previous question" selection logic is
+  explicitly **not** here — that's Phase 4 Step 3's job, wherever the recording flow actually picks
+  a question to show. This file stays data + plain lookup only.
+- **Not wired into anything yet** — no mode selection UI, no selection logic, no changes to the
+  recording flow (`src/app/(tabs)/index.tsx` still hardcodes `mode: 'miscellaneous'`, `question:
+  null` per [Upload](#upload)). Zero user-facing behavior change. That wiring is Phase 4 Steps 2–5.
 
 ## Backend
 
