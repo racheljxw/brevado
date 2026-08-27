@@ -69,14 +69,21 @@ Celery/time-based retention plan) — Sections 3, 4, 5, and 7 reflect the curren
 cap-based, manual-delete architecture and are the ones to trust.
 **Phase 4 — v1 polish — started.** Step 1 (hardcoded question pool) is built — the 25 interview +
 25 story questions live as static in-app data, not the `questions` DB table; see [Question pool
-(v1)](#question-pool-v1) for exactly where and why. **Step 2 (mode-selection screen) is now
-built** — the Home tab's old bare record button is replaced by a real Interview/Story/Miscellaneous
-entry point, and the Phase 3 Step 3 recording-cap check has moved here from the old record button
-(there is now exactly one place it's enforced on the frontend) — see [Mode
-selection](#mode-selection) for the full detail, including what Interview/Story's placeholder
-next-screen looks like and the mode/question plumbing gap Step 5 still needs to fill in. Steps 3–5
-(real question-selection logic, question-selection UI beyond the placeholder, and wiring real
-mode/question data into the upload) are not built yet. We're working phase-by-phase and
+(v1)](#question-pool-v1) for exactly where and why. Step 2 (mode-selection screen) is built — the
+Home tab's old bare record button is replaced by a real Interview/Story/Miscellaneous entry point,
+and the Phase 3 Step 3 recording-cap check moved here from the old record button (there is now
+exactly one place it's enforced on the frontend) — see [Mode selection](#mode-selection). **Step 3
+(real question-selection logic) is now built, and closes part of Step 2's flagged plumbing gap
+along with it** — selecting Interview or Story now runs real selection logic (excluding the
+immediately-previous question in that mode, per docs/PROJECT_PLAN.md Section 3), displays the
+chosen question, and — since testing that exclusion meaningfully requires a real question reaching
+the database — threads the selected mode and question through `uploadRecording()`'s insert in
+place of the old hardcoded `'miscellaneous'`/`null`. See [Question selection](#question-selection)
+for exactly how selection/exclusion works and [Mode selection](#mode-selection) for the
+now-real Interview/Story screen. **Custom topic input (typing your own question instead of picking
+from the pool) is still Step 4 and is NOT built** — Interview/Story always pick from the pool
+right now, with no way to type a custom topic yet. Step 5 (any further mode/question UI polish
+beyond what Step 3 already wired up) is also not built. We're working phase-by-phase and
 step-by-step within a phase; don't reach ahead without being asked.
 
 ## Tech stack
@@ -299,48 +306,119 @@ never be able to record + hit upload and only then learn they're blocked.
 ## Mode selection
 
 Phase 4 Step 2 — replaces the old bare record button with a real entry point into the recording
-flow: three options, Interview / Story / Miscellaneous, on the Home tab.
+flow: three options, Interview / Story / Miscellaneous, on the Home tab. As of Phase 4 Step 3,
+Interview/Story now lead to a real question-selection screen instead of a placeholder — see
+[Question selection](#question-selection) for that logic; this section covers the screen-switching
+shell around it.
 
 - **Lives in the same file, `src/app/(tabs)/index.tsx` — not a new route.** The Home tab renders
-  one of three "screens" via local component state (`FlowScreen`:
-  `'mode-select' | 'placeholder' | 'record'`), the same pattern this file already used before this
-  step for switching between its record button / cap-blocked card / playback card. This was
-  deliberate, not an oversight — this flow doesn't need a distinct URL, a real back-stack entry, or
-  deep-linkability the way [History](#history)'s list -> detail push does (that's why *that* flow
-  uses a real nested route and this one doesn't); worth reconsidering only if Step 3's real
-  question-selection screen turns out to need any of that.
+  one of three "screens" via local component state (`FlowScreen`: `'mode-select' | 'question' |
+  'record'`), the same pattern this file already used before Step 2 for switching between its
+  record button / cap-blocked card / playback card. This was deliberate, not an oversight — this
+  flow doesn't need a distinct URL, a real back-stack entry, or deep-linkability the way
+  [History](#history)'s list -> detail push does (that's why *that* flow uses a real nested route
+  and this one doesn't); still true post-Step 3 — the question screen turned out not to need any
+  of that either, just its own local loading/error state.
   - `'mode-select'` (default): the three mode option cards (`ModeSelect`) — Interview, Story,
     Miscellaneous — each with a one-line description.
-  - `'placeholder'`: shown after selecting Interview or Story. `ModePlaceholder` renders "Mode:
-    Interview" / "Mode: Story" plus a note that question selection isn't built yet, and a "‹
-    Change mode" link back to `'mode-select'`. Intentionally a dead end — Phase 4 Step 3 replaces
-    it with real question-selection logic (picking from `src/lib/questions.ts` via
-    `getQuestionsForMode`, excluding the immediately-previous question — see [Question pool
-    (v1)](#question-pool-v1)).
-  - `'record'`: shown after selecting Miscellaneous — the same record/playback/upload UI that used
-    to be the Home tab's only content, unmodified apart from the cap check no longer living here
-    (see below) and a new "‹ Change mode" link shown alongside the record button.
-- **Interview/Story don't reach recording at all yet** — deliberately: Step 3 is what turns the
-  placeholder into real question selection, and Step 5 is what wires a chosen question into the
-  upload. Only Miscellaneous reaches the `'record'` screen in this step, exactly as before.
+  - `'question'`: shown after selecting Interview or Story. `QuestionSelect` (Phase 4 Step 3,
+    replacing Step 2's dead-end `ModePlaceholder`) kicks off `pickQuestionForMode()`
+    (`src/lib/question-selection.ts` — see [Question selection](#question-selection)) the moment
+    the mode is chosen, shows a brief "Choosing a question…" spinner while that's in flight, then
+    renders the picked question's text plus a "Start recording" button that advances to
+    `'record'`. A failed lookup (the underlying Supabase query itself throwing, not just finding no
+    previous recording — see below) shows an inline error and a "Try again" button that re-runs the
+    same lookup. A "‹ Change mode" link back to `'mode-select'` is always present, same position as
+    the old placeholder had it.
+  - `'record'`: shown after selecting Miscellaneous, or after tapping "Start recording" from the
+    question screen. The same record/playback/upload UI that used to be the Home tab's only
+    content. As of Step 3, whenever the active mode is Interview/Story it also renders a small
+    banner above the record button showing "{Interview|Story} question" plus the chosen question's
+    text, so the user isn't recording blind to something they saw once on a previous screen and
+    then lost. A "‹ Change mode" link is still shown alongside the record button, same as Step 2.
+- **Interview/Story now reach recording for real** — `selectedMode`/`selectedQuestion` (component
+  state in `index.tsx`) are set the moment a mode is chosen (miscellaneous: `selectedQuestion =
+  null` immediately; interview/story: set once `pickQuestionForMode` resolves) and carried through
+  to `'record'` and into `handleKeepAndUpload`'s call to `uploadRecording()` — see [Question
+  selection](#question-selection) for the exclusion logic and [Upload](#upload) for the insert
+  itself. Tapping "Discard & re-record" or "Record another" does **not** re-run selection or clear
+  `selectedMode`/`selectedQuestion` — it only resets the local unsaved-take state
+  (`resetRecordingState`), so re-recording after a discard reuses the same already-chosen question
+  rather than picking a new one. Getting a fresh pick requires going back through "‹ Change mode".
 - **Cap check relocated here** from the old record button — see [Recording cap](#recording-cap)
   for the full detail. It now runs once in `handleSelectMode`, before any mode is entered, rather
   than in `handleStartRecording`.
-- **Gap flagged for Step 5:** the `'record'` screen and `uploadRecording()`
-  (`src/lib/recordings.ts`) have **no plumbing today for a real mode/question** —
-  `uploadRecording`'s insert still hardcodes `mode: 'miscellaneous', question: null` exactly as
-  Phase 1 left it (see [Upload](#upload)); this step didn't add any parameter or state to carry a
-  chosen mode or question into that call. For Step 5, that means: (1) pass the selected mode (and,
-  once Step 3 exists, the selected question) down into the `'record'` view instead of it being
-  mode-agnostic, and (2) thread that through `handleKeepAndUpload` into `uploadRecording()`'s
-  insert in place of the two hardcoded literals. Building that now would be building ahead of Step
-  3, which doesn't exist yet — so it's still a gap, not silently forgotten.
 - **Verification status:** frontend type-checks clean (`npx tsc --noEmit`). Not yet exercised in
   Expo Go on the physical test iPhone — same caveat as several Phase 3 steps (see [Phase 3
   assessment](#phase-3-assessment)) — including re-confirming the cap check still blocks/unblocks
-  correctly at its new location. Suggested way to re-verify: the same
+  correctly at its current location. Suggested way to re-verify the cap: the same
   temporarily-lower-`MAX_RECORDINGS_PER_USER`-to-2 trick used to verify Phase 3 Step 3 (see that
-  section's "How this was tested" bullet) rather than just trusting this description.
+  section's "How this was tested" bullet). See [Question selection](#question-selection)'s own
+  verification note for the Step 3-specific test plan (confirming a real question reaches the DB,
+  and that exclusion/repeat behavior is correct).
+
+## Question selection
+
+Phase 4 Step 3 — replaces Step 2's `ModePlaceholder` dead end with real question-selection logic
+for Interview/Story, and threads the result into the database for the first time (Miscellaneous
+still inserts `mode: 'miscellaneous', question: null`, unchanged).
+
+- **Lives in `src/lib/question-selection.ts`, a new sibling file to `src/lib/questions.ts` — not
+  added to `questions.ts` itself.** `questions.ts` is Step 1's pure data + lookup module (no
+  Supabase, no async) and its own comments say so explicitly; this file's only job is a Supabase
+  round-trip plus a random pick, so splitting them keeps `questions.ts` exactly what Step 1 said it
+  would stay. The one exported function, `pickQuestionForMode(mode, userId)`, is called from
+  `index.tsx`'s `handleSelectMode`/`loadQuestion` the moment Interview or Story is chosen (see
+  [Mode selection](#mode-selection)).
+- **The logic:** fetch the user's most recent recording in that same mode (`recordings` table,
+  `.eq('user_id', userId).eq('mode', mode).order('created_at', { ascending: false }).limit(1)`),
+  read its `question` column, filter that exact text out of `getQuestionsForMode(mode)`'s full
+  pool, then pick randomly from what's left. No previous recording in this mode (first time ever,
+  or nothing matched) skips straight to picking randomly from the full pool. Per
+  docs/PROJECT_PLAN.md Section 3, only the *immediate* previous question is excluded — repeats are
+  otherwise fine, and there's no broader "recently used" tracking here (explicitly out of scope for
+  v1).
+- **Exclusion is by exact TEXT match, not a stored question id — flagged deliberately, not an
+  oversight.** The schema (`supabase/migrations/0001_initial_schema.sql`) has no `question_id`
+  column; `question` is free text by design, because Step 4's custom-topic input will also write
+  arbitrary user-typed text into that same column, not just curated pool picks — a `question_id`
+  foreign key couldn't represent that case anyway. Exact-text matching has one narrow fragility: if
+  a pool question's wording in `questions.ts` is ever edited later, a previously-stored recording
+  referencing the old wording stops matching, so exclusion silently doesn't fire for that one
+  transition (it degrades to "no exclusion possible," allowing a same-question repeat — not a crash
+  or a wrong pick). That's an accepted tradeoff, not a bug to fix now: pool wording shouldn't churn
+  often post-launch, and the same text-match approach is *required* anyway for the custom-topic
+  case once Step 4 ships (a custom-typed previous question correctly won't match any pool entry,
+  which correctly falls through to "pick from the full pool" — there was never anything to exclude
+  it from). A `question_id` column would only harden the pool-question case and wouldn't help the
+  custom-topic case at all, so it isn't worth adding preemptively.
+- **Fails open, like the recording-cap check:** if the Supabase lookup itself errors (network
+  blip), `pickQuestionForMode` logs a warning and falls back to picking from the full pool rather
+  than blocking question selection over a lookup that couldn't complete — mirrors
+  `getActiveRecordingCount`'s judgment call (see [Recording cap](#recording-cap)). This means the
+  screen's own error/"Try again" state (see [Mode selection](#mode-selection)) is for a rarer
+  failure than the lookup alone — in practice it would only fire if something in
+  `pickQuestionForMode` failed in a way that isn't the network lookup, which shouldn't happen given
+  the pool is always non-empty static data.
+- **Reaching the database:** `index.tsx` carries the picked `Question` in `selectedQuestion` state
+  and, in `handleKeepAndUpload`, passes `mode: selectedMode` and `question:
+  selectedQuestion?.text ?? null` into `uploadRecording()` (`src/lib/recordings.ts`) — replacing
+  the hardcoded `'miscellaneous'`/`null` literals from Phase 1. `uploadRecording` itself just takes
+  `mode`/`question` as parameters now and inserts them as-is; it has no selection logic of its own.
+  See [Upload](#upload) and [Mode selection](#mode-selection).
+- **Custom topic input is still NOT built (Phase 4 Step 4).** Right now Interview/Story always pick
+  from the fixed pool — there's no way yet to type your own question/topic instead. Don't assume
+  that exists; it's the very next step.
+- **Verification status — the concrete test plan for this step:** select Interview, confirm a real
+  question renders (not a placeholder label), record and upload, then check the row in Supabase's
+  Table Editor — `mode` should read `'interview'` and `question` should contain the exact text
+  shown on screen. Repeat Interview a second time and confirm a **different** question appears
+  (proving exclusion worked against the first recording); a third time may legitimately repeat the
+  *first* question — only the immediate previous is excluded, not full history. Repeat all of that
+  for Story. Confirm Miscellaneous still inserts `mode: 'miscellaneous', question: null`. This has
+  not yet been run against the live Expo Go app + Supabase project — same caveat as several Phase 3
+  steps (see [Phase 3 assessment](#phase-3-assessment)) — frontend type-checking clean is the only
+  verification so far.
 
 ## History
 

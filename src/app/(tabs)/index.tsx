@@ -13,29 +13,31 @@ import { useTheme } from '@/hooks/use-theme';
 import { startProcessing } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
 import { formatDuration } from '@/lib/format-time';
+import { pickQuestionForMode } from '@/lib/question-selection';
+import type { Question } from '@/lib/questions';
 import {
   buildAudioPath,
   getActiveRecordingCount,
   MAX_RECORDINGS_PER_USER,
   RecordingUploadError,
   uploadRecording,
+  type RecordingMode,
   type RecordingUploadStage,
 } from '@/lib/recordings';
 
-// Phase 4 Step 2: the Home tab is now a small local flow rather than jumping
-// straight into recording — 'mode-select' (the new entry point) -> either
-// 'placeholder' (Interview/Story, pending Step 3's real question-selection
-// screen) or 'record' (Miscellaneous, and eventually Interview/Story once
-// Step 3 exists) -> the existing record/upload UI below. This is plain local
-// state, not separate Expo Router routes — matching how this same file
-// already switched between its record-button/playback/cap-blocked "screens"
-// before this step; see docs/CLAUDE.md's History section for the one place
-// in this app that *does* use real nested routes (list -> detail), which
-// needs an actual back stack and deep-linkable URL in a way this flow
-// doesn't (yet — Step 3 may revisit this once question selection needs its
-// own screen).
-type FlowScreen = 'mode-select' | 'placeholder' | 'record';
-type Mode = 'interview' | 'story' | 'miscellaneous';
+// Phase 4 Step 2/3: the Home tab is a small local flow rather than jumping
+// straight into recording — 'mode-select' (the entry point) -> either
+// 'question' (Interview/Story — Step 3's real question-selection screen,
+// replacing Step 2's placeholder) or 'record' (Miscellaneous, and
+// Interview/Story once a question's been picked) -> the existing
+// record/upload UI below. This is plain local state, not separate Expo
+// Router routes — matching how this same file already switched between its
+// record-button/playback/cap-blocked "screens" before Step 2; see
+// docs/CLAUDE.md's History section for the one place in this app that *does*
+// use real nested routes (list -> detail), which needs an actual back stack
+// and deep-linkable URL in a way this flow doesn't (yet).
+type FlowScreen = 'mode-select' | 'question' | 'record';
+type Mode = RecordingMode;
 
 const MODE_LABELS: Record<'interview' | 'story', string> = {
   interview: 'Interview',
@@ -189,17 +191,68 @@ function ModeSelect({ onSelectMode }: { onSelectMode: (mode: Mode) => void }) {
   );
 }
 
-// Phase 4 Step 2 — stub next screen for Interview/Story until Step 3 builds
-// real question-selection logic (picking a question from
-// src/lib/questions.ts, excluding the immediate previous one). Deliberately
-// nothing more than a label confirming which mode was chosen.
-function ModePlaceholder({ mode, onBack }: { mode: 'interview' | 'story'; onBack: () => void }) {
+// Phase 4 Step 3 — real question-selection screen for Interview/Story,
+// replacing Step 2's placeholder. `question`/`loading`/`error` reflect an
+// in-flight `pickQuestionForMode` call (src/lib/question-selection.ts) kicked
+// off by the parent the moment this mode was selected — this component is
+// purely presentational.
+function QuestionSelect({
+  mode,
+  question,
+  loading,
+  error,
+  onRetry,
+  onStart,
+  onBack,
+}: {
+  mode: 'interview' | 'story';
+  question: Question | null;
+  loading: boolean;
+  error: string | null;
+  onRetry: () => void;
+  onStart: () => void;
+  onBack: () => void;
+}) {
+  const theme = useTheme();
   return (
     <ThemedView type="backgroundElement" style={styles.playbackCard}>
       <ThemedText type="smallBold">Mode: {MODE_LABELS[mode]}</ThemedText>
-      <ThemedText type="small" themeColor="textSecondary" style={styles.uriLabel}>
-        Question selection isn&apos;t built yet — that&apos;s the next step.
-      </ThemedText>
+
+      {loading && (
+        <View style={styles.uploadingRow}>
+          <ActivityIndicator />
+          <ThemedText type="small" themeColor="textSecondary">
+            Choosing a question…
+          </ThemedText>
+        </View>
+      )}
+
+      {!loading && error && (
+        <>
+          <ThemedView type="background" style={styles.errorCard}>
+            <ThemedText type="small">{error}</ThemedText>
+          </ThemedView>
+          <Pressable
+            style={({ pressed }) => [styles.playButton, { borderColor: theme.text }, pressed && styles.pressed]}
+            onPress={onRetry}>
+            <ThemedText type="smallBold">Try again</ThemedText>
+          </Pressable>
+        </>
+      )}
+
+      {!loading && !error && question && (
+        <>
+          <ThemedText type="subtitle" style={styles.uriLabel}>
+            {question.text}
+          </ThemedText>
+          <Pressable
+            style={({ pressed }) => [styles.playButton, { borderColor: theme.text }, pressed && styles.pressed]}
+            onPress={onStart}>
+            <ThemedText type="smallBold">Start recording</ThemedText>
+          </Pressable>
+        </>
+      )}
+
       <Pressable style={({ pressed }) => [styles.discardButton, pressed && styles.pressed]} onPress={onBack}>
         <ThemedText type="smallBold" themeColor="textSecondary">
           ‹ Change mode
@@ -218,7 +271,14 @@ export default function RecordScreen() {
   const recorderState = useAudioRecorderState(recorder, 200);
 
   const [flowScreen, setFlowScreen] = useState<FlowScreen>('mode-select');
-  const [placeholderMode, setPlaceholderMode] = useState<'interview' | 'story' | null>(null);
+  // Phase 4 Step 3: the mode/question chosen for the current attempt, carried
+  // through 'question' -> 'record' -> handleKeepAndUpload's insert. `null`
+  // question is correct for miscellaneous (no question) and, transiently,
+  // while a question is still being picked for interview/story.
+  const [selectedMode, setSelectedMode] = useState<Mode | null>(null);
+  const [selectedQuestion, setSelectedQuestion] = useState<Question | null>(null);
+  const [questionLoading, setQuestionLoading] = useState(false);
+  const [questionError, setQuestionError] = useState<string | null>(null);
 
   const [permission, setPermission] = useState<PermissionState>('unknown');
   const [canAskAgain, setCanAskAgain] = useState(true);
@@ -287,8 +347,28 @@ export default function RecordScreen() {
   }
 
   function handleBackToModeSelect() {
-    setPlaceholderMode(null);
+    setSelectedMode(null);
+    setSelectedQuestion(null);
+    setQuestionError(null);
     setFlowScreen('mode-select');
+  }
+
+  // Phase 4 Step 3 — runs pickQuestionForMode (src/lib/question-selection.ts)
+  // for the given mode and stores the result, so QuestionSelect can render
+  // it. Also used by that screen's "Try again" button on a failed lookup.
+  async function loadQuestion(mode: 'interview' | 'story') {
+    if (!user) return;
+    setQuestionLoading(true);
+    setQuestionError(null);
+    setSelectedQuestion(null);
+    try {
+      const question = await pickQuestionForMode(mode, user.id);
+      setSelectedQuestion(question);
+    } catch (err) {
+      setQuestionError(err instanceof Error ? err.message : 'Could not choose a question.');
+    } finally {
+      setQuestionLoading(false);
+    }
   }
 
   // Phase 4 Step 2: the recording-cap check now runs here — before any mode
@@ -317,14 +397,17 @@ export default function RecordScreen() {
     }
 
     if (mode === 'miscellaneous') {
+      setSelectedMode('miscellaneous');
+      setSelectedQuestion(null);
       setFlowScreen('record');
       return;
     }
 
-    // Interview/Story: real question-selection logic is Phase 4 Step 3 —
-    // for now, just show which mode was chosen.
-    setPlaceholderMode(mode);
-    setFlowScreen('placeholder');
+    // Interview/Story: Phase 4 Step 3 — pick a real question (excluding the
+    // immediate previous one in this mode) and show it before recording.
+    setSelectedMode(mode);
+    setFlowScreen('question');
+    await loadQuestion(mode);
   }
 
   async function handleStartRecording() {
@@ -365,7 +448,11 @@ export default function RecordScreen() {
     setUploadError(null);
 
     try {
-      const result = await uploadRecording({ userId: user.id, localUri: recordedUri, audioPath: path });
+      const mode = selectedMode ?? 'miscellaneous';
+      // Miscellaneous never has a question; interview/story pass the real
+      // question text selected in the 'question' screen (Phase 4 Step 3).
+      const question = mode === 'miscellaneous' ? null : (selectedQuestion?.text ?? null);
+      const result = await uploadRecording({ userId: user.id, localUri: recordedUri, audioPath: path, mode, question });
       setUploadedRecordingId(result.id);
       setUploadState('done');
 
@@ -414,14 +501,33 @@ export default function RecordScreen() {
               <ModeSelect onSelectMode={handleSelectMode} />
             ))}
 
-          {flowScreen === 'placeholder' && placeholderMode && (
-            <ModePlaceholder mode={placeholderMode} onBack={handleBackToModeSelect} />
+          {flowScreen === 'question' && selectedMode && selectedMode !== 'miscellaneous' && (
+            <QuestionSelect
+              mode={selectedMode}
+              question={selectedQuestion}
+              loading={questionLoading}
+              error={questionError}
+              onRetry={() => loadQuestion(selectedMode)}
+              onStart={() => setFlowScreen('record')}
+              onBack={handleBackToModeSelect}
+            />
           )}
 
           {flowScreen === 'record' && (
             <>
               {!recordedUri && (
                 <View style={styles.recordArea}>
+                  {selectedMode && selectedMode !== 'miscellaneous' && selectedQuestion && (
+                    <ThemedView type="backgroundElement" style={styles.questionBanner}>
+                      <ThemedText type="small" themeColor="textSecondary">
+                        {MODE_LABELS[selectedMode]} question
+                      </ThemedText>
+                      <ThemedText type="smallBold" style={styles.uriLabel}>
+                        {selectedQuestion.text}
+                      </ThemedText>
+                    </ThemedView>
+                  )}
+
                   <Animated.View style={{ opacity: pulseAnim }}>
                     <Pressable
                       style={({ pressed }) => [
@@ -570,6 +676,14 @@ const styles = StyleSheet.create({
   permissionCard: {
     gap: Spacing.two,
     alignSelf: 'stretch',
+    paddingHorizontal: Spacing.three,
+    paddingVertical: Spacing.three,
+    borderRadius: Spacing.three,
+  },
+  questionBanner: {
+    gap: Spacing.one,
+    alignSelf: 'stretch',
+    alignItems: 'center',
     paddingHorizontal: Spacing.three,
     paddingVertical: Spacing.three,
     borderRadius: Spacing.three,

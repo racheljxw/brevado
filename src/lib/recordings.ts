@@ -1,9 +1,18 @@
 import { File, Paths } from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
 
+import type { QuestionMode } from '@/lib/questions';
 import { supabase } from '@/lib/supabase';
 
 const RECORDINGS_BUCKET = 'recordings-audio';
+
+// The `recordings.mode` check constraint's full set of values (0001_initial_
+// schema.sql) — QuestionMode ('interview' | 'story', src/lib/questions.ts)
+// plus 'miscellaneous', which has no associated question. Exported so
+// callers threading a selected mode through to uploadRecording() (Phase 4
+// Step 3 — src/app/(tabs)/index.tsx) have one shared type instead of each
+// redeclaring the same three literals.
+export type RecordingMode = QuestionMode | 'miscellaneous';
 
 // Mirrors MAX_RECORDINGS_PER_USER in backend/app/config.py — kept as a
 // separate constant here for the same reason RECORDINGS_BUCKET above is:
@@ -261,16 +270,26 @@ export async function shareRecordingAudio(audioPath: string): Promise<void> {
  * broken row a user can see. Passing back the same `audioPath` on retry (the
  * caller keeps it in state) means a retry after either failure overwrites
  * that same object instead of accumulating new ones.
+ *
+ * `mode`/`question` are threaded in by the caller as of Phase 4 Step 3 (see
+ * src/app/(tabs)/index.tsx and src/lib/question-selection.ts) rather than
+ * hardcoded here — miscellaneous still passes `question: null` (the only
+ * combination the schema's check constraint allows without a question), and
+ * interview/story pass the real selected question's text.
  */
 export async function uploadRecording({
   userId,
   localUri,
   audioPath,
+  mode,
+  question,
 }: {
   userId: string;
   localUri: string;
   /** Reuse a path from a previous failed attempt so retries overwrite rather than duplicate. */
   audioPath?: string;
+  mode: RecordingMode;
+  question: string | null;
 }): Promise<{ id: string; audioPath: string }> {
   const path = audioPath ?? buildAudioPath(userId, localUri);
 
@@ -290,10 +309,8 @@ export async function uploadRecording({
     .insert({
       user_id: userId,
       audio_path: path,
-      // Mode/question selection is Phase 4 — miscellaneous + no question is
-      // the only combination the schema allows without that UI yet.
-      mode: 'miscellaneous',
-      question: null,
+      mode,
+      question,
       status: 'pending',
     })
     .select('id')
