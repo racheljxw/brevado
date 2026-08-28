@@ -5,6 +5,7 @@ import { ActivityIndicator, Animated, Linking, Platform, Pressable, StyleSheet, 
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { AudioPlaybackControls } from '@/components/audio-playback-controls';
+import { ProfileButton } from '@/components/profile-button';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { WebBadge } from '@/components/web-badge';
@@ -25,7 +26,7 @@ import {
   type RecordingUploadStage,
 } from '@/lib/recordings';
 
-// Phase 4 Step 2/3: the Home tab is a small local flow rather than jumping
+// Phase 4 Step 2/3: the Record tab (formerly "Home") is a small local flow rather than jumping
 // straight into recording — 'mode-select' (the entry point) -> either
 // 'question' (Interview/Story — Step 3's real question-selection screen,
 // replacing Step 2's placeholder) or 'record' (Miscellaneous, and
@@ -317,7 +318,7 @@ function QuestionSelect({
 }
 
 export default function RecordScreen() {
-  const { user, signOut } = useAuth();
+  const { user } = useAuth();
   const theme = useTheme();
   const router = useRouter();
 
@@ -554,6 +555,9 @@ export default function RecordScreen() {
   return (
     <ThemedView style={styles.container}>
       <SafeAreaView style={styles.safeArea}>
+        <View style={styles.header}>
+          <ProfileButton />
+        </View>
         <ThemedView style={styles.heroSection}>
           <ThemedText type="title" style={styles.title}>
             Brevado
@@ -661,15 +665,6 @@ export default function RecordScreen() {
             </>
           )}
         </ThemedView>
-
-        {/* Temporary — just here so the full login/logout loop is testable
-            in Phase 1. Will move somewhere more permanent (settings/profile)
-            in a later phase. */}
-        <Pressable
-          style={({ pressed }) => [styles.signOutButton, pressed && styles.pressed]}
-          onPress={() => signOut()}>
-          <ThemedText type="smallBold">Sign out</ThemedText>
-        </Pressable>
 
         {Platform.OS === 'web' && <WebBadge />}
       </SafeAreaView>
@@ -808,13 +803,9 @@ const styles = StyleSheet.create({
     marginTop: Spacing.two,
     paddingVertical: Spacing.two,
   },
-  signOutButton: {
+  header: {
     alignSelf: 'stretch',
-    alignItems: 'center',
-    paddingVertical: Spacing.three,
-    borderRadius: Spacing.two,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: '#e5484d',
+    alignItems: 'flex-end',
   },
   pressed: {
     opacity: 0.7,

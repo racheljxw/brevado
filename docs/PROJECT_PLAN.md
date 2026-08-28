@@ -7,14 +7,47 @@ Goal of the app: make it effortless to build a daily practice habit and see, ove
 Platform: React Native app (via Expo), iPhone-first, run through the free Expo Go app rather than a standalone App Store build. This uses real native microphone and file APIs (avoiding a documented iOS reliability issue with recording/downloads in standalone home-screen web apps) while staying fully free — the $99/year Apple Developer Program is only needed if this later graduates to its own installed app icon via TestFlight, which can be revisited once the habit proves out.
 
 ## 2. Scope
-### In scope for v1
+### In scope for v1 (complete)
 - Recording, playback, and AI feedback pipeline
 - Mode selection with a hardcoded question pool
 - Auth, history view, retry/regenerate logic, audio retention rules
 
 ### In scope for v2
+A significant UI/UX redesign plus a handful of new features, layered on top of the v1 pipeline
+(functionally unchanged) rather than reworking any of its underlying processing/backend logic:
+- **Navigation:** a third bottom-nav tab, "Streaks" — an empty placeholder screen for now (v3,
+  below, is what fills it with real content). The existing Home tab is renamed/restructured as
+  "Record".
+- **Settings screen** (not a tab): reachable via a profile icon in the header, shown only on the
+  three main tabs (Record, History, Streaks) — never on a detail/sub-screen. Shows the signed-in
+  user's email and a sign-out action, migrated from wherever sign-out currently lives.
+- **Visual redesign:** a new shared design system layer (colors, typography, card/button shapes,
+  spacing) applied app-wide — not a per-screen reskin. Exact values (hex colors, spacing units,
+  etc.) are matched from design screenshots outside this repo, screen by screen, as v2 is built —
+  this document intentionally does not specify them; see docs/CLAUDE.md's v2 scope note for the
+  qualitative direction only.
+- **Record flow changes:** mode selection gets a shift/transition animation. After a recording
+  finishes uploading, the app no longer auto-navigates to History — it stays on the Record screen
+  showing live processing status, with a "See more details" link to that recording's History
+  detail screen once processing completes.
+- **Recording titles:** a new `title` field per recording — a short, auto-generated label produced
+  by the existing Gemini feedback call (extended to also return one alongside the feedback text),
+  editable afterward by the user.
+- **History redesign:** a search bar (filters by title + question, client-side), a Calendar/List
+  view toggle, a real calendar view (dot per day with recordings, tap a day to filter the list to
+  that day — not a placeholder), and a restyled list/detail view matching the new design system.
+- **History row actions become a 3-dot menu:** Download audio, Delete audio, **Delete recording**
+  (new — removes the full row and its audio file together, a stronger destructive action than the
+  existing "delete audio only"), and Regenerate report (failed rows only). This replaces the
+  current per-row inline icon/text-action layout.
+
+### In scope for v3
+Unchanged from the plan's original "v2" scope below, aside from the rename (v2 now refers to the
+UI-redesign release above) and one clarification:
 - Criteria-based scoring and progress tracking
-- Streak calendar
+- Streak calendar — **note:** the "Streaks" bottom-nav tab itself is added in v2 (above) as an
+  empty placeholder; v3 is what fills that tab with real content (charts, scores, the calendar
+  view) — v3 does not introduce the tab itself.
 - Re-practice / redo-question mode
 - Dynamically growing, AI-generated question pool
 - Additional modes beyond interview/story
@@ -26,7 +59,7 @@ Platform: React Native app (via Expo), iPhone-first, run through the free Expo G
 - Push notifications (deletion warning is in-app badge only)
 
 ## 3. Features
-### v1
+### v1 (complete)
 **Recording flow**
 - From the home screen, select a mode: Interview, Story, or Miscellaneous.
 - Interview/Story: choose an AI-curated question from the pool, or type in your own question/topic instead.
@@ -60,9 +93,45 @@ Platform: React Native app (via Expo), iPhone-first, run through the free Expo G
 - Standard account creation/login (Supabase Auth). Open signup, though real usage for now is the builder plus a few test accounts.
 
 ### v2
+**Navigation & structure**
+- Bottom nav gains a third tab, "Streaks" — an empty placeholder in v2; real content is added in
+  v3 (below).
+- The current Home tab is renamed/restructured as "Record" (same core recording flow, new name to
+  fit the three-tab structure).
+- A Settings screen, reachable via a profile icon in the header on Record/History/Streaks only
+  (never on a detail/sub-screen) — shows the signed-in user's email and a sign-out action.
+
+**Visual redesign**
+- A new shared design system (colors, typography, card/button shapes, spacing) replaces the
+  current per-screen default styling, app-wide. Matched from design screenshots outside this repo,
+  screen by screen, as each screen is rebuilt — exact values aren't specified in this document
+  (see docs/CLAUDE.md's v2 scope note for the qualitative direction).
+
+**Record flow**
+- Mode selection gets a shift/transition animation between the mode-select, question, and record
+  screens.
+- After a recording finishes uploading, the app stays on the Record screen (no more auto-navigate
+  to History) showing live processing status, with a "See more details" link to the recording's
+  History detail screen once done.
+- Recordings get an auto-generated `title` (a short label), produced by the same Gemini call that
+  already generates feedback — extended to return a title alongside it — editable by the user
+  afterward.
+
+**History redesign**
+- Search bar filtering by title + question (client-side).
+- Calendar/List view toggle; the calendar view shows a dot on each day with recordings, and
+  tapping a day filters the list to that day (a real, functioning view, not a placeholder).
+- Restyled list and detail screens matching the new design system.
+- Per-row actions move from inline icons/text to a 3-dot menu: Download audio, Delete audio,
+  **Delete recording** (new — removes the row and its audio file together; a stronger action than
+  the existing "delete audio only"), Regenerate report (failed rows only).
+
+### v3
+Unchanged from the original plan's "v2" scope, aside from the rename (this was "v2" before the
+UI-redesign release above took that label) and the "Streaks" tab clarification:
 - Criteria-based evaluation: each report scores the recording against a few defined criteria (e.g., conciseness, structure, filler-word usage, clarity) plus an overall rating, not just free-text feedback.
 - Progress-over-time view: charts of those scores/metrics across sessions.
-- Streak calendar: a calendar view with a dot on each day you recorded; tapping a day shows that day's recording, transcript, feedback, and scores.
+- Streak calendar: a calendar view with a dot on each day you recorded; tapping a day shows that day's recording, transcript, feedback, and scores. Fills the "Streaks" tab added in v2 (above) with real content — v3 doesn't introduce the tab itself.
 - Re-practice mode: revisit a previously answered question and record a new attempt; view both attempts and feedback side by side.
 - Dynamic question pool: see Section 5 below — grows automatically and enables re-practice without a separate system.
 - Additional modes beyond interview/story, as needed.
@@ -75,7 +144,7 @@ Platform: React Native app (via Expo), iPhone-first, run through the free Expo G
 | Database | Supabase Postgres | Users, recordings, transcripts, feedback, questions |
 | File storage | Supabase Storage | Audio files, capped per user (`MAX_RECORDINGS_PER_USER`) and manually deleted rather than time-expired |
 | API | Python (FastAPI) on Render | Handles uploads, serves data to the frontend, and runs background processing in-process via FastAPI's `BackgroundTasks` — no separate queue/broker/worker service |
-| AI | Gemini API (Flash model, free tier) | Transcription (native audio input) + feedback generation; question generation in v2 |
+| AI | Gemini API (Flash model, free tier) | Transcription (native audio input) + feedback generation (extended in v2 to also return an auto-generated recording title); question generation in v3 |
 | Hosting | Render (API only) | Frontend isn't web-hosted — it runs as an Expo project loaded through the Expo Go app; free-tier API subdomain, custom domain optional |
 
 ## 5. How It Works
@@ -94,9 +163,9 @@ Platform: React Native app (via Expo), iPhone-first, run through the free Expo G
 
 Note: since mode is now selected up front (not detected from spoken keywords), the earlier "detect interview vs. story from the first word" logic is no longer needed — this simplifies the pipeline.
 
-### Question pool (v1 → v2 design)
+### Question pool (v1 → v3 design)
 - v1: A small hardcoded pool (~20–30 prompts per mode). On session start, pick randomly from the pool, excluding only the immediately previous question (no back-to-back repeats; repeats otherwise fine). No AI cost, no scheduled jobs required.
-- v2: Add an answered_questions table (user, question, recording, date). This single table does double duty:
+- v3: Add an answered_questions table (user, question, recording, date). This single table does double duty:
   - Re-practice mode — browse previously answered questions and re-record against one, for free.
   - Growing pool — event-driven, not scheduled: when a user selects a mode, check the
     unused-question count for that mode against `answered_questions`; if none remain, fire a
@@ -116,8 +185,9 @@ Rather than a dated timeline, this is scoped as generic phases you can pick up i
 - **Phase 1 — Foundation** Auth, basic recording UI, upload to storage, minimal history list (no AI yet). Test recording + playback on an actual iPhone via Expo Go early in this phase, since it's the foundation everything else builds on.
 - **Phase 2 — AI pipeline** Gemini transcription + feedback generation, deterministic metrics, processing status indicator.
 - **Phase 3 — History, retention & retry** Full history view (audio + transcript + feedback per session), retry/regenerate logic, 7-day deletion job, save/download buttons, deletion warning badge.
-- **Phase 4 — v1 polish** Hardcoded question pool + mode selection flow, custom topic input, end-to-end testing on an actual iPhone via Expo Go.
-- **Phase 5 — v2** Criteria-based scoring, progress charts, streak calendar, re-practice mode, dynamic question pool + weekly generation job.
+- **Phase 4 — v1 polish** Hardcoded question pool + mode selection flow, custom topic input, end-to-end testing on an actual iPhone via Expo Go. Complete.
+- **Phase 5 — v2** UI/UX redesign (new shared design system, Record/History/Streaks nav restructure, Settings screen) plus new features (auto-generated recording titles, History search + calendar view, 3-dot row menu with the new "Delete recording" action). See docs/CLAUDE.md's "v2 scope" for the current step-by-step breakdown as this phase is built.
+- **Phase 6 — v3** Criteria-based scoring, progress charts, real content for the Streaks tab (added as an empty placeholder in Phase 5), re-practice mode, dynamic question pool + event-driven top-up generation (see Section 5 — not a weekly job; that was stale even before this rename).
 
 ## 7. Cost
 At current scope (builder + a few test accounts), this is realistically $0/month:

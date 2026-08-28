@@ -21,11 +21,16 @@ export default function AppTabs() {
       <TabSlot style={{ height: '100%' }} />
       <TabList asChild>
         <CustomTabList>
+          {/* v2 Epic A Step 1: three-tab shell — Record / History / Streaks.
+              "Record" is the renamed former "Home" tab (route still `/`). */}
           <TabTrigger name="home" href="/" asChild>
-            <TabButton>Home</TabButton>
+            <TabButton>Record</TabButton>
           </TabTrigger>
           <TabTrigger name="history" href="/history" asChild>
             <TabButton>History</TabButton>
+          </TabTrigger>
+          <TabTrigger name="streaks" href="/streaks" asChild>
+            <TabButton>Streaks</TabButton>
           </TabTrigger>
         </CustomTabList>
       </TabList>

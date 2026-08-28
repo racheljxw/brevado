@@ -40,6 +40,9 @@ function RootNavigator() {
     <Stack screenOptions={{ headerShown: false }}>
       <Stack.Protected guard={!!session}>
         <Stack.Screen name="(tabs)" />
+        {/* v2 Epic A Step 2: Settings is a non-tab stack screen, pushed
+            from the header profile icon on the three main tab screens. */}
+        <Stack.Screen name="settings" />
       </Stack.Protected>
       <Stack.Protected guard={!session}>
         <Stack.Screen name="login" />

@@ -12,88 +12,37 @@ more context than what's here.
 
 ## Current phase
 
-**Phase 2 — AI pipeline — complete, Step 7 (frontend status polling) was the closing step.**
-Phase 1 (auth, recording UI, upload, minimal history) is complete. Step 1 (bare FastAPI skeleton),
-Step 2 (the upload -> process -> poll plumbing), Step 3 (real Gemini transcription, replacing the
-stub transcript), Step 4 (deterministic filler-word/WPM/repetition metrics, computed in code from
-the transcript), Step 5 (real mode-aware Gemini feedback, replacing the stub feedback string),
-Step 6 (the real one-inline-retry failure policy from docs/PROJECT_PLAN.md Section 3 — see
-[Background processing](#background-processing)), and Step 7 (out-of-order-safe, per-row-aware
-History polling, plus a visually distinct `failed` status — see [History](#history) and the
-"Frontend polling" bullet under [AI processing endpoint](#ai-processing-endpoint)) all exist now — see
-[AI processing endpoint](#ai-processing-endpoint), [Metrics](#metrics), and [Backend](#backend)
-below for exactly what's real. **No stubs remain anywhere in the pipeline** — transcribe ->
-metrics -> feedback are all real Gemini/code calls end to end, `status: done` means the full
-pipeline actually ran (retrying once inline if either Gemini-calling stage fails), and the
-frontend reflects that status accurately and promptly without flashing stale data.
-**Phase 3 — History, retention & retry — complete. Step 6 (download button) was the closing
-step.** Step 1
-(full history detail view) — see [History](#history)'s "Detail screen" bullet for exactly what it
-shows. **Step 2 (manual "Regenerate report") is now built, backend and frontend** — see
-[Background processing](#background-processing)'s "Regenerate report" bullet and
-[AI processing endpoint](#ai-processing-endpoint)'s "Regenerate endpoint" bullet for exactly what
-exists. This closes out docs/PROJECT_PLAN.md Section 3's "Retry behavior" in full: the automatic
-one-inline-retry-per-stage from Phase 2 Step 6 handles transient failures without any user action,
-and this step's manual regenerate covers anything still `failed` after that, retryable without
-limit. **Step 3 (per-user recording cap enforcement) is now built** — `MAX_RECORDINGS_PER_USER`
-(30) is checked before a new recording can even start, and enforced again independently by a
-Postgres trigger as a safety net — see [Recording cap](#recording-cap) for the full detail
-(including exactly where the frontend check lives and the note-to-self about Phase 4 needing to
-move it). **Step 4 (favorite toggle) is now built, list and detail** — a star icon on each History
-list row and on the detail screen, both calling the same direct-Supabase `setFavorite()` — see
-[History](#history)'s "Favorite toggle" bullets for exactly where and how, and note it's a
-**purely cosmetic personal marker with no automated behavior attached** — no retention exemption,
-no confirmation gate before Step 5 deletes a favorited recording's audio; favorite and delete are
-fully independent. **Step 5 (manual audio delete) is now built, backend and frontend** — a bin
-icon on each History list row and on the detail screen, both calling the new
-`DELETE /recordings/{id}/audio` backend endpoint (not a direct Supabase call — see
-[Audio delete](#audio-delete) for why this one, unlike favorite/cap-check, goes through the
-backend) — see that section for the full detail. **This is the actual mechanism that frees a slot
-under `MAX_RECORDINGS_PER_USER`** (Step 3): [Recording cap](#recording-cap)'s "No way to free a
-slot yet" bullet is now stale — deleting a recording's audio from History is the real way to do it.
-Deletion has **no confirmation dialog** — an explicit product decision, immediate on tap, even for
-a favorited recording (favorite and delete remain fully independent, as Step 4 already noted).
-**Step 6 (manual audio download) is now built, list and detail — this closes out Phase 3.** A
-download icon sits right alongside the Step 5 bin icon on each History list row and on the detail
-screen, both calling the same `shareRecordingAudio()` (`src/lib/recordings.ts`) — downloads the
-audio to a temp local file via `expo-file-system` and hands it to the native share sheet
-(`expo-sharing`) so the user can save it into Files, AirDrop it, etc. See
-[Audio download](#audio-download) for the full detail, including why this one, unlike delete,
-needed no backend endpoint. Pairs naturally with delete as an "export before delete" flow, but the
-two are fully independent, with no forced ordering. Phase 3's revised scope (history detail view,
-regenerate, cap enforcement, favorite, manual delete, and now download) is fully built — see
-[Phase 3 assessment](#phase-3-assessment) for what's confirmed working end-to-end versus what
-still needs a manual on-device pass before trusting it completely.
-Note docs/PROJECT_PLAN.md Section 6's phase descriptions are stale (still describe the old
-Celery/time-based retention plan) — Sections 3, 4, 5, and 7 reflect the current zero-cost,
-cap-based, manual-delete architecture and are the ones to trust.
-**Phase 4 — v1 polish — started.** Step 1 (hardcoded question pool) is built — the 25 interview +
-25 story questions live as static in-app data, not the `questions` DB table; see [Question pool
-(v1)](#question-pool-v1) for exactly where and why. Step 2 (mode-selection screen) is built — the
-Home tab's old bare record button is replaced by a real Interview/Story/Miscellaneous entry point,
-and the Phase 3 Step 3 recording-cap check moved here from the old record button (there is now
-exactly one place it's enforced on the frontend) — see [Mode selection](#mode-selection). **Step 3
-(real question-selection logic) is now built, and closes part of Step 2's flagged plumbing gap
-along with it** — selecting Interview or Story now runs real selection logic (excluding the
-immediately-previous question in that mode, per docs/PROJECT_PLAN.md Section 3), displays the
-chosen question, and — since testing that exclusion meaningfully requires a real question reaching
-the database — threads the selected mode and question through `uploadRecording()`'s insert in
-place of the old hardcoded `'miscellaneous'`/`null`. See [Question selection](#question-selection)
-for exactly how selection/exclusion works and [Mode selection](#mode-selection) for the
-now-real Interview/Story screen. **Step 4 (custom topic/question input) is now built** — the
-QuestionSelect screen's free-text input + "Use this instead" action, coexisting with the pool pick
-rather than replacing it — see [Question selection](#question-selection)'s "Custom topic input"
-bullet for exactly where it lives and why no schema/upload changes were needed. This closes out
-Phase 4's custom-topic/question-input scope item in full. **Step 5 — full end-to-end device
-testing, the v1 exit checkpoint — is in progress.** A full-app read-through (see [Phase 4 exit
-checkpoint](#phase-4-exit-checkpoint)) found and fixed one real gap — History never displayed the
-`question` field anywhere, list or detail, left over from when it was always `null` pre-Phase-4 —
-plus two stale code comments; everything else held together with no broken links in the
-mode-select → question → record → upload → process → History journey. What's still outstanding is
-the actual on-device pass: nothing in this phase (or the still-unverified parts of Phase 3) has
-been exercised in Expo Go against the live Supabase project yet — see that section's full test
-script. We're working phase-by-phase and step-by-step within a phase; don't reach ahead without
-being asked.
+**v1 is complete and tested end-to-end** — Phases 1-4 (auth, recording UI, upload, AI pipeline,
+history/retention/retry, hardcoded question pool + mode selection) are all built. Phase 4 Step 5,
+the v1 exit checkpoint's on-device pass (docs/PROJECT_PLAN.md's full test script — see
+[Phase 4 exit checkpoint](#phase-4-exit-checkpoint) for the script itself), has now been run and
+confirmed working, closing out the "still needs a manual on-device pass" caveat that this section
+used to carry for most of Phase 3 and all of Phase 4. No further v1 feature work is planned. The
+detailed step-by-step history of how each Phase 1-4 feature was built is kept in that feature's own
+section below (e.g. [Recording cap](#recording-cap), [Mode selection](#mode-selection),
+[Question selection](#question-selection), [History](#history), [Audio delete](#audio-delete),
+[Audio download](#audio-download), [Phase 3 assessment](#phase-3-assessment),
+[Phase 4 exit checkpoint](#phase-4-exit-checkpoint)) rather than repeated here — all of it is still
+accurate for what exists in the repo today.
+
+**v2 — a UI redesign plus a handful of new features — is starting now.** See
+[Scope](#scope) below for the full summary: a bottom-nav restructure (new "Streaks" placeholder
+tab, Home renamed to "Record"), a new Settings screen, a full visual redesign matched from design
+screenshots outside this repo, Record-flow changes (a mode-select transition animation, no more
+auto-navigate to History after upload, auto-generated editable recording titles), and a History
+redesign (search bar, calendar view, and a 3-dot per-row menu that adds a new "Delete recording"
+action alongside the existing download/delete-audio/regenerate actions). We're working
+phase-by-phase and step-by-step, same discipline as v1 — nothing below this section has been
+touched by v2 work yet, so the rest of this document still describes the v1 implementation exactly
+as it exists in the repo right now.
+
+**Terminology note:** docs/PROJECT_PLAN.md's old "v2" scope (criteria-based scoring, progress
+charts, streak calendar, re-practice mode, dynamic question pool, additional modes) has been
+renamed **v3**, to free up the "v2" label for this UI-redesign release — the underlying scope is
+unchanged, only the version label moved. One wrinkle worth remembering: the "Streaks" bottom-nav
+tab is added now, in v2, as an empty placeholder — v3 is what fills it with real content later, not
+what introduces the tab. See docs/PROJECT_PLAN.md Section 2 for the full detail, and don't be
+surprised by old "v2" references still in git history/commit messages predating this rename.
 
 ## Tech stack
 
@@ -104,17 +53,45 @@ being asked.
 | Database | Supabase Postgres | Users, recordings, transcripts, feedback, questions |
 | File storage | Supabase Storage | Audio files, capped per user (`MAX_RECORDINGS_PER_USER`) and manually deleted rather than time-expired |
 | API | Python (FastAPI) on Render | Handles uploads, serves data to the frontend, and runs background processing in-process via FastAPI's `BackgroundTasks` — no separate queue/broker/worker service |
-| AI | Gemini API (Flash model, free tier) | Transcription (native audio input) + feedback generation; question generation in v2 |
+| AI | Gemini API (Flash model, free tier) | Transcription (native audio input) + feedback generation (v2 extends this call to also return an auto-generated recording title); question generation in v3 |
 | Hosting | Render (API only) | Frontend isn't web-hosted — it runs as an Expo project loaded through the Expo Go app; free-tier API subdomain, custom domain optional |
 
-## Scope — don't let v2 creep into v1 work
+## Scope
 
-**v1 (build now):** recording/playback/AI feedback pipeline, mode selection with a hardcoded
-question pool, auth, history view, retry/regenerate logic, audio retention rules.
+**v1 (complete):** recording/playback/AI feedback pipeline, mode selection with a hardcoded
+question pool, auth, history view, retry/regenerate logic, audio retention rules. Everything else
+in this document describes v1 as it exists in the repo today, unless a section explicitly says
+otherwise (nothing does yet — v2 work hasn't started touching code).
 
-**v2 (deferred — do not build yet):** criteria-based scoring, progress-over-time charts, streak
-calendar, re-practice/redo-question mode, dynamically growing AI-generated question pool,
-additional modes beyond interview/story.
+**v2 (building now) — UI redesign + new features:**
+- **Nav:** bottom nav gains a third tab, "Streaks" (empty placeholder — v3 fills it in later).
+  Home tab renamed/restructured as "Record".
+- **Settings screen** (not a tab): a profile icon in the header on Record/History/Streaks only,
+  never on a detail/sub-screen. Shows the user's email + a sign-out action, migrated from
+  wherever sign-out currently lives (see [Auth](#auth)).
+- **Visual redesign:** a new shared design system (colors, typography, card/button shapes,
+  spacing), app-wide — not a per-screen reskin. **Matched from design screenshots outside this
+  repo, screen by screen, as we build — this doc does not and should not specify exact hex values
+  or measurements.** Qualitative direction only, for now: warm cream/peach background, dark
+  brown/maroon text, pill-shaped buttons, rounded cards. Expect exact values from the user
+  screen-by-screen as each one is built, not from anything written down here.
+- **Record flow:** a shift/transition animation on mode selection; after upload, the app stays on
+  Record showing live processing status instead of auto-navigating to History, with a "See more
+  details" link to the History detail screen once done.
+- **Recording titles:** a new `title` field, auto-generated by the existing Gemini feedback call
+  (extended to also return one), user-editable afterward.
+- **History:** a search bar (title + question, client-side filter), a Calendar/List toggle with a
+  real calendar (dot per day with recordings, tap to filter), and a restyled list/detail view. Per-row
+  actions move from inline icons/text to a 3-dot menu: Download audio, Delete audio, **Delete
+  recording** (new — removes the row + audio together, unlike the existing audio-only delete),
+  Regenerate report (failed rows only).
+
+**v3 (deferred — do not build yet):** criteria-based scoring, progress-over-time charts, streak
+calendar (fills the "Streaks" tab added in v2 — v3 doesn't introduce the tab itself),
+re-practice/redo-question mode, dynamically growing AI-generated question pool, additional modes
+beyond interview/story. Unchanged from the plan's original "v2" scope — only the version label
+moved, to make room for the UI-redesign release above as the new "v2" (see
+docs/PROJECT_PLAN.md Section 2).
 
 **Out of scope for now:** email notifications, Apple Developer Program / App Store / TestFlight
 distribution, multi-tenant scaling concerns (rate limiting, abuse prevention, paid AI tier), push
@@ -146,7 +123,7 @@ changes as a new numbered migration file rather than editing an applied one.
   row — built in Phase 3 Step 5, see [Audio delete](#audio-delete)), and only ever clears
   `audio_path`/sets `audio_deleted = true`; it never removes the row.
 - `questions` — stub only (`id`, `mode`, `prompt_text`, `created_at`), reserved shape for the
-  Phase 4 hardcoded pool and Phase 5 dynamic pool / re-practice. Not queried anywhere yet.
+  Phase 4 hardcoded pool and Phase 6 (v3) dynamic pool / re-practice. Not queried anywhere yet.
 
 RLS is **on** for both tables and scoped to `user_id = auth.uid()` on `recordings` (select/insert/
 update only — no delete policy yet, add one deliberately if a "delete recording" feature shows
@@ -162,13 +139,18 @@ live under a `{user_id}/...` path prefix, enforced by storage RLS policies in
   Supabase's `onAuthStateChange`, and exposes `signUp` / `signIn` / `signOut` — these already
   convert raw Supabase `AuthError`s into a plain `error: string | null` for screens to show
   directly, so screens should never touch `error.message` from a raw Supabase call themselves.
-- Routes are split into two Expo Router groups off `src/app/`: `(tabs)/` (the real app, currently
-  Home + History) and two ungrouped screens, `login.tsx` and `signup.tsx`. `src/app/_layout.tsx`
-  reads `useAuth()` and renders one group or the other via `Stack.Protected` — signed-in users only
-  ever see `(tabs)`, signed-out users only ever see login/signup, and a loading screen covers the
-  initial session check on boot. **Future screens that only make sense when logged in belong under
-  `(tabs)/`** (or a new sibling group gated the same way) — don't add ad hoc auth checks inside
-  individual screens, the routing layer already handles it.
+- Routes are split into two Expo Router groups off `src/app/`: the signed-in side — `(tabs)/` (the
+  real app — Record, History, Streaks; see [Navigation shell](#navigation-shell)) plus the non-tab
+  `settings.tsx` ([Settings screen](#settings-screen)), both inside one `Stack.Protected` block —
+  and two ungrouped signed-out screens, `login.tsx` and `signup.tsx`. `src/app/_layout.tsx`
+  reads `useAuth()` and renders one side or the other via `Stack.Protected` — signed-in users only
+  ever see `(tabs)`/`settings`, signed-out users only ever see login/signup, and a loading screen
+  covers the initial session check on boot. **Future screens that only make sense when logged in
+  belong under `(tabs)/`** (or as another screen in the protected block, like `settings`) — don't
+  add ad hoc auth checks inside individual screens, the routing layer already handles it.
+- Sign-out lives on the [Settings screen](#settings-screen) (v2 Epic A Step 2), reached via the
+  header profile icon — migrated there from the old Phase 1 button on the Record tab, which is
+  gone.
 - Basic client-side validation (non-empty, email shape, min password length) lives in
   `src/lib/auth-validation.ts`, shared by both screens.
 - Email confirmation is **on by default** for new hosted Supabase projects — an account created
@@ -178,6 +160,56 @@ live under a `{user_id}/...` path prefix, enforced by storage RLS policies in
   dashboard → **Authentication → Sign In / Providers → Email**, toggle off **Confirm email**. This
   wasn't verified against this project's actual dashboard state — check it directly and flip it
   per your own testing needs; flip it back on before any real users sign up.
+
+## Navigation shell
+
+v2 Epic A Step 1 — a structural-only change (no visual redesign, no new features): the bottom nav
+is now **three tabs, in this order: Record / History / Streaks**, matching the design screenshots.
+Defined in `src/components/app-tabs.tsx` (native, `NativeTabs` from
+`expo-router/unstable-native-tabs`) and its `app-tabs.web.tsx` counterpart (custom `Tabs`/`TabList`
+UI), both rendered from `src/app/(tabs)/_layout.tsx`.
+
+- **Record** is the renamed/restructured former **Home** tab. The route file is still
+  `src/app/(tabs)/index.tsx` and the recording flow it renders (mode-select → question → record →
+  upload → inline status) is **completely unchanged** — only the tab's `<Label>` moved from "Home"
+  to "Record". Any older "Home tab" reference elsewhere in this doc means this same screen.
+- **History** — `src/app/(tabs)/history/` — unchanged in this step; its redesign is Epic D.
+- **Streaks** — `src/app/(tabs)/streaks.tsx` — an **intentional empty placeholder**: a heading plus
+  a "coming soon" line, nothing functional. Real streak/progress content is **v3 / Phase 6** (which
+  fills this tab, but does not introduce it — the tab is added now, in v2). Don't build anything
+  into it before then.
+- No dedicated Streaks icon asset yet — the native tab uses an `sf="flame"` SF Symbol placeholder,
+  same "swap when a real asset exists" situation as History still reusing the scaffold's
+  `explore.png`.
+- Profile icon + Settings screen were **not** part of Step 1 — added in Step 2, see
+  [Settings screen](#settings-screen) below.
+
+## Settings screen
+
+v2 Epic A Step 2 — a structural/functional step, not the visual redesign (Epic B restyles this
+along with everything else). Built with existing app patterns (`SafeAreaView` + `ThemedText`/
+`ThemedView`, SF Symbol icons), no polish.
+
+- **Route:** `src/app/settings.tsx` — a **non-tab stack screen**, not a fourth bottom-nav item.
+  Registered in `src/app/_layout.tsx` inside the same `Stack.Protected guard={!!session}` block as
+  `(tabs)`, so it's only reachable when signed in. Reached via `router.push('/settings')`; the
+  screen's own "‹ Back" link is `router.back()`.
+- **Profile icon:** `src/components/profile-button.tsx` (`ProfileButton`) — an SF Symbol
+  (`person.crop.circle`) placeholder, same convention as `FavoriteStar` / the Streaks tab icon.
+  **Visibility rule:** rendered only on the three main tab screens — Record
+  (`src/app/(tabs)/index.tsx`), History (`src/app/(tabs)/history/index.tsx`), Streaks
+  (`src/app/(tabs)/streaks.tsx`) — in a top header row. **Deliberately absent from every detail/
+  sub-screen** (currently only History's detail view, `history/[id].tsx`, which keeps just its own
+  "‹ Back to History" link). Any new sub-screen should follow the same rule — don't add
+  `ProfileButton` to it.
+- **What it shows:** the signed-in user's email (`useAuth().user?.email`) and a single **"Sign
+  Out"** button calling `useAuth().signOut()`. On success the root navigator's auth guard flips and
+  swaps the whole stack out for the login screen — the screen doesn't navigate itself; a failed
+  sign-out shows an inline error and re-enables the button.
+- **Sign-out migration:** the Phase 1 temporary "Sign out" button on the Record/Home tab
+  (`src/app/(tabs)/index.tsx`) has been **removed** — Settings is now the only place sign-out
+  lives, no duplication. (The Record screen still shows a "Logged in as {email}" line from Phase 1;
+  that's cosmetic and left for Epic B to reconcile.)
 
 ## Recording
 
@@ -586,7 +618,7 @@ still inserts `mode: 'miscellaneous', question: null`, unchanged).
   so both screens render status identically), the full `question` text (when non-null — see below),
   audio playback, transcript, feedback, and metrics (filler-word rate shown as a rounded percentage,
   words-per-minute, and repetition count — plain text/numbers, no charts or scoring visuals, which
-  is Phase 5). Loading and not-found/error states (bad id, RLS-blocked id, or a genuine fetch
+  is Phase 6/v3). Loading and not-found/error states (bad id, RLS-blocked id, or a genuine fetch
   failure) are all handled explicitly, the last two with a Retry action.
   - **Question display (Phase 4 Step 5 exit-checkpoint review, done):** `fetchRecordingById()` had
     already selected `question` since Phase 3 Step 1 (`RecordingDetail` always included it), but
@@ -838,18 +870,18 @@ before starting Phase 4?
 ## Question pool (v1)
 
 Phase 4 Step 1 — the fixed pool of 25 interview questions + 25 story questions
-docs/PROJECT_PLAN.md calls for in v1 (a dynamically-growing, AI-generated pool is v2, Phase 5 —
-see [Scope](#scope--dont-let-v2-creep-into-v1-work)).
+docs/PROJECT_PLAN.md calls for in v1 (a dynamically-growing, AI-generated pool is v3, Phase 6 —
+see [Scope](#scope)).
 
 - **Lives in `src/lib/questions.ts` as static in-app data — deliberately NOT the `questions` DB
   table stub** (see [Database](#database)). A fixed v1 pool doesn't need a DB round-trip on every
   mode selection, and this matches docs/PROJECT_PLAN.md's "no AI cost, no scheduled jobs required"
   framing for v1. The `questions` table stays exactly the stub it already was — reserved shape,
-  not queried anywhere yet — until Phase 5's dynamic pool needs real rows to track "answered"
+  not queried anywhere yet — until Phase 6 (v3)'s dynamic pool needs real rows to track "answered"
   against.
 - **Shape:** `type Question = { id: string; mode: 'interview' | 'story'; text: string }`. Ids
   follow `interview-01`...`interview-25` / `story-01`...`story-25` — stable and zero-padded
-  specifically so this same data can seed the DB table cleanly in Phase 5 without renumbering
+  specifically so this same data can seed the DB table cleanly in Phase 6 without renumbering
   anything that by then might be referenced elsewhere (e.g. a user's answered-question history).
 - **Helpers, ready but unused:** `getQuestionsForMode(mode)` (filters the pool by mode) and
   `getQuestionById(id)`. Note the "exclude the immediately-previous question" selection logic is
@@ -1159,10 +1191,10 @@ growing across Steps 3–6, so this keeps that module from also owning pure text
   ```
   `filler_word_rate` is a **fraction (0.0–1.0), not a percentage** — 0.08 means 8%. `word_count` is
   included alongside the two fields derived from it since the feedback prompt (see
-  [Feedback generation](#feedback-generation)) and Phase 5's scoring both want it directly rather
-  than re-deriving it from the transcript. This exact shape is what `app/services/feedback.py`
+  [Feedback generation](#feedback-generation)) and Phase 6 (v3)'s scoring both want it directly
+  rather than re-deriving it from the transcript. This exact shape is what `app/services/feedback.py`
   reads as feedback-prompt grounding — changing key names or the rate/percentage convention later
-  means updating both that prompt and Phase 5 scoring, not just this module.
+  means updating both that prompt and Phase 6 scoring, not just this module.
 - **Filler word list:** `FILLER_WORDS` at the top of `metrics.py` — a deliberately simple starter
   list (`um`, `uh`, `like`, `you know`, `sort of`, `kind of`, `i mean`, `basically`, `actually`,
   `literally`, etc.), matched via plain case-insensitive word-boundary regex, no context awareness.
@@ -1216,12 +1248,13 @@ pure string-building with no network call of its own, so it's easy to unit-test 
   own topic" rather than being silently omitted.
 - **Mode-specific criteria:** `MODE_CRITERIA` in `feedback.py` — interview -> directness/structure,
   story -> narrative arc/pacing, miscellaneous -> general clarity/conciseness, per
-  docs/PROJECT_PLAN.md Section 3. All three branches are built and tested now even though every
-  real recording today is `mode='miscellaneous'` (Phase 1's placeholder recording flow — Phase 4
-  hasn't built real mode selection yet), so Phase 4 doesn't need this rebuilt.
+  docs/PROJECT_PLAN.md Section 3. All three branches were built and tested at Phase 2 Step 5 even
+  though every real recording at that time was `mode='miscellaneous'` (Phase 1's placeholder
+  recording flow — Phase 4 hadn't built real mode selection yet), which is exactly why Phase 4
+  didn't need this rebuilt when it landed.
 - **Output:** free-text prose feedback only (2-4 short paragraphs, no headers/bullets/numeric
-  scores) — structured, criteria-based scoring is explicitly Phase 5 of the project plan (a
-  different "Phase 5" than this Step 5; see docs/PROJECT_PLAN.md's phase list), not this step.
+  scores) — structured, criteria-based scoring is explicitly Phase 6/v3 of the project plan, not
+  this step.
 - **Model:** reuses the same shared Gemini client and `settings.gemini_model` as transcription (see
   [AI processing endpoint](#ai-processing-endpoint)) — a single text-in/text-out call has no reason
   to use a different model from transcription.
@@ -1323,7 +1356,7 @@ pure string-building with no network call of its own, so it's easy to unit-test 
     under both the list and the detail screen for exactly how each is wired, including why the
     detail screen needed its own small polling effect that the list's Step 7 polling doesn't
     already cover.
-- The same pattern (no cron) applies to the v2 question-pool top-up: it fires from a
+- The same pattern (no cron) applies to the v3 question-pool top-up: it fires from a
   `BackgroundTasks` call triggered by mode selection running low on unused questions, not a
   scheduled job. See plan Section 5's "Question pool" subsection.
 

@@ -6,6 +6,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { DeleteAudioButton } from '@/components/delete-audio-button';
 import { DownloadAudioButton } from '@/components/download-audio-button';
 import { FavoriteStar } from '@/components/favorite-star';
+import { ProfileButton } from '@/components/profile-button';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { WebBadge } from '@/components/web-badge';
@@ -382,9 +383,12 @@ export default function HistoryScreen() {
   return (
     <ThemedView style={styles.container}>
       <SafeAreaView style={styles.safeArea} edges={['top', 'left', 'right']}>
-        <ThemedText type="subtitle" style={styles.title}>
-          History
-        </ThemedText>
+        <View style={styles.headerRow}>
+          <ThemedText type="subtitle" style={styles.title}>
+            History
+          </ThemedText>
+          <ProfileButton />
+        </View>
 
         {error && (
           <ThemedView type="backgroundElement" style={styles.errorCard}>
@@ -402,7 +406,7 @@ export default function HistoryScreen() {
         ) : showEmpty ? (
           <View style={styles.centerFill}>
             <ThemedText type="small" themeColor="textSecondary" style={styles.emptyText}>
-              No recordings yet. Head to the Home tab and record your first practice session.
+              No recordings yet. Head to the Record tab and record your first practice session.
             </ThemedText>
           </View>
         ) : (
@@ -450,6 +454,11 @@ const styles = StyleSheet.create({
     width: '100%',
     maxWidth: MaxContentWidth,
     paddingHorizontal: Spacing.four,
+  },
+  headerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
   },
   title: {
     paddingTop: Spacing.three,
