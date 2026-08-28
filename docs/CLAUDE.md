@@ -211,6 +211,184 @@ along with everything else). Built with existing app patterns (`SafeAreaView` + 
   lives, no duplication. (The Record screen still shows a "Logged in as {email}" line from Phase 1;
   that's cosmetic and left for Epic B to reconcile.)
 
+## Design system
+
+v2 Epic B. **Part 1** defined the token layer; **Part 2** (this pass) wired it in: Noto Sans
+loads at boot, `ThemedText` renders it, the v1 `Colors` object is repointed at the warm palette
+(so every screen reading `useTheme()` / `ThemedText` / `ThemedView` picks up the redesign without
+being individually rewritten), all pure white/black is gone, the background is flat cream
+everywhere, and the bottom nav is styled to the Figma spec as far as the system tab bar allows.
+Full per-screen restyling of Record and History (cards, pills, buttons, spacing) is **deferred to
+Epic C/D**, which rebuild those screens — Part 2 was a light-touch app-wide pass, not a
+screen-by-screen redesign.
+
+- **Where it lives:** `src/constants/theme.ts` — one module, extended, not replaced. Exports:
+  `Colors` (v1, light/dark keyed, **now pointing at the warm palette** — both `light` and `dark`
+  resolve to the same values), `Fonts`/`Spacing`/`BottomTabInset`/`MaxContentWidth` (v1,
+  unchanged), and the v2 layer: `Palette` (raw hex, single source of truth), `NotoSans` (family
+  names), `Theme` (`.colors` / `.radius` / `.spacing` / `.typography`), `ThemeColorToken`.
+- **v2 is a single warm light theme** — `Theme` is a flat object, not light/dark keyed. `Colors`
+  stays light/dark keyed only for backward compatibility; the two halves are identical. App is
+  pinned to light: `app.json` `userInterfaceStyle: "light"`, and `src/app/_layout.tsx` gives
+  React Navigation a cream container theme so transitions never flash a white/grey ground.
+- **`textPrimary` was corrected `#1F0400` → `#2D1306`** (`Palette.brownBlack`). The old value was
+  pixel-sampled from a PNG and carried compression noise; `#2D1306` is the authoritative Figma
+  value. Applied via the `Colors`/`Palette` repoint, so it propagated to every `ThemedText` and
+  every `theme.text` reader automatically — no per-screen edits.
+- **Flat background, no gradient.** Part 1's `backgroundGradientStart` / `backgroundGradientEnd`
+  tokens and `Palette.peach` are **removed** — the real spec is a single flat `#FFFAF6`. No
+  `expo-linear-gradient` / `react-native-svg` gradient was ever added; `Theme.colors.background`
+  is the one screen-background value.
+
+**`Theme.colors`** (all values from `Palette`):
+
+| Token | Hex | Role |
+|---|---|---|
+| `background` | `#FFFAF6` | screen background — flat, everywhere |
+| `textPrimary` | `#2D1306` | primary text, headings, most icons, inactive nav icons/label (Figma-authoritative) |
+| `textSecondary` | `#56453D` | muted/secondary text — best-available, no dedicated Figma sample (approximate) |
+| `card` | `#FFFEFE` | card / raised surface fill |
+| `cardBorder` | `#56453D` | 1px **inset** border on a card surface (Figma-authoritative) |
+| `border` | `#DFCFC7` | hairline borders, dividers, unselected outlines — **also the active nav-tab pill** |
+| `accent` | `#56453D` | fill for a selected/active control (e.g. active mode pill) — approximate, exact value in Epic C |
+| `onAccent` | `#FFFEFE` | text/icon on top of an `accent` fill |
+| `recordRed` | `#C53030` | the record button — approximate, exact value in Epic C |
+| `favoriteGold` | `#F3BF16` | a filled favorite star — approximate |
+| `modeInterview` / `modeStory` / `modeMiscellaneous` | `#E2CDF8` / `#F8CDE5` / `#CDE3F8` | mode pill bg (unselected) — approximate |
+| `navStroke` | `#FFFEFE` | the 2px stroke around the nav capsule (Figma-authoritative) |
+| `navIconActive` | `#B63700` | active bottom-nav tab icon (Figma-authoritative) |
+| `shadow` | `#BEA398` | drop-shadow tint — **cards and** the nav capsule (Figma-authoritative; RN approximates spread/blur) |
+
+Old `navActive` / `navActiveIcon` (`#FF8040` / `#FF9966`, pixel-sampled in Part 1) are **removed** —
+the Figma nav spec superseded them (capsule is `background`, active pill is `border`, active icon
+is `navIconActive`). `navShadow` was renamed **`shadow`** once the same tint started backing card
+shadows too.
+
+**`Theme.radius`:** `sm: 8`, `card: 16`, `lg: 24`, `pill: 999`. **`Theme.spacing`** (4pt): `xs: 4`,
+`sm: 8`, `md: 12`, `lg: 16`, `xl: 24`, `xxl: 32`, `xxxl: 48`. **`Theme.shadows.card`**: `{ shadowColor:
+shadow, shadowOpacity: 0.25, shadowOffset: {0, 4}, shadowRadius: 18, elevation: 6 }` — the Figma card
+shadow (`#BEA398` @ 25%, y+4, ~30 blur + 5 spread; RN has no spread so `shadowRadius` stands in).
+**`Theme.typography`:** `fontFamily` `{ regular, medium, semiBold, bold }` → `NotoSans_400Regular` /
+`_500Medium` / `_600SemiBold` / `_700Bold`; `variants` (`display` 40 / `title` 28 / `heading` 20 /
+`body`+`bodyMedium` 16 / `label` 14 / `caption` 12), each `{ fontSize, lineHeight, fontFamily }`,
+weight carried by family.
+
+### Cards
+
+`src/components/card.tsx` — **`<Card>`**, the shared raised-surface component: near-white fill
+(`theme.backgroundElement` = `#FFFEFE`), a **1px inset** `#56453D` border (`Theme.colors.cardBorder`;
+RN borders are always drawn inside the box, which is what "inside" in the spec means), and the
+`Theme.shadows.card` drop shadow. Takes `View` props; pass padding / gap / alignment / an overriding
+`borderRadius` via `style`. Default radius is `Theme.radius.card` (16).
+
+Applied to every content card in the app, replacing bare `<ThemedView type="backgroundElement">`:
+- `src/app/settings.tsx` — the "Signed in as" card.
+- `src/app/(tabs)/index.tsx` — `playbackCard` (the post-record / cap-blocked / question-select
+  panel), `questionBanner`, `permissionCard`, and the mode-select cards (`ModeSelect` now wraps a
+  `<Card>` in the `Pressable` instead of a hairline-bordered `Pressable`).
+- `src/app/(tabs)/history/index.tsx` — the list row and the fetch-error card.
+- `src/app/(tabs)/history/[id].tsx` — the audio-deleted / no-audio / audio-error notices, the
+  failed / still-processing notices, and the metrics card.
+
+**Deliberately NOT converted** (kept their own treatment): the upload-error / question-lookup-error
+cards in `index.tsx` (`<ThemedView type="background">` with a red `#e5484d` border — an error banner,
+not a content card), and the unused scaffold components (`hint-row.tsx`, `collapsible.tsx`).
+`iOS shadows need a non-transparent background and are clipped by `overflow: 'hidden'` — `<Card>`
+sets a background; don't add `overflow: hidden` to one that should cast a shadow.
+
+### Noto Sans loading
+
+- Package: **`@expo-google-fonts/noto-sans`** (`^0.4.2`), added to `package.json`. Bundles the TTFs,
+  no native code — Expo Go safe.
+- `src/app/_layout.tsx` calls `useFonts({ NotoSans_400Regular, _500Medium, _600SemiBold, _700Bold })`
+  (subpath imports, so only those 4 weights bundle, not all 9 + italics) and returns `null` until
+  fonts resolve — the native splash stays up, then `AnimatedSplashOverlay` hides it as before. A
+  load **error** is logged and the app proceeds on the system sans-serif fallback rather than
+  wedging.
+- `src/components/themed-text.tsx` now sets `fontFamily` (not `fontWeight`) per `type`:
+  `default`/`small` → medium, `smallBold` → bold, `title`/`subtitle` → semiBold, `link`/`linkPrimary`
+  → regular, `code` → unchanged (`Fonts.mono`). Sizes/line-heights unchanged from the v1 scale.
+- The `Theme.typography.variants` are still the eventual target; `ThemedText`'s `type` prop and the
+  `variants` get reconciled into one system in Epic C/D.
+
+### Nav bar (bottom tabs)
+
+The Figma nav spec (from the actual file, treat as exact): label **Noto Sans Regular `#2D1306`,
+constant regardless of active state** — only icon colour and pill vary; capsule background
+`#FFFAF6` with a **2px `#FFFEFE` stroke** (deliberate, visible); drop shadow `#BEA398` @ 15%, 0/0
+offset, 25 spread, 100 blur; active-tab pill `#DFCFC7` (= `Theme.colors.border` — the 50%-opacity
+`#BEA398` flattens to exactly this, reuse the token, don't duplicate); active icon `#B63700`;
+inactive icon `#2D1306`; Record tab icon = a microphone.
+
+**Native (`src/components/app-tabs.tsx`) — still `NativeTabs` (the system UIKit tab bar), styled as
+far as it allows** (the decision to keep `NativeTabs` and approximate, rather than build a custom
+JS tab bar, was made deliberately for this pass):
+- ✅ capsule background → `backgroundColor={Theme.colors.background}`
+- ✅ label colour constant + Noto Sans → `labelStyle={{ default: {...}, selected: {...} }}` with the
+  same `color: textPrimary` and `fontFamily: NotoSans.regular` in both states
+- ✅ icon colours → `iconColor={{ default: textPrimary, selected: navIconActive }}`
+- ✅ Record = mic (`sf={{ default: 'mic', selected: 'mic.fill' }}`); History = `list.bullet`;
+  Streaks = `star`/`star.fill` (was the leftover `flame`). No more `home.png`/`explore.png`.
+- ⚠️ `shadowColor={Theme.colors.shadow}` — on iOS this tints the tab bar's **top hairline
+  separator**, NOT a real drop shadow. UIKit exposes no spread/blur bar-shadow API. Closest
+  single knob; **expect to revisit on a device.**
+- ❌ **2px capsule stroke** — no `NativeTabs` API. Not done.
+- ❌ **real drop shadow** (spread + blur) — not done (see ⚠️ above for the partial stand-in).
+- ❌ **tan active-tab pill on iOS** — `indicatorColor` is Android/web only; it's set to
+  `Theme.colors.border` but has no effect on the iOS system bar. Not done.
+- ❌ **icon size / icon-to-label gap** — the system tab bar sizes SF Symbol icons and spaces them
+  from the label itself; `NativeTabs` exposes no `iconSize` / inset / `titlePositionAdjustment`
+  passthrough for it. Not adjustable.
+
+  The ❌ items all require replacing `NativeTabs` with a custom floating JS tab bar — a future call,
+  not this pass.
+
+**Web (`src/components/app-tabs.web.tsx`) — a custom component, so it renders the full spec:** the
+`#FFFAF6` capsule, the 2px `#FFFEFE` `borderColor`, an approximated `shadow*` (no "spread" on
+web/RN, so `shadowRadius` is bumped to compensate — tune later) + `elevation`, and the `#DFCFC7`
+active-tab pill. Label colour constant. Scaffold cruft removed (the "Expo Starter" brand text is
+now "Brevado", the Docs external-link is gone). Web isn't a shipping target but the file compiles
+and previews correctly.
+
+### White / black sweep (Epic B Part 2 global rule: never pure `#FFFFFF` / `#000000`)
+
+Every hardcoded pure white/black in `src/` was found and replaced. Full list of what was using it:
+
+| File | Was | Now | What it is |
+|---|---|---|---|
+| `src/constants/theme.ts` | `Colors.light.text: '#000000'` | `Palette.brownBlack` (`#2D1306`) | v1 light text token |
+| `src/constants/theme.ts` | `Colors.light.background: '#ffffff'` | `Palette.cream` (`#FFFAF6`) | v1 light bg token |
+| `src/constants/theme.ts` | `Colors.dark.text: '#ffffff'` | `Palette.brownBlack` | v1 dark text token (now = light) |
+| `src/constants/theme.ts` | `Colors.dark.background: '#000000'` | `Palette.cream` | v1 dark bg token (now = light) |
+| `src/app/login.tsx` | `<ActivityIndicator color="#ffffff" />` | `Palette.nearWhite` (`#FFFEFE`) | spinner on the submit button |
+| `src/app/login.tsx` | `buttonText.color: '#ffffff'` | `Palette.nearWhite` | submit button label |
+| `src/app/signup.tsx` | `<ActivityIndicator color="#ffffff" />` | `Palette.nearWhite` | spinner on the submit button |
+| `src/app/signup.tsx` | `buttonText.color: '#ffffff'` | `Palette.nearWhite` | submit button label |
+
+`Colors.backgroundElement` / `backgroundSelected` (v1) were also repointed (`#F0F0F3`/`#E0E1E6` →
+`Palette.nearWhite`/`Palette.tanGray`) as part of the same repoint, though those weren't pure
+white/black. Non-white/black accent literals left **as-is** for Epic C/D (explicitly out of scope
+for this pass): `#e5484d` (error/delete red — `settings.tsx`, `index.tsx` record button,
+`delete-audio-button.tsx`, `history/*`, `recording-status.ts`), `#3c87f7` (link blue —
+`themed-text.tsx` `linkPrimary`, `login`/`signup` button bg), `#30a46c` (status "done" green,
+`recording-status.ts`), `#f5a623` (favorite star, `favorite-star.tsx`), and the Expo-template
+splash blues in `animated-icon.tsx` (`#208AEF`, `#3C9FFE`/`#0274DF`).
+
+### Still flagged for Epic C/D
+
+- **`recordRed` mismatch:** the record button in `index.tsx` uses `#e5484d`, not
+  `Theme.colors.recordRed` (`#C53030`). Reconcile when Record is rebuilt.
+- **Status badge colours** (`recording-status.ts`) still hardcode red/green — no warm-palette
+  tokens for error/success yet.
+- **`linkPrimary` blue** (`#3c87f7`) and the **auth submit-button blue** don't fit the warm palette
+  — get warm values when auth/detail screens are rebuilt.
+- **`favorite-star.tsx`** uses `#f5a623`, not `Theme.colors.favoriteGold` (`#F3BF16`).
+- **Splash screen** (`animated-icon.tsx` + `app.json` splash `#208AEF`) is still the Expo-template
+  blue + Expo logo — needs a Brevado brand asset + cream bg.
+- **Nav bar ❌ items** above (stroke, drop shadow, iOS active pill) — need a custom tab bar.
+- **Noto Sans on-device check:** `tsc` is clean and the font resolves, but the actual rendering
+  (and the nav approximations) haven't been seen on the physical test iPhone yet.
+
 ## Recording
 
 - Recording/playback uses **`expo-audio`**, not `expo-av` (deprecated, and the library it's easy to

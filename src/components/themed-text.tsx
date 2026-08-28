@@ -1,6 +1,6 @@
 import { Platform, StyleSheet, Text, type TextProps } from 'react-native';
 
-import { Fonts, ThemeColor } from '@/constants/theme';
+import { Fonts, NotoSans, ThemeColor } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 
 export type ThemedTextProps = TextProps & {
@@ -30,39 +30,50 @@ export function ThemedText({ style, type = 'default', themeColor, ...rest }: The
   );
 }
 
+// v2 Epic B: Noto Sans, one loaded family per weight (see `NotoSans` in
+// src/constants/theme.ts and `useFonts` in src/app/_layout.tsx). Weight is
+// carried by the family name, so there's no `fontWeight` alongside it —
+// that avoids faux-bold doubling on Android. Sizes/line-heights are
+// unchanged from the v1 scale; Epic C/D reconciles these `type`s with
+// `Theme.typography.variants`.
 const styles = StyleSheet.create({
   small: {
     fontSize: 14,
     lineHeight: 20,
-    fontWeight: 500,
+    fontFamily: NotoSans.medium,
   },
   smallBold: {
     fontSize: 14,
     lineHeight: 20,
-    fontWeight: 700,
+    fontFamily: NotoSans.bold,
   },
   default: {
     fontSize: 16,
     lineHeight: 24,
-    fontWeight: 500,
+    fontFamily: NotoSans.medium,
   },
   title: {
     fontSize: 48,
-    fontWeight: 600,
     lineHeight: 52,
+    fontFamily: NotoSans.semiBold,
   },
   subtitle: {
     fontSize: 32,
     lineHeight: 44,
-    fontWeight: 600,
+    fontFamily: NotoSans.semiBold,
   },
   link: {
     lineHeight: 30,
     fontSize: 14,
+    fontFamily: NotoSans.regular,
   },
   linkPrimary: {
     lineHeight: 30,
     fontSize: 14,
+    fontFamily: NotoSans.regular,
+    // Not white/black, so out of scope for the Epic B Part 2 colour sweep —
+    // this link accent gets a warm-palette value when auth/detail screens
+    // are rebuilt in Epic C/D.
     color: '#3c87f7',
   },
   code: {

@@ -5,6 +5,7 @@ import { ActivityIndicator, Animated, Linking, Platform, Pressable, StyleSheet, 
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { AudioPlaybackControls } from '@/components/audio-playback-controls';
+import { Card } from '@/components/card';
 import { ProfileButton } from '@/components/profile-button';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
@@ -68,7 +69,7 @@ function RecordingPlayback({
   const isUploading = uploadState === 'uploading';
 
   return (
-    <ThemedView type="backgroundElement" style={styles.playbackCard}>
+    <Card style={styles.playbackCard}>
       <ThemedText type="smallBold">{uploadState === 'done' ? 'Uploaded' : 'Recording ready'}</ThemedText>
 
       <AudioPlaybackControls uri={uri} />
@@ -134,7 +135,7 @@ function RecordingPlayback({
           </ThemedText>
         </Pressable>
       )}
-    </ThemedView>
+    </Card>
   );
 }
 
@@ -146,7 +147,7 @@ function RecordingPlayback({
 function CapBlockedCard({ onGoToHistory }: { onGoToHistory: () => void }) {
   const theme = useTheme();
   return (
-    <ThemedView type="backgroundElement" style={styles.playbackCard}>
+    <Card style={styles.playbackCard}>
       <ThemedText type="smallBold">Recording limit reached</ThemedText>
       <ThemedText type="small" themeColor="textSecondary" style={styles.uriLabel}>
         You&apos;ve reached your {MAX_RECORDINGS_PER_USER} recording limit. Delete some audio from
@@ -157,7 +158,7 @@ function CapBlockedCard({ onGoToHistory }: { onGoToHistory: () => void }) {
         onPress={onGoToHistory}>
         <ThemedText type="smallBold">Go to History</ThemedText>
       </Pressable>
-    </ThemedView>
+    </Card>
   );
 }
 
@@ -167,8 +168,6 @@ function CapBlockedCard({ onGoToHistory }: { onGoToHistory: () => void }) {
 // check before letting any of them proceed — see docs/CLAUDE.md's Recording
 // cap section.
 function ModeSelect({ onSelectMode }: { onSelectMode: (mode: Mode) => void }) {
-  const theme = useTheme();
-
   const options: { mode: Mode; label: string; description: string }[] = [
     { mode: 'interview', label: 'Interview', description: 'Answer an interview-style question.' },
     { mode: 'story', label: 'Story', description: 'Tell a personal story on a given prompt.' },
@@ -180,12 +179,14 @@ function ModeSelect({ onSelectMode }: { onSelectMode: (mode: Mode) => void }) {
       {options.map((option) => (
         <Pressable
           key={option.mode}
-          style={({ pressed }) => [styles.modeCard, { borderColor: theme.text }, pressed && styles.pressed]}
+          style={({ pressed }) => pressed && styles.pressed}
           onPress={() => onSelectMode(option.mode)}>
-          <ThemedText type="smallBold">{option.label}</ThemedText>
-          <ThemedText type="small" themeColor="textSecondary">
-            {option.description}
-          </ThemedText>
+          <Card style={styles.modeCard}>
+            <ThemedText type="smallBold">{option.label}</ThemedText>
+            <ThemedText type="small" themeColor="textSecondary">
+              {option.description}
+            </ThemedText>
+          </Card>
         </Pressable>
       ))}
     </View>
@@ -243,7 +244,7 @@ function QuestionSelect({
   }
 
   return (
-    <ThemedView type="backgroundElement" style={styles.playbackCard}>
+    <Card style={styles.playbackCard}>
       <ThemedText type="smallBold">Mode: {MODE_LABELS[mode]}</ThemedText>
 
       {loading && (
@@ -313,7 +314,7 @@ function QuestionSelect({
           ‹ Change mode
         </ThemedText>
       </Pressable>
-    </ThemedView>
+    </Card>
   );
 }
 
@@ -593,14 +594,14 @@ export default function RecordScreen() {
               {!recordedUri && (
                 <View style={styles.recordArea}>
                   {selectedMode && selectedMode !== 'miscellaneous' && selectedQuestion && (
-                    <ThemedView type="backgroundElement" style={styles.questionBanner}>
+                    <Card style={styles.questionBanner}>
                       <ThemedText type="small" themeColor="textSecondary">
                         {MODE_LABELS[selectedMode]} question
                       </ThemedText>
                       <ThemedText type="smallBold" style={styles.uriLabel}>
                         {selectedQuestion.text}
                       </ThemedText>
-                    </ThemedView>
+                    </Card>
                   )}
 
                   <Animated.View style={{ opacity: pulseAnim }}>
@@ -627,7 +628,7 @@ export default function RecordScreen() {
                   )}
 
                   {permission === 'denied' && (
-                    <ThemedView type="backgroundElement" style={styles.permissionCard}>
+                    <Card style={styles.permissionCard}>
                       <ThemedText type="small">
                         Brevado needs microphone access to record practice sessions, and it&apos;s currently
                         turned off. {canAskAgain ? 'Tap the record button to try again.' : 'Enable it in Settings to continue.'}
@@ -637,7 +638,7 @@ export default function RecordScreen() {
                           <ThemedText type="linkPrimary">Open Settings</ThemedText>
                         </Pressable>
                       )}
-                    </ThemedView>
+                    </Card>
                   )}
 
                   {!recorderState.isRecording && (
@@ -704,8 +705,6 @@ const styles = StyleSheet.create({
     alignSelf: 'stretch',
     paddingHorizontal: Spacing.four,
     paddingVertical: Spacing.three,
-    borderRadius: Spacing.three,
-    borderWidth: StyleSheet.hairlineWidth,
     gap: Spacing.one,
   },
   recordArea: {

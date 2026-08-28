@@ -12,7 +12,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
-import { MaxContentWidth, Spacing } from '@/constants/theme';
+import { MaxContentWidth, Palette, Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import { useAuth } from '@/lib/auth-context';
 import { validateEmail, validatePassword } from '@/lib/auth-validation';
@@ -109,7 +109,7 @@ export default function SignupScreen() {
             onPress={handleSubmit}
             disabled={submitting}>
             {submitting ? (
-              <ActivityIndicator color="#ffffff" />
+              <ActivityIndicator color={Palette.nearWhite} />
             ) : (
               <ThemedText style={styles.buttonText}>Sign up</ThemedText>
             )}
@@ -172,7 +172,8 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   buttonText: {
-    color: '#ffffff',
+    // v2 Epic B Part 2: was '#ffffff' — the app never uses pure white now.
+    color: Palette.nearWhite,
     fontWeight: '600',
   },
   pressed: {

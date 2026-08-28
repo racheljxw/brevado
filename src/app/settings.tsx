@@ -3,6 +3,7 @@ import { useState } from 'react';
 import { Platform, Pressable, StyleSheet, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { Card } from '@/components/card';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { WebBadge } from '@/components/web-badge';
@@ -43,12 +44,12 @@ export default function SettingsScreen() {
           Settings
         </ThemedText>
 
-        <ThemedView type="backgroundElement" style={styles.card}>
+        <Card style={styles.card}>
           <ThemedText type="small" themeColor="textSecondary">
             Signed in as
           </ThemedText>
           <ThemedText type="smallBold">{user?.email ?? '—'}</ThemedText>
-        </ThemedView>
+        </Card>
 
         <View style={styles.spacer} />
 

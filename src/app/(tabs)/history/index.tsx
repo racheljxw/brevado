@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, FlatList, Platform, Pressable, RefreshControl, StyleSheet, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { Card } from '@/components/card';
 import { DeleteAudioButton } from '@/components/delete-audio-button';
 import { DownloadAudioButton } from '@/components/download-audio-button';
 import { FavoriteStar } from '@/components/favorite-star';
@@ -65,7 +66,7 @@ function RecordingListItem({
 
   return (
     <Pressable onPress={onPress} style={({ pressed }) => pressed && styles.pressed}>
-      <ThemedView type="backgroundElement" style={styles.row}>
+      <Card style={styles.row}>
         <View style={styles.rowHeader}>
           <ThemedText type="smallBold">{formatRecordedAt(recording.created_at)}</ThemedText>
           <View style={styles.rowHeaderRight}>
@@ -132,7 +133,7 @@ function RecordingListItem({
             )}
           </View>
         )}
-      </ThemedView>
+      </Card>
     </Pressable>
   );
 }
@@ -391,12 +392,12 @@ export default function HistoryScreen() {
         </View>
 
         {error && (
-          <ThemedView type="backgroundElement" style={styles.errorCard}>
+          <Card style={styles.errorCard}>
             <ThemedText type="small">{error}</ThemedText>
             <Pressable onPress={load}>
               <ThemedText type="linkPrimary">Retry</ThemedText>
             </Pressable>
-          </ThemedView>
+          </Card>
         )}
 
         {showInitialLoading ? (

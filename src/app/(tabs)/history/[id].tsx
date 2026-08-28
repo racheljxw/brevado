@@ -4,6 +4,7 @@ import { ActivityIndicator, Platform, Pressable, ScrollView, StyleSheet, View } 
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { AudioPlaybackControls } from '@/components/audio-playback-controls';
+import { Card } from '@/components/card';
 import { DeleteAudioButton } from '@/components/delete-audio-button';
 import { DownloadAudioButton } from '@/components/download-audio-button';
 import { FavoriteStar } from '@/components/favorite-star';
@@ -101,12 +102,12 @@ function AudioSection({
 
   if (recording.audio_deleted) {
     return (
-      <ThemedView type="backgroundElement" style={styles.card}>
+      <Card style={styles.card}>
         <ThemedText type="small" themeColor="textSecondary">
           Audio deleted — this recording&apos;s audio file has been removed to free up space. Its transcript and
           feedback (below) aren&apos;t affected.
         </ThemedText>
-      </ThemedView>
+      </Card>
     );
   }
 
@@ -115,11 +116,11 @@ function AudioSection({
     // upload (see src/lib/recordings.ts) — but don't let a missing path
     // crash the screen.
     return (
-      <ThemedView type="backgroundElement" style={styles.card}>
+      <Card style={styles.card}>
         <ThemedText type="small" themeColor="textSecondary">
           No audio is available for this recording.
         </ThemedText>
-      </ThemedView>
+      </Card>
     );
   }
 
@@ -178,12 +179,12 @@ function AudioSection({
   if (audioState === 'error') {
     return (
       <>
-        <ThemedView type="backgroundElement" style={styles.card}>
+        <Card style={styles.card}>
           <ThemedText type="small">{audioError ?? 'Could not load audio.'}</ThemedText>
           <Pressable onPress={loadAudioUrl}>
             <ThemedText type="linkPrimary">Retry</ThemedText>
           </Pressable>
-        </ThemedView>
+        </Card>
         {downloadRow}
         {deleteRow}
       </>
@@ -221,7 +222,7 @@ function ReportSection({
 
   if (recording.status === 'failed') {
     return (
-      <ThemedView type="backgroundElement" style={styles.card}>
+      <Card style={styles.card}>
         <ThemedText type="smallBold" style={{ color: '#e5484d' }}>
           Processing failed
         </ThemedText>
@@ -248,17 +249,17 @@ function ReportSection({
             <ThemedText type="smallBold">Regenerate report</ThemedText>
           )}
         </Pressable>
-      </ThemedView>
+      </Card>
     );
   }
 
   if (recording.status === 'pending' || recording.status === 'processing') {
     return (
-      <ThemedView type="backgroundElement" style={styles.card}>
+      <Card style={styles.card}>
         <ThemedText type="small" themeColor="textSecondary">
           Still processing — transcript, metrics, and feedback will appear here once it&apos;s done.
         </ThemedText>
-      </ThemedView>
+      </Card>
     );
   }
 
@@ -274,7 +275,7 @@ function ReportSection({
       <View style={styles.section}>
         <ThemedText type="smallBold">Metrics</ThemedText>
         {metrics ? (
-          <ThemedView type="backgroundElement" style={styles.card}>
+          <Card style={styles.card}>
             <View style={styles.metricRow}>
               <ThemedText type="small" themeColor="textSecondary">
                 Filler words
@@ -293,7 +294,7 @@ function ReportSection({
               </ThemedText>
               <ThemedText type="smallBold">{metrics.repetitionCount}</ThemedText>
             </View>
-          </ThemedView>
+          </Card>
         ) : (
           <ThemedText type="small" themeColor="textSecondary">
             Not available.
