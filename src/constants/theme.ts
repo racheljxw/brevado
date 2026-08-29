@@ -30,9 +30,12 @@ export const Palette = {
   tanGray: '#DFCFC7', // borders / dividers / unselected outlines; also the active nav-tab pill (Figma-authoritative)
   nearWhite: '#FFFEFE', // card surfaces; also the 2px nav-capsule stroke (Figma-authoritative)
   gold: '#F3BF16', // filled favorite star (approximate)
-  pillPurple: '#E2CDF8', // interview mode pill, unselected (approximate)
-  pillPink: '#F8CDE5', // storytelling mode pill, unselected (approximate)
-  pillBlue: '#CDE3F8', // miscellaneous mode pill, unselected (approximate)
+  pillPurple: '#E2CDF8', // interview mode pill bg, unselected (approximate)
+  pillPink: '#F8CDE5', // storytelling mode pill bg, unselected (approximate)
+  pillBlue: '#CDE3F8', // miscellaneous mode pill bg, unselected (approximate)
+  pillPurpleText: '#3E0877', // interview mode pill label (Epic D Part 3)
+  pillPinkText: '#7F084C', // storytelling mode pill label (Epic D Part 3)
+  pillBlueText: '#093C6B', // miscellaneous mode pill label (Epic D Part 3)
   navIconActive: '#B63700', // active bottom-nav tab icon (Figma-authoritative)
   shadow: '#BEA398', // drop-shadow tint for cards + the nav capsule (Figma-authoritative; RN can only approximate spread/blur)
   link: '#4B75DF', // the ONE blue for links / interactive text, app-wide (see Theme.colors.link)
@@ -170,6 +173,10 @@ export const Theme = {
     modeInterview: Palette.pillPurple,
     modeStory: Palette.pillPink,
     modeMiscellaneous: Palette.pillBlue,
+    /** Mode pill label colour — a saturated tone of the matching pill bg (Epic D Part 3). */
+    modeInterviewText: Palette.pillPurpleText,
+    modeStoryText: Palette.pillPinkText,
+    modeMiscellaneousText: Palette.pillBlueText,
 
     /* ---- Bottom nav (see docs/CLAUDE.md "Design system" -> nav bar) ----
      * The nav uses the SYSTEM tab bar (`NativeTabs`), which exposes only a

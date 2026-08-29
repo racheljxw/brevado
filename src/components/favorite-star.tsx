@@ -1,6 +1,7 @@
 import { SymbolView } from 'expo-symbols';
 import { Pressable, StyleSheet } from 'react-native';
 
+import { Theme } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 
 // Phase 3 Step 4 — a personal star marker on a recording, purely cosmetic:
@@ -38,7 +39,7 @@ export function FavoriteStar({
       <SymbolView
         name={favorite ? 'star.fill' : 'star'}
         size={size}
-        tintColor={favorite ? '#f5a623' : theme.textSecondary}
+        tintColor={favorite ? Theme.colors.favoriteGold : theme.textSecondary}
       />
     </Pressable>
   );

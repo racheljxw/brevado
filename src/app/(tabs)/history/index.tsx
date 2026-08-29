@@ -11,13 +11,13 @@ import { ProfileButton } from '@/components/profile-button';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { WebBadge } from '@/components/web-badge';
-import { BottomTabInset, MaxContentWidth, Spacing } from '@/constants/theme';
+import { BottomTabInset, MaxContentWidth, Spacing, Theme } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import { deleteRecordingAudio, regenerateReport } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
 import { formatRecordedAt } from '@/lib/format-time';
 import { formatMode } from '@/lib/modes';
-import { getStatusPresentation, TERMINAL_STATUSES } from '@/lib/recording-status';
+import { TERMINAL_STATUSES } from '@/lib/recording-status';
 import { fetchRecordings, setFavorite, shareRecordingAudio, type RecordingRow } from '@/lib/recordings';
 
 // Phase 3 Step 1: rows are now tappable, pushing `history/[id]` for the full
@@ -32,7 +32,38 @@ import { fetchRecordings, setFavorite, shareRecordingAudio, type RecordingRow } 
 // claim on its own taps, so pressing it doesn't also trigger navigation.
 // The spec calls for this living in a 3-dot menu; a plain inline text
 // action reads just as clearly at this app's scale and needs no new menu
-// component, so that's what's here for now.
+// component, so that's what's here for now (consolidation into that menu is
+// Epic D Part 4).
+//
+// v2 Epic D Part 3 — the card is restyled to the design screenshots:
+//   - the recording `title` (Part 1/2) as the bold heading, with the
+//     favorite star on the same line. NULL title -> a muted "Untitled
+//     recording" fallback (see the CLAUDE.md "Recording titles" note on why
+//     that over a truncated question).
+//   - the question/prompt as a secondary `textSecondary` line; "No prompt"
+//     (not blank) for miscellaneous, which has no question.
+//   - a colour-coded mode pill (`modeInterview`/`modeStory`/
+//     `modeMiscellaneous` bg + the matching `*Text` label tokens) on the
+//     meta row, with the date/time right-aligned opposite it. No status
+//     badge — the failed-row "Regenerate report" action keys off
+//     `recording.status` directly, not a visible badge.
+//   - the existing download/delete/regenerate actions are unchanged in
+//     behaviour — only their icon tint was neutralised to theme tokens so
+//     they don't clash with the restyled card. Consolidating them into a
+//     3-dot menu (+ a new "Delete recording") is Part 4.
+function modePillColors(mode: string): { backgroundColor: string; color: string } {
+  switch (mode) {
+    case 'interview':
+      return { backgroundColor: Theme.colors.modeInterview, color: Theme.colors.modeInterviewText };
+    case 'story':
+      return { backgroundColor: Theme.colors.modeStory, color: Theme.colors.modeStoryText };
+    case 'miscellaneous':
+      return { backgroundColor: Theme.colors.modeMiscellaneous, color: Theme.colors.modeMiscellaneousText };
+    default:
+      return { backgroundColor: Theme.colors.border, color: Theme.colors.textPrimary };
+  }
+}
+
 function RecordingListItem({
   recording,
   onPress,
@@ -63,50 +94,60 @@ function RecordingListItem({
   downloadAudioError?: string;
 }) {
   const theme = useTheme();
-  const status = getStatusPresentation(recording.status, theme);
+  const modePill = modePillColors(recording.mode);
 
   return (
     <Pressable onPress={onPress} style={({ pressed }) => pressed && styles.pressed}>
       <Card style={styles.row}>
-        <View style={styles.rowHeader}>
-          <ThemedText type="smallBold">{formatRecordedAt(recording.created_at)}</ThemedText>
-          <View style={styles.rowHeaderRight}>
-            <View style={[styles.statusBadge, { backgroundColor: status.backgroundColor }]}>
-              <ThemedText type="smallBold" style={{ color: status.textColor }}>
-                {status.label}
-              </ThemedText>
-            </View>
-            <FavoriteStar favorite={recording.favorite} onToggle={onToggleFavorite} disabled={favoritePending} size={20} />
-          </View>
+        {/* Heading: the recording title (or a muted fallback for a NULL
+            title — a legacy row, or one where generation returned nothing),
+            with the favorite star sharing the line. */}
+        <View style={styles.titleRow}>
+          <ThemedText
+            type="smallBold"
+            themeColor={recording.title ? 'text' : 'textSecondary'}
+            numberOfLines={2}
+            style={[styles.cardTitle, styles.titleFlex]}>
+            {recording.title ?? 'Untitled recording'}
+          </ThemedText>
+          <FavoriteStar favorite={recording.favorite} onToggle={onToggleFavorite} disabled={favoritePending} size={20} />
         </View>
+
         {/* Phase 4 Step 5 exit-checkpoint review: the question/topic (real as
             of Phase 4 Steps 3-4 for interview/story; still null for
             miscellaneous) is meaningful context when scanning past sessions,
             so it gets a one-line, truncated preview here — the detail screen
-            (below) shows it in full. */}
-        {recording.question && (
-          <ThemedText type="small" themeColor="textSecondary" numberOfLines={1}>
-            {recording.question}
+            shows it in full. Epic D Part 3: miscellaneous (no question) shows
+            a clear "No prompt" rather than blank space. */}
+        <ThemedText type="small" themeColor="textSecondary" numberOfLines={1} style={styles.promptLine}>
+          {recording.question ?? 'No prompt'}
+        </ThemedText>
+
+        {/* Meta row: the colour-coded mode pill on the left, the date/time
+            right-aligned opposite it. */}
+        <View style={styles.metaRow}>
+          <View style={[styles.modePill, { backgroundColor: modePill.backgroundColor }]}>
+            <ThemedText type="small" style={[styles.modePillText, { color: modePill.color }]}>
+              {formatMode(recording.mode)}
+            </ThemedText>
+          </View>
+          <ThemedText type="small" themeColor="textSecondary" style={styles.metaDate}>
+            {formatRecordedAt(recording.created_at)}
           </ThemedText>
-        )}
-        <View style={styles.rowFooter}>
-          <ThemedText type="small" themeColor="textSecondary">
-            {formatMode(recording.mode)}
-          </ThemedText>
-          {/* Per-row audio actions — download (Step 6) and delete (Step 5)
-              sit side by side here, separate from the identity/status
-              cluster above (favorite, status badge). Nothing renders once
-              audio_deleted is true — there's no audio left to act on, for
-              either action. */}
-          {!recording.audio_deleted && (
-            <View style={styles.audioActionsRow}>
-              {recording.audio_path && (
-                <DownloadAudioButton onDownload={onDownloadAudio} pending={downloadingAudio} size={18} />
-              )}
-              <DeleteAudioButton onDelete={onDeleteAudio} pending={deletingAudio} size={18} />
-            </View>
-          )}
         </View>
+
+        {/* Per-row audio actions — download (Step 6) and delete (Step 5).
+            Nothing renders once audio_deleted is true — there's no audio
+            left to act on, for either action. Behaviour unchanged in Part 3;
+            these fold into a 3-dot menu in Part 4. */}
+        {!recording.audio_deleted && (
+          <View style={styles.audioActionsRow}>
+            {recording.audio_path && (
+              <DownloadAudioButton onDownload={onDownloadAudio} pending={downloadingAudio} size={18} />
+            )}
+            <DeleteAudioButton onDelete={onDeleteAudio} pending={deletingAudio} size={18} />
+          </View>
+        )}
         {downloadAudioError && (
           <ThemedText type="small" style={{ color: '#e5484d' }}>
             {downloadAudioError}
@@ -479,34 +520,54 @@ const styles = StyleSheet.create({
     paddingBottom: BottomTabInset + Spacing.three,
   },
   row: {
-    gap: Spacing.one,
+    // Card supplies the fill (Theme.colors.card), inset border, radius
+    // (Theme.radius.card) and shadow — this just adds the interior layout.
+    gap: Spacing.two,
     padding: Spacing.three,
-    borderRadius: Spacing.three,
   },
-  rowHeader: {
+  titleRow: {
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     justifyContent: 'space-between',
-  },
-  rowHeaderRight: {
-    flexDirection: 'row',
-    alignItems: 'center',
     gap: Spacing.two,
   },
-  rowFooter: {
+  titleFlex: {
+    flexShrink: 1,
+  },
+  cardTitle: {
+    // "smallBold" (Noto Sans bold) bumped up to a list-card heading size —
+    // smaller than the detail screen's `subtitle`, larger than body.
+    fontSize: 17,
+    lineHeight: 22,
+  },
+  promptLine: {
+    // pull the secondary line up snug under the heading
+    marginTop: -Spacing.one,
+  },
+  metaRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
+    gap: Spacing.two,
+  },
+  modePill: {
+    paddingHorizontal: Spacing.two,
+    paddingVertical: Spacing.half,
+    borderRadius: Theme.radius.pill,
+  },
+  modePillText: {
+    fontSize: 12,
+    lineHeight: 16,
+  },
+  metaDate: {
+    flexShrink: 1,
+    textAlign: 'right',
   },
   audioActionsRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: Spacing.two,
-  },
-  statusBadge: {
-    paddingHorizontal: Spacing.two,
-    paddingVertical: Spacing.half,
-    borderRadius: Spacing.three,
+    justifyContent: 'flex-end',
+    gap: Spacing.three,
   },
   regenerateRow: {
     flexDirection: 'row',

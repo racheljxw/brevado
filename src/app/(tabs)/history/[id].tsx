@@ -1,6 +1,15 @@
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
+import { SymbolView } from 'expo-symbols';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Platform, Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import {
+  ActivityIndicator,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  TextInput,
+  View,
+} from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { AudioPlaybackControls } from '@/components/audio-playback-controls';
@@ -11,7 +20,7 @@ import { FavoriteStar } from '@/components/favorite-star';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { WebBadge } from '@/components/web-badge';
-import { BottomTabInset, MaxContentWidth, Spacing } from '@/constants/theme';
+import { BottomTabInset, MaxContentWidth, Spacing, Theme } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import { deleteRecordingAudio, regenerateReport } from '@/lib/api';
 import { formatRecordedAt } from '@/lib/format-time';
@@ -22,6 +31,7 @@ import {
   getRecordingAudioUrl,
   setFavorite,
   shareRecordingAudio,
+  updateRecordingTitle,
   type RecordingDetail,
   type RecordingMetrics,
 } from '@/lib/recordings';
@@ -49,6 +59,134 @@ function BackLink() {
     <Pressable onPress={() => router.back()} hitSlop={8}>
       <ThemedText type="link">‹ Back to History</ThemedText>
     </Pressable>
+  );
+}
+
+// v2 Epic D Part 2 — inline title editing. Mirrors the custom-question
+// pencil-edit in `src/app/(tabs)/index.tsx`'s `QuestionArea` (Epic C Part 3):
+// display state = the text + a pencil; tapping the pencil opens a bordered
+// input box (Theme tokens, icon submit) pre-filled with the current value;
+// confirm saves, "Cancel" reverts. That pattern isn't extracted into a shared
+// component (it lives inline in `QuestionArea`), so this mirrors its
+// behaviour rather than importing it.
+//
+// `title` is nullable — a recording from before Part 1, or one where
+// generation returned nothing usable. Editing then just starts from an empty
+// field (display shows a muted "Untitled recording"), so a user can set a
+// title on an older recording for the first time. Validation matches custom
+// questions exactly: non-empty after trim, nothing else.
+//
+// The component owns the in-progress `draft` + its local validation error and
+// whether the box is open (`editing`); the parent owns the persisted `title`
+// and the async save (`saving` / `saveError`). `onSave` resolves `true` once
+// the write has actually persisted, which is the signal to close the editor —
+// so a failed save keeps the box open with the error shown, and the displayed
+// title only ever changes after Supabase confirms.
+function TitleSection({
+  title,
+  onSave,
+  saving,
+  saveError,
+  onCancelEdit,
+}: {
+  title: string | null;
+  onSave: (next: string) => Promise<boolean>;
+  saving: boolean;
+  saveError: string | null;
+  onCancelEdit: () => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState('');
+  const [draftError, setDraftError] = useState<string | null>(null);
+
+  function beginEditing() {
+    setDraft(title ?? '');
+    setDraftError(null);
+    setEditing(true);
+  }
+
+  async function submitDraft() {
+    const trimmed = draft.trim();
+    if (!trimmed) {
+      setDraftError('Enter a title.');
+      return;
+    }
+    setDraftError(null);
+    const ok = await onSave(trimmed);
+    if (ok) setEditing(false);
+  }
+
+  function cancelEditing() {
+    setEditing(false);
+    setDraft('');
+    setDraftError(null);
+    onCancelEdit();
+  }
+
+  if (editing) {
+    return (
+      <View style={styles.titleEditSection}>
+        <View style={styles.titleInputBox}>
+          <TextInput
+            style={styles.titleInputField}
+            placeholder="Recording title"
+            placeholderTextColor="#56453D80"
+            value={draft}
+            onChangeText={(t) => {
+              setDraft(t);
+              if (draftError) setDraftError(null);
+            }}
+            autoFocus
+            returnKeyType="done"
+            onSubmitEditing={submitDraft}
+            editable={!saving}
+          />
+          {saving ? (
+            <ActivityIndicator style={styles.titleSubmit} color={Theme.colors.accent} />
+          ) : (
+            <Pressable
+              onPress={submitDraft}
+              hitSlop={8}
+              style={({ pressed }) => [styles.titleSubmit, pressed && styles.pressed]}
+              accessibilityRole="button"
+              accessibilityLabel="Save title">
+              <SymbolView name="arrow.up.circle.fill" size={26} tintColor={Theme.colors.accent} />
+            </Pressable>
+          )}
+        </View>
+        {(draftError || saveError) && (
+          <ThemedText type="small" style={{ color: '#e5484d' }}>
+            {draftError ?? saveError}
+          </ThemedText>
+        )}
+        <Pressable
+          onPress={cancelEditing}
+          hitSlop={8}
+          disabled={saving}
+          style={({ pressed }) => pressed && styles.pressed}>
+          <ThemedText type="link">Cancel</ThemedText>
+        </Pressable>
+      </View>
+    );
+  }
+
+  return (
+    <View style={styles.titleRow}>
+      <ThemedText
+        type="subtitle"
+        themeColor={title ? 'text' : 'textSecondary'}
+        style={styles.titleText}>
+        {title ?? 'Untitled recording'}
+      </ThemedText>
+      <Pressable
+        onPress={beginEditing}
+        hitSlop={8}
+        style={({ pressed }) => [styles.titleEditPencil, pressed && styles.pressed]}
+        accessibilityRole="button"
+        accessibilityLabel="Edit title">
+        <SymbolView name="pencil" size={18} tintColor={Theme.colors.textSecondary} />
+      </Pressable>
+    </View>
   );
 }
 
@@ -326,6 +464,8 @@ export default function RecordingDetailScreen() {
   const [deleteAudioError, setDeleteAudioError] = useState<string | null>(null);
   const [downloadingAudio, setDownloadingAudio] = useState(false);
   const [downloadAudioError, setDownloadAudioError] = useState<string | null>(null);
+  const [savingTitle, setSavingTitle] = useState(false);
+  const [titleSaveError, setTitleSaveError] = useState<string | null>(null);
 
   // Shared with the silent poll below, same purpose as the History list's
   // own `requestSeqRef` (Phase 2 Step 7): only the response matching the
@@ -477,6 +617,33 @@ export default function RecordingDetailScreen() {
     }
   }, [recording]);
 
+  // v2 Epic D Part 2 — persist a user-edited title. A direct Supabase update
+  // (`updateRecordingTitle`), not a backend endpoint — same call and same
+  // reasoning as the favorite toggle: RLS already scopes it to this user and
+  // there's no Gemini/Storage work involved (see the function's own doc
+  // comment in src/lib/recordings.ts). Deliberately NOT optimistic, matching
+  // `handleDeleteAudio`: `recording.title` only changes once the write has
+  // actually landed, so a failed save never leaves a wrong title on screen.
+  // Returns whether it persisted, so `TitleSection` knows whether to close.
+  const handleSaveTitle = useCallback(
+    async (nextTitle: string): Promise<boolean> => {
+      if (!recording) return false;
+      setSavingTitle(true);
+      setTitleSaveError(null);
+      try {
+        await updateRecordingTitle(recording.id, nextTitle);
+        setRecording((prev) => (prev ? { ...prev, title: nextTitle } : prev));
+        return true;
+      } catch (err) {
+        setTitleSaveError(err instanceof Error ? err.message : 'Could not save title — try again.');
+        return false;
+      } finally {
+        setSavingTitle(false);
+      }
+    },
+    [recording]
+  );
+
   const status = recording ? getStatusPresentation(recording.status, theme) : null;
 
   return (
@@ -513,8 +680,18 @@ export default function RecordingDetailScreen() {
 
         {screenState === 'loaded' && recording && status && (
           <ScrollView contentContainerStyle={styles.scrollContent}>
+            <TitleSection
+              title={recording.title}
+              onSave={handleSaveTitle}
+              saving={savingTitle}
+              saveError={titleSaveError}
+              onCancelEdit={() => setTitleSaveError(null)}
+            />
+
             <View style={styles.headerRow}>
-              <ThemedText type="subtitle">{formatRecordedAt(recording.created_at)}</ThemedText>
+              <ThemedText type="smallBold" themeColor="textSecondary">
+                {formatRecordedAt(recording.created_at)}
+              </ThemedText>
               <View style={styles.headerRowRight}>
                 <View style={[styles.statusBadge, { backgroundColor: status.backgroundColor }]}>
                   <ThemedText type="smallBold" style={{ color: status.textColor }}>
@@ -608,6 +785,48 @@ const styles = StyleSheet.create({
     gap: Spacing.three,
     paddingTop: Spacing.three,
     paddingBottom: BottomTabInset + Spacing.four,
+  },
+  titleRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: Spacing.two,
+  },
+  titleText: {
+    flexShrink: 1,
+  },
+  titleEditPencil: {
+    // nudge the pencil onto the first line's optical centre, same as
+    // QuestionArea's `editPencil`.
+    marginTop: Spacing.one,
+  },
+  titleEditSection: {
+    gap: Spacing.two,
+    alignItems: 'flex-start',
+  },
+  titleInputBox: {
+    alignSelf: 'stretch',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Theme.spacing.sm,
+    backgroundColor: Theme.colors.card,
+    borderWidth: 1,
+    borderColor: Theme.colors.border,
+    borderRadius: Theme.radius.lg,
+    paddingLeft: Theme.spacing.lg,
+    paddingRight: Theme.spacing.sm,
+    paddingVertical: Theme.spacing.sm,
+  },
+  titleInputField: {
+    flex: 1,
+    minHeight: 32,
+    paddingVertical: Theme.spacing.xs,
+    fontFamily: Theme.typography.fontFamily.regular,
+    fontSize: 20,
+    lineHeight: 26,
+    color: Theme.colors.textPrimary,
+  },
+  titleSubmit: {
+    paddingVertical: Theme.spacing.xs,
   },
   headerRow: {
     flexDirection: 'row',

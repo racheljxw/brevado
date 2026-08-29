@@ -39,9 +39,23 @@ for the full summary. Progress so far:
     token — see [Design system](#design-system)'s "Link colour consolidation"), plus the
     `title` column + its AI generation, backend/data only. See
     [Recording titles](#recording-titles).
-  - **Part 2+ (not started):** title editing UI, then the History list/detail redesign —
-    search bar, calendar/list toggle, 3-dot per-row menu, new "Delete recording" action,
-    restyled list/detail, titles shown in the UI.
+  - **Part 2 (done):** inline title editing on the (pre-restyle) History detail screen —
+    pencil-edit mirroring `QuestionArea`'s custom-question pattern, direct-Supabase save,
+    handles NULL titles. See [Recording titles](#recording-titles)'s "Editing" subsection.
+  - **Part 3 (done):** the History **list** card restyle — each row is a `<Card>` showing
+    the recording `title` as a bold heading (muted "Untitled recording" fallback for a NULL
+    title), the question/prompt as a `textSecondary` secondary line ("No prompt" for
+    miscellaneous), a colour-coded mode pill (`modeInterview`/`modeStory`/`modeMiscellaneous`
+    bg + matching saturated `*Text` label tokens → purple/pink/blue), the date/time
+    right-aligned opposite the pill, and a theme-tinted favorite star. **No status badge on
+    the list card** (the failed-row "Regenerate report" action keys off `recording.status`
+    directly). The existing inline download/delete/regenerate actions are **unchanged in
+    behaviour** — only their icon tint was neutralised to theme tokens. See
+    [History](#history)'s "List card restyle (Epic D Part 3)" bullet.
+  - **Part 4 (next):** the per-row **3-dot menu** consolidation — folding
+    download/delete/regenerate into a menu and adding the new "Delete recording" action
+    (removes row + audio together). Then Part 5+: the search bar, the calendar/list toggle,
+    and the detail-screen restyle.
 
 Sections below that predate a given Epic still describe the v1 implementation where that Epic
 hasn't rewritten them — History especially is still all-v1 until Epic D.
@@ -269,6 +283,7 @@ Part 1 covered only the mode-select screen's look.
 | `recordRed` | `#C53030` | the record button — approximate, exact value in Epic C |
 | `favoriteGold` | `#F3BF16` | a filled favorite star — approximate |
 | `modeInterview` / `modeStory` / `modeMiscellaneous` | `#E2CDF8` / `#F8CDE5` / `#CDE3F8` | mode pill bg (unselected) — approximate |
+| `modeInterviewText` / `modeStoryText` / `modeMiscellaneousText` | `#3E0877` / `#7F084C` / `#093C6B` | mode pill **label** colour — saturated tone of the matching pill bg (Epic D Part 3, from the design) |
 | `navStroke` | `#FFFEFE` | the 2px stroke around the nav capsule (Figma-authoritative) |
 | `navIconActive` | `#B63700` | active bottom-nav tab icon (Figma-authoritative) |
 | `shadow` | `#BEA398` | drop-shadow tint — **cards and** the nav capsule (Figma-authoritative; RN approximates spread/blur) |
@@ -577,11 +592,16 @@ literal in the Record flow). Epic D Part 1 collapsed both into **one token,
   `QuestionArea` *does* use `Theme.colors.recordRed` — reconcile the `'record'` screen's when it's
   rebuilt in Part 4.
 - **Status badge colours** (`recording-status.ts`) still hardcode red/green — no warm-palette
-  tokens for error/success yet.
+  tokens for error/success yet. (The History list card's other icons were neutralised to theme
+  tokens in Epic D Part 3, but the status badge was deliberately left alone pending these
+  tokens.)
 - **The one link blue** (`Theme.colors.link`, `#4B75DF`) is a deliberate warm-palette
   exception, not a mismatch to fix — see "Link colour consolidation" above. The auth
   submit-button now reuses it too.
-- **`favorite-star.tsx`** uses `#f5a623`, not `Theme.colors.favoriteGold` (`#F3BF16`).
+- ~~**`favorite-star.tsx`** uses `#f5a623`, not `Theme.colors.favoriteGold` (`#F3BF16`).~~
+  Fixed in Epic D Part 3 — the active star now uses `Theme.colors.favoriteGold`; inactive stays
+  the muted `theme.textSecondary` outline. (Also `delete-audio-button.tsx`'s trash icon: was a
+  hardcoded `#e5484d`, now `theme.textSecondary` — see the Part 3 note in [History](#history).)
 - **Splash screen** (`animated-icon.tsx` + `app.json` splash `#208AEF`) is still the Expo-template
   blue + Expo logo — needs a Brevado brand asset + cream bg.
 - **Nav bar ❌ items** above (stroke, drop shadow, iOS active pill) — need a custom tab bar.
@@ -921,34 +941,64 @@ this logic was rebuilt in v2 Epic C Part 3 (`QuestionArea`) — see below and
   `TabTrigger href="/history"` still resolve to this directory's `index.tsx` exactly as before,
   so nothing about the tab itself changed.
 - Query logic is `fetchRecordings()` in `src/lib/recordings.ts`, alongside the upload logic —
-  selects `id, mode, question, status, created_at, favorite, audio_deleted, audio_path` for the
-  current user ordered by `created_at desc`. `question` was added in the Phase 4 Step 5
-  exit-checkpoint review (see [Phase 4 exit checkpoint](#phase-4-exit-checkpoint)) — everything
-  else here predates it. The list still doesn't need transcript/feedback/metrics; the detail screen
-  (below) widens to the full row with its own separate query, `fetchRecordingById()`, rather than
-  this one growing a `select('*')`.
-- **What it shows**: date/time, mode, status, and — as of the Phase 4 Step 5 checkpoint — a
-  one-line truncated preview of `question` per row (only rendered when non-null, so a
-  miscellaneous row, which has no question, shows nothing extra) — no transcript/feedback text
-  inline (the Phase 3 Step 1 detail screen, below, is where that lives, showing the question in
-  full rather than truncated). Mode read `miscellaneous` for every row through Phase 3 since Phase
+  selects `id, mode, question, title, status, created_at, favorite, audio_deleted, audio_path`
+  for the current user ordered by `created_at desc`. `question` was added in the Phase 4 Step 5
+  exit-checkpoint review (see [Phase 4 exit checkpoint](#phase-4-exit-checkpoint)); `title` in
+  v2 Epic D Part 3 (the restyled card's heading). The list still doesn't need
+  transcript/feedback/metrics; the detail screen (below) widens to the full row with its own
+  separate query, `fetchRecordingById()`, rather than this one growing a `select('*')`.
+- **List card restyle (v2 Epic D Part 3, done):** each row is a `<Card>` (so the fill is
+  `Theme.colors.card`, plus the shared inset border, `Theme.radius.card`, and card shadow — the
+  card border is left as `<Card>`'s own `cardBorder`, not overridden to `Theme.colors.border`,
+  to stay consistent with every other card in the app). Interior layout, top to bottom:
+  - **Heading row:** `recording.title` in a bumped-up `smallBold` (Noto Sans bold, 17px), up to
+    2 lines, with the `FavoriteStar` sharing the line (right-aligned). A **NULL title** renders
+    as a muted (`textSecondary`) **"Untitled recording"** — see [Recording titles](#recording-titles)'s
+    "List display (Part 3)" for why that over a truncated-question fallback.
+  - **Prompt line:** `recording.question` as one truncated `textSecondary` line, or the literal
+    **"No prompt"** when it's null (miscellaneous, or an interview/story lookup edge case) —
+    never blank space, matching the design screenshot's "Day Recap / no prompt" example.
+  - **Meta row:** a small colour-coded **mode pill** (`modePillColors()` maps
+    `interview`/`story`/`miscellaneous` → bg `Theme.colors.modeInterview`/`modeStory`/
+    `modeMiscellaneous` = pale purple/pink/blue, and label colour the matching saturated
+    `Theme.colors.modeInterviewText` `#3E0877` / `modeStoryText` `#7F084C` /
+    `modeMiscellaneousText` `#093C6B`; `Theme.radius.pill`; label from `formatMode()` so it
+    reads **"Storytelling"**, not "Story") on the left, with the **date/time**
+    (`formatRecordedAt`, `textSecondary`) **right-aligned opposite it**. **No status badge** —
+    it was dropped from the list card in this pass; only the detail screen still shows one
+    (`getStatusPresentation`).
+  - **Audio actions row:** the existing `DownloadAudioButton` / `DeleteAudioButton`, right-
+    aligned, **behaviourally unchanged**. Only the trash icon's tint changed (hardcoded
+    `#e5484d` → `Theme.colors.textSecondary`) so it doesn't jar against the card; the
+    destructive-red treatment moves onto the "Delete recording" item when these consolidate
+    into a **3-dot menu in Part 4**. `FavoriteStar`'s active tint also moved `#f5a623` →
+    `Theme.colors.favoriteGold` (a shared-component change, so the detail screen picks it up
+    too).
+  - Error text (`downloadAudioError` / `deleteAudioError` / `regenerateError`) and the failed-row
+    "Regenerate report" inline action are unchanged from earlier phases.
+- **What it shows** (layout restyled in Epic D Part 3 — see the "List card restyle" bullet just
+  above for the current arrangement): the recording title, the question/prompt line (or "No
+  prompt"), a colour-coded mode pill, and the date/time — no status badge (dropped from the list
+  card in Part 3), no transcript/feedback text inline (the Phase 3 Step 1 detail screen, below,
+  is where that lives, showing the question in full rather than truncated). Mode read
+  `miscellaneous` for every row through Phase 3 since Phase
   4's mode selection didn't exist yet; as of Phase 4 Steps 2-4 it genuinely varies
   (`interview`/`story`/`miscellaneous`), and `status` moves `pending` -> `processing` ->
   `done`/`failed` as the real backend pipeline runs.
-- **Status is visually distinct per state (Step 7):** `RecordingListItem`'s status badge colors
-  `failed` red and `done` green (raw hex, not theme tokens, matching the same red already used for
-  the record/error accents elsewhere in the app; same in light and dark mode) so a failed recording
-  doesn't read as just another line of text next to `pending`/`processing`. `pending`/`processing`
-  stay a neutral badge (`processing` additionally reads "Processing…" rather than the bare status
-  word).
-- **Question preview per row (Phase 4 Step 5 exit-checkpoint review, done):** `RecordingListItem`
-  renders `recording.question` (when non-null) as a single truncated line
-  (`numberOfLines={1}`) right below the date/status/favorite header row and above the
-  mode/audio-actions row — a plain `ThemedText`, not a new component, since it's simple display
-  text with no interaction. Absent entirely for miscellaneous rows (no question to show). This
-  needed `fetchRecordings()`'s `select()` widened to include `question` (see above) — it wasn't
-  in the list's original four columns since every recording had `question: null` when that query
-  was first written, pre-Phase-4.
+- **Status badge — detail screen only as of Epic D Part 3.** It used to render on each list row
+  too (Step 7: `failed` red / `done` green / neutral `pending`·`processing`, raw hex via
+  `getStatusPresentation`); Part 3 removed it from the list card at the design's request. The
+  detail screen still shows it unchanged. A `failed` list row is still recoverable — its inline
+  "Regenerate report" action keys off `recording.status`, not a visible badge.
+- **Question preview per row (Phase 4 Step 5 exit-checkpoint review, done; restyled in Epic D
+  Part 3):** `RecordingListItem` renders `recording.question` as a single truncated line
+  (`numberOfLines={1}`, `textSecondary`) as the card's secondary line under the title — a plain
+  `ThemedText`, not a new component. As of Part 3 it is **always rendered**: a null question
+  (miscellaneous, or an interview/story lookup edge case) shows the literal **"No prompt"**
+  rather than being omitted, so the card never has a blank gap there. This needed
+  `fetchRecordings()`'s `select()` widened to include `question` (see above) — it wasn't in the
+  list's original four columns since every recording had `question: null` when that query was
+  first written, pre-Phase-4.
 - **"Regenerate report" per row (Phase 3 Step 2, done):** a `failed` row also renders an inline
   "Regenerate report" text action directly in `RecordingListItem` — the plan's spec calls for a
   3-dot menu, but a plain inline action was judged to read just as clearly at this app's scale
@@ -966,7 +1016,9 @@ this logic was rebuilt in v2 Epic C Part 3 (`QuestionArea`) — see below and
 - **Favorite toggle (Phase 3 Step 4, done):** each row also renders a star icon
   (`FavoriteStar`, `src/components/favorite-star.tsx` — shared with the detail screen below,
   filled `star.fill` vs. outline `star` via `expo-symbols`, same SF Symbols pattern already used by
-  `Collapsible`) next to the status badge. Tapping it calls `setFavorite()` (`src/lib/recordings.ts`)
+  `Collapsible`) on the card's heading line, opposite the title (moved there from beside the
+  status badge in the Epic D Part 3 restyle; active tint is now `Theme.colors.favoriteGold`).
+  Tapping it calls `setFavorite()` (`src/lib/recordings.ts`)
   — a **direct Supabase update, not a backend endpoint**: same reasoning as the recording-cap check
   in [Recording cap](#recording-cap) — RLS already scopes the update to the calling user, there's no
   Gemini/Storage call involved (unlike `/process`/`/regenerate`, which exist as backend endpoints
@@ -1038,11 +1090,18 @@ this logic was rebuilt in v2 Epic C Part 3 (`QuestionArea`) — see below and
   relies on the existing `recordings` select RLS policy to make a bad id or another user's id come
   back as `null` instead of a 403 the frontend has to special-case) and shows date/time, mode, a
   status badge (`getStatusPresentation`, pulled out of the list into `src/lib/recording-status.ts`
-  so both screens render status identically), the full `question` text (when non-null — see below),
+  so both screens render status identically), an **editable `title`** at the top (v2 Epic D
+  Part 2 — see below), the full `question` text (when non-null — see below),
   audio playback, transcript, feedback, and metrics (filler-word rate shown as a rounded percentage,
   words-per-minute, and repetition count — plain text/numbers, no charts or scoring visuals, which
   is Phase 6/v3). Loading and not-found/error states (bad id, RLS-blocked id, or a genuine fetch
   failure) are all handled explicitly, the last two with a Retry action.
+  - **Title editing (v2 Epic D Part 2, done):** `TitleSection` at the top of the screen —
+    the title text + a pencil, tapping which opens a pre-filled input box (confirm saves via
+    `updateRecordingTitle`, a direct Supabase update; "Cancel" reverts). Handles a `NULL`
+    title (starts empty, shows a muted "Untitled recording"). Full detail — interaction,
+    the endpoint-vs-direct call, the not-optimistic save, the date-line demotion — is in
+    [Recording titles](#recording-titles)'s "Editing (Part 2)" subsection.
   - **Question display (Phase 4 Step 5 exit-checkpoint review, done):** `fetchRecordingById()` had
     already selected `question` since Phase 3 Step 1 (`RecordingDetail` always included it), but
     nothing actually rendered it — a gap left over from when every recording had `question: null`
@@ -1720,12 +1779,14 @@ pure string-building with no network call of its own, so it's easy to unit-test 
 
 ## Recording titles
 
-v2 Epic D Part 1 — a short, human-readable label per recording ("Challenging Coworker",
-"Unplanned Trip", "Day Recap" — matching the tone of the design screenshots). **Part 1 is
-backend/data only**: real titles get generated and stored, but nothing displays them yet
-(that's Part 3+) and there's no editing UI yet (Part 2). Existing recordings keep
-`title = null` — **no backfill**; they only get a title if regenerated, and new recordings
-get one naturally.
+v2 Epic D — a short, human-readable label per recording ("Challenging Coworker",
+"Unplanned Trip", "Day Recap" — matching the tone of the design screenshots). **Part 1**
+(backend/data): auto-generation + storage. **Part 2** (done): the recording is now
+**user-editable** on the History detail screen. **Part 3** (done): the title is the bold
+heading of each restyled History **list** card (see "List display (Part 3)" below and
+[History](#history)'s "List card restyle" bullet). Existing recordings keep `title = null` —
+**no backfill**; they get a title if regenerated, if a user sets one by hand (Part 2), or
+naturally on new recordings. The History **detail-screen** visual restyle is still Part 5+.
 
 - **Schema:** `title` nullable `text` on `recordings`, migration
   `supabase/migrations/0005_recording_title.sql` (`alter table public.recordings add column
@@ -1755,9 +1816,62 @@ get one naturally.
   words"; Part 2's editing UI is the fix for a junk title).
 - **Storage:** `process_recording` (`app/services/processing.py`) writes `title:
   generated.title` alongside `feedback` and `status: 'done'` in the same final update — no
-  separate write, no new pipeline stage.
-- **Not in Part 1:** `title` isn't added to any frontend query/type/UI yet
-  (`fetchRecordings` / `fetchRecordingById` / the History screens are untouched) — Part 3+.
+  separate write, no new pipeline stage. A regenerate refreshes it too (can move `NULL` ↔ a
+  real value) — see [Background processing](#background-processing). **A pipeline run
+  overwrites a hand-set title** — unlikely to bite in practice (you'd have to title a
+  recording before its report exists, then regenerate) and not guarded against in Part 2.
+
+### Editing (Part 2)
+
+- **Where:** the History **detail** screen (`src/app/(tabs)/history/[id].tsx`) — the
+  pre-restyle screen, as-is. `TitleSection` renders at the top of the scroll content as the
+  screen's main heading (`type="subtitle"`); the date line below it was demoted
+  `subtitle` → `smallBold`/`textSecondary` so the title is the visual header (a hierarchy
+  consequence of adding the title, not a Part-3 restyle — Part 3 owns the real visual pass).
+  The History **list** is untouched — it still doesn't select or show `title` (Part 3).
+- **Interaction:** mirrors the custom-question pencil-edit in `QuestionArea` (Epic C Part 3 —
+  that pattern lives inline there, not as a shared component, so this *mirrors* it rather than
+  importing). Display = the title text + a `pencil` `SymbolView`; tap it → a bordered input
+  box (`Theme` tokens, `arrow.up.circle.fill` submit icon) pre-filled with the current title;
+  confirm saves, **"Cancel"** reverts. `TitleSection` owns the in-progress `draft` / local
+  validation error / open state; the parent owns the persisted `recording.title` and the
+  async save.
+- **NULL titles:** editing works identically — the field just starts empty (display shows a
+  muted **"Untitled recording"** placeholder), so a user can title an old or
+  generation-failed recording for the first time.
+- **Validation:** identical to custom questions — non-empty after `trim()`, nothing else (no
+  length cap, no content filtering).
+- **Persistence — direct Supabase update, not a backend endpoint.** `updateRecordingTitle(id,
+  title)` in `src/lib/recordings.ts` does `supabase.from('recordings').update({ title })` —
+  the same call and the same reasoning as `setFavorite` (Phase 3 Step 4): RLS ("Users can
+  update their own recordings", `0001`) already scopes it to the caller, and a title is a
+  plain label with no Gemini/Storage work and no logic attached elsewhere. Contrast the audio
+  **delete** endpoint, which is a backend route *because* it's a Storage delete + DB update
+  that must not disagree (and Storage had no delete RLS policy) — none of that applies to a
+  text field. A backend round-trip would only add latency.
+- **Save is NOT optimistic** (matching `handleDeleteAudio`, not the favorite toggle):
+  `recording.title` only changes after the write lands. The editor stays open with a spinner
+  during the save and shows an inline error + stays open on failure, so a failed save never
+  leaves a wrong title on screen. `updateRecordingTitle` selects `title` in
+  `fetchRecordingById` now, and the list refetches on focus, so backing out reflects the new
+  title everywhere (as of Part 3 the list renders it too).
+
+### List display (Part 3)
+
+- **Where:** the History **list** card (`RecordingListItem`, `src/app/(tabs)/history/index.tsx`)
+  — Part 3 also restyled the whole card; see [History](#history)'s "List card restyle" bullet
+  for the full layout. `fetchRecordings()` now selects `title` (added to `RecordingRow`), and it
+  renders as the card's **bold heading** (a `smallBold`/Noto-Sans-bold `ThemedText` bumped to
+  17px, up to 2 lines) with the favorite star on the same line.
+- **NULL-title fallback = a muted "Untitled recording"** (rendered `textSecondary`), *not* a
+  truncated version of the question. Two reasons: (1) consistency — Part 2's detail-screen
+  `TitleSection` already established exactly this string + treatment for a NULL title, and (2)
+  the question already has its own dedicated secondary line right below the heading, so folding
+  a truncated copy of it into the heading would just duplicate that text while burying the
+  "this recording has no real title yet" signal. A NULL title is a legacy row (pre-Part-1) or a
+  generation miss — both rare, and both fixable by the user via the Part 2 detail-screen editor.
+- The question/"No prompt" secondary line, the mode pill, date and star are described in
+  [History](#history)'s "List card restyle" bullet.
 
 ## Background processing
 

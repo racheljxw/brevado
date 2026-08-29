@@ -36,7 +36,11 @@ export function DeleteAudioButton({
       style={({ pressed }) => pressed && styles.pressed}
       accessibilityRole="button"
       accessibilityLabel="Delete this recording's audio">
-      <SymbolView name="trash" size={size} tintColor="#e5484d" />
+      {/* v2 Epic D Part 3: neutral theme tint (was a hardcoded #e5484d red)
+          so it doesn't jar against the restyled History cards. The
+          destructive-red treatment moves onto the "Delete recording" item
+          when actions are consolidated into a 3-dot menu in Part 4. */}
+      <SymbolView name="trash" size={size} tintColor={theme.textSecondary} />
     </Pressable>
   );
 }
