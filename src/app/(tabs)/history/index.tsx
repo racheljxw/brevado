@@ -16,6 +16,7 @@ import { useTheme } from '@/hooks/use-theme';
 import { deleteRecordingAudio, regenerateReport } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
 import { formatRecordedAt } from '@/lib/format-time';
+import { formatMode } from '@/lib/modes';
 import { getStatusPresentation, TERMINAL_STATUSES } from '@/lib/recording-status';
 import { fetchRecordings, setFavorite, shareRecordingAudio, type RecordingRow } from '@/lib/recordings';
 
@@ -90,7 +91,7 @@ function RecordingListItem({
         )}
         <View style={styles.rowFooter}>
           <ThemedText type="small" themeColor="textSecondary">
-            {recording.mode}
+            {formatMode(recording.mode)}
           </ThemedText>
           {/* Per-row audio actions — download (Step 6) and delete (Step 5)
               sit side by side here, separate from the identity/status

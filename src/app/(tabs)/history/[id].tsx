@@ -15,6 +15,7 @@ import { BottomTabInset, MaxContentWidth, Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import { deleteRecordingAudio, regenerateReport } from '@/lib/api';
 import { formatRecordedAt } from '@/lib/format-time';
+import { formatMode } from '@/lib/modes';
 import { getStatusPresentation, TERMINAL_STATUSES } from '@/lib/recording-status';
 import {
   fetchRecordingById,
@@ -524,7 +525,7 @@ export default function RecordingDetailScreen() {
               </View>
             </View>
             <ThemedText type="small" themeColor="textSecondary" style={styles.modeLabel}>
-              {recording.mode}
+              {formatMode(recording.mode)}
             </ThemedText>
 
             {/* Phase 4 Step 5 exit-checkpoint review: `question` was already

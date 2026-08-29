@@ -1,7 +1,18 @@
 import { AudioModule, RecordingPresets, setAudioModeAsync, useAudioRecorder, useAudioRecorderState } from 'expo-audio';
 import { useFocusEffect, useRouter } from 'expo-router';
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Animated, Linking, Platform, Pressable, StyleSheet, TextInput, View } from 'react-native';
+import { SymbolView } from 'expo-symbols';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import {
+  ActivityIndicator,
+  Animated,
+  Linking,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  TextInput,
+  View,
+} from 'react-native';
 import Reanimated, {
   cancelAnimation,
   Easing,
@@ -9,6 +20,7 @@ import Reanimated, {
   FadeOut,
   interpolate,
   interpolateColor,
+  LinearTransition,
   useAnimatedStyle,
   useSharedValue,
   withDelay,
@@ -27,6 +39,7 @@ import { useTheme } from '@/hooks/use-theme';
 import { startProcessing } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
 import { formatDuration } from '@/lib/format-time';
+import { MODE_LABELS } from '@/lib/modes';
 import { pickQuestionForMode } from '@/lib/question-selection';
 import type { Question } from '@/lib/questions';
 import {
@@ -39,24 +52,20 @@ import {
   type RecordingUploadStage,
 } from '@/lib/recordings';
 
-// Phase 4 Step 2/3: the Record tab (formerly "Home") is a small local flow rather than jumping
-// straight into recording — 'mode-select' (the entry point) -> either
-// 'question' (Interview/Story — Step 3's real question-selection screen,
-// replacing Step 2's placeholder) or 'record' (Miscellaneous, and
-// Interview/Story once a question's been picked) -> the existing
-// record/upload UI below. This is plain local state, not separate Expo
-// Router routes — matching how this same file already switched between its
-// record-button/playback/cap-blocked "screens" before Step 2; see
+// The Record tab (formerly "Home") is a small local flow, plain local state
+// rather than Expo Router routes. Two `FlowScreen` values:
+//   - 'mode-select': `ModeSelectFlow` — the pill row, and (once a mode is
+//     picked) the shift animation + the folded-in question area. Interview
+//     and Storytelling show the question area here (Epic C Part 3);
+//     Miscellaneous skips straight past to 'record'.
+//   - 'record': the existing record/playback/upload UI.
+// (Epic C Part 2 removed the old separate 'question' FlowScreen — the
+// question step now lives inside `ModeSelectFlow`.) See
 // docs/CLAUDE.md's History section for the one place in this app that *does*
 // use real nested routes (list -> detail), which needs an actual back stack
 // and deep-linkable URL in a way this flow doesn't (yet).
-type FlowScreen = 'mode-select' | 'question' | 'record';
+type FlowScreen = 'mode-select' | 'record';
 type Mode = RecordingMode;
-
-const MODE_LABELS: Record<'interview' | 'story', string> = {
-  interview: 'Interview',
-  story: 'Story',
-};
 
 type PermissionState = 'unknown' | 'granted' | 'denied';
 type UploadState = 'idle' | 'uploading' | 'error' | 'done';
@@ -292,8 +301,10 @@ const MODE_LONGEST_LABEL = MODE_OPTIONS.reduce((a, o) => (o.label.length > a.len
 //   - `pillRow` is the one element that moves. `modeFlowInner` (which holds
 //     it) gets a `translateY` that interpolates between a centred position
 //     and `MODE_PILLS_TOP_INSET`, driven by the `shift` shared value.
-//   - `questionArea` is absolutely positioned at its final resting spot
-//     (just below where the pills end up) and only fades/rises in.
+//   - the question slot is absolutely positioned at its final resting spot
+//     (just below where the pills end up) and only fades/rises in. Epic C
+//     Part 3 fills it with the real `QuestionArea` (passed as `questionSlot`
+//     by the parent), replacing Part 2's placeholder + "Continue" button.
 //
 // A single `useEffect` on `isSelected` schedules the three shared values
 // (`introOpacity`, `shift`, `questionOpacity`) with `withDelay` so the
@@ -302,13 +313,12 @@ const MODE_LONGEST_LABEL = MODE_OPTIONS.reduce((a, o) => (o.label.length > a.len
 function ModeSelectFlow({
   selectedMode,
   onSelectMode,
-  onContinue,
+  questionSlot,
 }: {
   selectedMode: Mode | null;
   onSelectMode: (mode: Mode) => void;
-  onContinue: () => void;
+  questionSlot: ReactNode;
 }) {
-  const theme = useTheme();
   const [rowWidth, setRowWidth] = useState(0);
   const [pillRowHeight, setPillRowHeight] = useState(0);
   const [introHeight, setIntroHeight] = useState(0);
@@ -386,8 +396,25 @@ function ModeSelectFlow({
     transform: [{ translateY: (1 - questionOpacity.value) * 10 }],
   }));
 
-  const continueLabel = selectedMode === 'miscellaneous' ? 'Start recording' : 'Continue';
-  const questionTop = positioned ? MODE_PILLS_TOP_INSET + pillRowHeight + Theme.spacing.xl : 0;
+  // Keep the last-rendered question content mounted for a beat after a mode
+  // is deselected, so the Part 2 reverse animation's "question fades out"
+  // phase has something to fade rather than the content vanishing instantly.
+  const lastSlot = useRef<ReactNode>(null);
+  if (questionSlot != null) lastSlot.current = questionSlot;
+  const [keepStaleSlot, setKeepStaleSlot] = useState(false);
+  useEffect(() => {
+    if (isSelected) {
+      setKeepStaleSlot(false);
+      return;
+    }
+    if (lastSlot.current == null) return; // nothing was ever shown
+    setKeepStaleSlot(true);
+    const t = setTimeout(() => setKeepStaleSlot(false), T_PHASE2 + 80);
+    return () => clearTimeout(t);
+  }, [isSelected]);
+  const slotToRender = questionSlot ?? (keepStaleSlot ? lastSlot.current : null);
+
+  const questionTop = positioned ? MODE_PILLS_TOP_INSET + pillRowHeight + Theme.spacing.xxl : 0;
 
   return (
     <View style={styles.modeFlow} onLayout={(e) => setFlowHeight(e.nativeEvent.layout.height)}>
@@ -435,144 +462,206 @@ function ModeSelectFlow({
       </Reanimated.View>
 
       <Reanimated.View
-        style={[styles.questionArea, questionStyle, { top: questionTop }]}
+        style={[styles.questionSlot, questionStyle, { top: questionTop }]}
         pointerEvents={isSelected ? 'auto' : 'none'}>
-        {/* Epic C Part 3 replaces this with the real restyled QuestionSelect. */}
-        <ThemedText type="small" themeColor="textSecondary" style={styles.uriLabel}>
-          Question area — Epic C Part 3
-        </ThemedText>
-        <Pressable
-          style={({ pressed }) => [styles.playButton, { borderColor: theme.text }, pressed && styles.pressed]}
-          onPress={onContinue}>
-          <ThemedText type="smallBold">{continueLabel}</ThemedText>
-        </Pressable>
+        {/* Scrolls — a long pool question + the record disc + hint can still
+            overflow a short viewport. */}
+        <ScrollView
+          style={styles.questionScroll}
+          contentContainerStyle={styles.questionScrollContent}
+          showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="interactive">
+          {slotToRender}
+        </ScrollView>
       </Reanimated.View>
     </View>
   );
 }
 
-// Phase 4 Step 3 — real question-selection screen for Interview/Story,
-// replacing Step 2's placeholder. `question`/`loading`/`error` reflect an
-// in-flight `pickQuestionForMode` call (src/lib/question-selection.ts) kicked
-// off by the parent the moment this mode was selected — this component is
-// purely presentational.
+// v2 Epic C Part 3 — the real question area, folded into `ModeSelectFlow`'s
+// animated slot (replacing Part 2's placeholder box). Three display states:
+//   - 'pool':   the AI-picked question as large centred quoted text, with an
+//               "Ask my own question instead" link below it.
+//   - 'input':  a bordered input box (Theme tokens, not a raw RN box) with a
+//               submit icon; the link flips to "‹ Use prompt instead".
+//   - 'custom': the confirmed typed question in the same quoted style, with a
+//               pencil to re-edit; "‹ Use prompt instead" still abandons it.
+// Validation is Phase 4 Step 4's: non-empty after trim. State swaps just
+// cross-fade (`FadeIn`) with a light `LinearTransition` for the height
+// change — deliberately simpler than Part 2's choreography.
 //
-// Phase 4 Step 4 — adds a custom question/topic input alongside the pool
-// pick (not replacing it): a free-text field + "Use this instead" button
-// that coexists with the AI-suggested question and its "Start recording"
-// button, in every state (loading/error/loaded) — typing a custom topic
-// doesn't depend on the pool lookup having succeeded. Validation is just
-// "not empty/whitespace-only" (trimmed here), matching how relaxed the rest
-// of this app's input handling is (see docs/CLAUDE.md's auth section) — no
-// length limit, no content filtering. The only local state here is the
-// in-progress input text and its own inline validation error; the parent
-// (RecordScreen) owns what actually becomes `selectedQuestion` via
-// `onUseCustom`, exactly the same as `onStart` does for the pool pick.
-function QuestionSelect({
+// `poolQuestion` / `customQuestion` are the parent's state; this component
+// only owns the in-progress `draft`, its validation error, and whether the
+// input box is open (`editing`).
+function QuestionArea({
   mode,
-  question,
+  poolQuestion,
   loading,
   error,
+  customQuestion,
   onRetry,
-  onStart,
-  onUseCustom,
-  onBack,
+  onConfirmCustom,
+  onClearCustom,
+  onStartRecording,
 }: {
   mode: 'interview' | 'story';
-  question: Question | null;
+  poolQuestion: Question | null;
   loading: boolean;
   error: string | null;
+  customQuestion: string | null;
   onRetry: () => void;
-  onStart: () => void;
-  onUseCustom: (text: string) => void;
-  onBack: () => void;
+  onConfirmCustom: (text: string) => void;
+  onClearCustom: () => void;
+  onStartRecording: () => void;
 }) {
-  const theme = useTheme();
-  const [customText, setCustomText] = useState('');
-  const [customError, setCustomError] = useState<string | null>(null);
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState('');
+  const [draftError, setDraftError] = useState<string | null>(null);
 
-  function handleUseCustomPress() {
-    const trimmed = customText.trim();
-    if (!trimmed) {
-      setCustomError('Type a question or topic first.');
-      return;
-    }
-    setCustomError(null);
-    onUseCustom(trimmed);
+  const view: 'pool' | 'input' | 'custom' = editing ? 'input' : customQuestion != null ? 'custom' : 'pool';
+
+  function beginEditing() {
+    setDraft(customQuestion ?? '');
+    setDraftError(null);
+    setEditing(true);
   }
 
-  return (
-    <Card style={styles.playbackCard}>
-      <ThemedText type="smallBold">Mode: {MODE_LABELS[mode]}</ThemedText>
+  function submitDraft() {
+    const trimmed = draft.trim();
+    if (!trimmed) {
+      setDraftError('Type a question or topic first.');
+      return;
+    }
+    setDraftError(null);
+    setEditing(false);
+    onConfirmCustom(trimmed);
+  }
 
-      {loading && (
-        <View style={styles.uploadingRow}>
-          <ActivityIndicator />
-          <ThemedText type="small" themeColor="textSecondary">
-            Choosing a question…
-          </ThemedText>
-        </View>
-      )}
+  function usePromptInstead() {
+    setEditing(false);
+    setDraft('');
+    setDraftError(null);
+    onClearCustom();
+  }
 
-      {!loading && error && (
-        <>
-          <ThemedView type="background" style={styles.errorCard}>
-            <ThemedText type="small">{error}</ThemedText>
-          </ThemedView>
-          <Pressable
-            style={({ pressed }) => [styles.playButton, { borderColor: theme.text }, pressed && styles.pressed]}
-            onPress={onRetry}>
-            <ThemedText type="smallBold">Try again</ThemedText>
-          </Pressable>
-        </>
-      )}
+  const backLink = (
+    <Pressable
+      onPress={usePromptInstead}
+      hitSlop={8}
+      style={({ pressed }) => [styles.backLink, pressed && styles.pressed]}>
+      <ThemedText style={styles.questionLink}>‹ Use prompt instead</ThemedText>
+    </Pressable>
+  );
 
-      {!loading && !error && question && (
-        <>
-          <ThemedText type="subtitle" style={styles.uriLabel}>
-            {question.text}
-          </ThemedText>
-          <Pressable
-            style={({ pressed }) => [styles.playButton, { borderColor: theme.text }, pressed && styles.pressed]}
-            onPress={onStart}>
-            <ThemedText type="smallBold">Start recording</ThemedText>
-          </Pressable>
-        </>
-      )}
-
-      <View style={styles.customSection}>
-        <ThemedText type="small" themeColor="textSecondary">
-          Or type your own question or topic instead:
-        </ThemedText>
-        <TextInput
-          style={[styles.customInput, { borderColor: theme.text, color: theme.text }]}
-          placeholder="Type a question or topic…"
-          placeholderTextColor={theme.textSecondary}
-          value={customText}
-          onChangeText={(text) => {
-            setCustomText(text);
-            if (customError) setCustomError(null);
-          }}
-          multiline
-        />
-        {customError && (
-          <ThemedText type="small" style={styles.uriLabel}>
-            {customError}
-          </ThemedText>
-        )}
-        <Pressable
-          style={({ pressed }) => [styles.playButton, { borderColor: theme.text }, pressed && styles.pressed]}
-          onPress={handleUseCustomPress}>
-          <ThemedText type="smallBold">Use this instead</ThemedText>
-        </Pressable>
-      </View>
-
-      <Pressable style={({ pressed }) => [styles.discardButton, pressed && styles.pressed]} onPress={onBack}>
-        <ThemedText type="smallBold" themeColor="textSecondary">
-          ‹ Change mode
-        </ThemedText>
+  // The record affordance: a big red disc (#C53030, 200) sitting on a
+  // larger off-white disc (#FFFEFE, 245, 1px #56453D border), with a hint
+  // below. Advances to `flowScreen === 'record'` for now — Epic C Part 4
+  // makes this the real record button + folds recording into this screen.
+  const recordStart = (
+    <View style={styles.recordStart}>
+      <Pressable
+        onPress={onStartRecording}
+        style={({ pressed }) => [styles.recordOuter, pressed && styles.pressed]}
+        accessibilityRole="button"
+        accessibilityLabel="Start recording">
+        <View style={styles.recordInner} />
       </Pressable>
-    </Card>
+      <ThemedText style={styles.recordHint}>Tap to start recording</ThemedText>
+    </View>
+  );
+
+  return (
+    <Reanimated.View style={styles.questionArea} layout={LinearTransition.duration(220)}>
+      {view === 'pool' && (
+        <Reanimated.View style={styles.questionState} entering={FadeIn.duration(180)}>
+          {loading && (
+            <View style={styles.uploadingRow}>
+              <ActivityIndicator />
+              <ThemedText type="small" themeColor="textSecondary">
+                Finding a question…
+              </ThemedText>
+            </View>
+          )}
+          {!loading && error && (
+            <>
+              <ThemedText type="small" themeColor="textSecondary" style={styles.uriLabel}>
+                {error}
+              </ThemedText>
+              <Pressable onPress={onRetry} hitSlop={8} style={({ pressed }) => pressed && styles.pressed}>
+                <ThemedText style={styles.questionLink}>Try again</ThemedText>
+              </Pressable>
+            </>
+          )}
+          {!loading && !error && poolQuestion && (
+            <>
+              <ThemedText style={styles.questionQuote}>{`“${poolQuestion.text}”`}</ThemedText>
+              <Pressable onPress={beginEditing} hitSlop={8} style={({ pressed }) => pressed && styles.pressed}>
+                <ThemedText style={styles.questionLink}>Ask my own question instead</ThemedText>
+              </Pressable>
+              <View style={styles.questionGapTop} />
+              {recordStart}
+              <View style={styles.questionGapBottom} />
+            </>
+          )}
+        </Reanimated.View>
+      )}
+
+      {view === 'input' && (
+        <Reanimated.View style={styles.questionState} entering={FadeIn.duration(180)}>
+          {backLink}
+          <View style={styles.customInputBox}>
+            <TextInput
+              style={styles.customInputField}
+              placeholder={mode === 'interview' ? 'Type your own interview question…' : 'Type your own story prompt…'}
+              placeholderTextColor="#56453D80"
+              value={draft}
+              onChangeText={(t) => {
+                setDraft(t);
+                if (draftError) setDraftError(null);
+              }}
+              multiline
+              autoFocus
+            />
+            <Pressable
+              onPress={submitDraft}
+              hitSlop={8}
+              style={({ pressed }) => [styles.customSubmit, pressed && styles.pressed]}
+              accessibilityRole="button"
+              accessibilityLabel="Use this question">
+              <SymbolView name="arrow.up.circle.fill" size={26} tintColor={Theme.colors.accent} />
+            </Pressable>
+          </View>
+          {draftError && (
+            <ThemedText type="small" style={styles.uriLabel}>
+              {draftError}
+            </ThemedText>
+          )}
+        </Reanimated.View>
+      )}
+
+      {view === 'custom' && customQuestion != null && (
+        <Reanimated.View style={styles.questionState} entering={FadeIn.duration(180)}>
+          {backLink}
+          <View style={styles.questionQuoteRow}>
+            <ThemedText style={[styles.questionQuote, styles.questionQuoteInRow]}>
+              {`“${customQuestion}”`}
+            </ThemedText>
+            <Pressable
+              onPress={beginEditing}
+              hitSlop={8}
+              style={({ pressed }) => [styles.editPencil, pressed && styles.pressed]}
+              accessibilityRole="button"
+              accessibilityLabel="Edit your question">
+              <SymbolView name="pencil" size={16} tintColor={Theme.colors.textSecondary} />
+            </Pressable>
+          </View>
+          <View style={styles.questionGapTop} />
+          {recordStart}
+          <View style={styles.questionGapBottom} />
+        </Reanimated.View>
+      )}
+    </Reanimated.View>
   );
 }
 
@@ -585,12 +674,16 @@ export default function RecordScreen() {
   const recorderState = useAudioRecorderState(recorder, 200);
 
   const [flowScreen, setFlowScreen] = useState<FlowScreen>('mode-select');
-  // Phase 4 Step 3: the mode/question chosen for the current attempt, carried
-  // through 'question' -> 'record' -> handleKeepAndUpload's insert. `null`
-  // question is correct for miscellaneous (no question) and, transiently,
-  // while a question is still being picked for interview/story.
+  // The mode chosen for the current attempt, carried through into
+  // handleKeepAndUpload's insert.
   const [selectedMode, setSelectedMode] = useState<Mode | null>(null);
-  const [selectedQuestion, setSelectedQuestion] = useState<Question | null>(null);
+  // Epic C Part 3: the pool pick (loaded for interview/story) and the
+  // confirmed custom question, kept as SEPARATE state so `QuestionArea` can
+  // toggle between them. `customQuestion` non-null = the user typed their
+  // own; the effective question for the recording is `customQuestion ??
+  // poolQuestion?.text`.
+  const [poolQuestion, setPoolQuestion] = useState<Question | null>(null);
+  const [customQuestion, setCustomQuestion] = useState<string | null>(null);
   const [questionLoading, setQuestionLoading] = useState(false);
   const [questionError, setQuestionError] = useState<string | null>(null);
 
@@ -662,22 +755,24 @@ export default function RecordScreen() {
 
   function handleBackToModeSelect() {
     setSelectedMode(null);
-    setSelectedQuestion(null);
+    setPoolQuestion(null);
+    setCustomQuestion(null);
     setQuestionError(null);
     setFlowScreen('mode-select');
   }
 
   // Phase 4 Step 3 — runs pickQuestionForMode (src/lib/question-selection.ts)
-  // for the given mode and stores the result, so QuestionSelect can render
-  // it. Also used by that screen's "Try again" button on a failed lookup.
+  // for the given mode and stores the result as `poolQuestion`, so
+  // `QuestionArea` can render it. Also used by that component's "Try again"
+  // action on a failed lookup.
   async function loadQuestion(mode: 'interview' | 'story') {
     if (!user) return;
     setQuestionLoading(true);
     setQuestionError(null);
-    setSelectedQuestion(null);
+    setPoolQuestion(null);
     try {
       const question = await pickQuestionForMode(mode, user.id);
-      setSelectedQuestion(question);
+      setPoolQuestion(question);
     } catch (err) {
       setQuestionError(err instanceof Error ? err.message : 'Could not choose a question.');
     } finally {
@@ -685,46 +780,34 @@ export default function RecordScreen() {
     }
   }
 
-  // Phase 4 Step 4 — the "Use this instead" action on QuestionSelect's
-  // custom-topic input. Mirrors handleStart's role for the pool pick: builds
-  // a Question-shaped object (satisfies the same `Question` type
-  // `selectedQuestion` already holds, so nothing downstream — the record
-  // screen's question banner, handleKeepAndUpload's uploadRecording() call —
-  // needs to know or care whether this text came from the pool or was typed
-  // by the user) and advances straight to 'record', same as tapping "Start
-  // recording" does for the pool pick. `id: 'custom'` is never read anywhere
-  // (question.text is the only field uploadRecording() or the banner uses),
-  // it's just a placeholder satisfying the Question type.
-  function handleUseCustomQuestion(mode: 'interview' | 'story', text: string) {
-    setSelectedQuestion({ id: 'custom', mode, text });
-    setQuestionError(null);
-    setFlowScreen('record');
-  }
-
   // Phase 4 Step 2: the recording-cap check runs here — before any mode is
-  // entered — rather than in handleStartRecording below. This is the real
-  // entry point into the recording flow now (see docs/CLAUDE.md's Recording
-  // cap section).
+  // entered — rather than in handleStartRecording below.
   //
-  // v2 Epic C Part 2: selecting a mode no longer jumps straight to the
-  // question/record screen — it sets `selectedMode`, which drives the
-  // shift animation into the "mode picked" sub-state of 'mode-select'
-  // (ModeSelectFlow). `handleContinueFromMode` is what advances into the
-  // existing flow from there.
-  function applyModeSelection(mode: Mode) {
-    setSelectedMode(mode);
-    setSelectedQuestion(null);
+  // v2 Epic C Part 2/3: selecting a mode drives `ModeSelectFlow`'s "mode
+  // picked" shift animation (interview/story), where the folded-in
+  // `QuestionArea` then shows. Miscellaneous has no question step and jumps
+  // straight to 'record'.
+  function startModeSelection(mode: Mode) {
+    setCustomQuestion(null);
+    setPoolQuestion(null);
     setQuestionError(null);
+    if (mode === 'miscellaneous') {
+      setSelectedMode('miscellaneous');
+      setFlowScreen('record');
+      return;
+    }
+    setSelectedMode(mode);
+    loadQuestion(mode);
   }
 
   async function handleSelectMode(mode: Mode) {
     if (!user || checkingCap) return;
 
     // Already in the "mode picked" sub-state — just switch which pill is
-    // filled. The cap check already passed and the recording count can't
-    // have changed since, so don't re-run it.
+    // filled / which question loads. The cap check already passed and the
+    // recording count can't have changed since, so don't re-run it.
     if (selectedMode) {
-      applyModeSelection(mode);
+      startModeSelection(mode);
       return;
     }
 
@@ -745,24 +828,7 @@ export default function RecordScreen() {
       setCheckingCap(false);
     }
 
-    applyModeSelection(mode);
-  }
-
-  // v2 Epic C Part 2: "Continue" (or "Start recording" for miscellaneous)
-  // from the placeholder question area advances into the existing flow —
-  // exactly what tapping a mode used to do directly. Part 3 replaces the
-  // placeholder with the real restyled QuestionSelect and this hop goes
-  // away.
-  function handleContinueFromMode() {
-    if (!selectedMode) return;
-    if (selectedMode === 'miscellaneous') {
-      setFlowScreen('record');
-      return;
-    }
-    // Interview/Story: Phase 4 Step 3 — pick a real question (excluding the
-    // immediate previous one in this mode) and show it before recording.
-    loadQuestion(selectedMode);
-    setFlowScreen('question');
+    startModeSelection(mode);
   }
 
   async function handleStartRecording() {
@@ -804,9 +870,9 @@ export default function RecordScreen() {
 
     try {
       const mode = selectedMode ?? 'miscellaneous';
-      // Miscellaneous never has a question; interview/story pass the real
-      // question text selected in the 'question' screen (Phase 4 Step 3).
-      const question = mode === 'miscellaneous' ? null : (selectedQuestion?.text ?? null);
+      // Miscellaneous never has a question; interview/story pass the chosen
+      // question — the custom-typed text if there is one, else the pool pick.
+      const question = mode === 'miscellaneous' ? null : (customQuestion ?? poolQuestion?.text ?? null);
       const result = await uploadRecording({ userId: user.id, localUri: recordedUri, audioPath: path, mode, question });
       setUploadedRecordingId(result.id);
       setUploadState('done');
@@ -868,34 +934,36 @@ export default function RecordScreen() {
               <ModeSelectFlow
                 selectedMode={selectedMode}
                 onSelectMode={handleSelectMode}
-                onContinue={handleContinueFromMode}
+                questionSlot={
+                  selectedMode && selectedMode !== 'miscellaneous' ? (
+                    <QuestionArea
+                      key={selectedMode}
+                      mode={selectedMode}
+                      poolQuestion={poolQuestion}
+                      loading={questionLoading}
+                      error={questionError}
+                      customQuestion={customQuestion}
+                      onRetry={() => loadQuestion(selectedMode)}
+                      onConfirmCustom={(t) => setCustomQuestion(t)}
+                      onClearCustom={() => setCustomQuestion(null)}
+                      onStartRecording={() => setFlowScreen('record')}
+                    />
+                  ) : null
+                }
               />
             ))}
-
-          {flowScreen === 'question' && selectedMode && selectedMode !== 'miscellaneous' && (
-            <QuestionSelect
-              mode={selectedMode}
-              question={selectedQuestion}
-              loading={questionLoading}
-              error={questionError}
-              onRetry={() => loadQuestion(selectedMode)}
-              onStart={() => setFlowScreen('record')}
-              onUseCustom={(text) => handleUseCustomQuestion(selectedMode, text)}
-              onBack={handleBackToModeSelect}
-            />
-          )}
 
           {flowScreen === 'record' && (
             <>
               {!recordedUri && (
                 <View style={styles.recordArea}>
-                  {selectedMode && selectedMode !== 'miscellaneous' && selectedQuestion && (
+                  {selectedMode && selectedMode !== 'miscellaneous' && (customQuestion ?? poolQuestion?.text) && (
                     <Card style={styles.questionBanner}>
                       <ThemedText type="small" themeColor="textSecondary">
                         {MODE_LABELS[selectedMode]} question
                       </ThemedText>
                       <ThemedText type="smallBold" style={styles.uriLabel}>
-                        {selectedQuestion.text}
+                        {customQuestion ?? poolQuestion?.text}
                       </ThemedText>
                     </Card>
                   )}
@@ -1007,9 +1075,11 @@ const styles = StyleSheet.create({
   },
   modeFlowInner: {
     alignSelf: 'stretch',
-    // Above `questionArea` in the paint/hit order so a pill tap is never
-    // stolen by the (invisible, opacity-0) placeholder while they overlap
-    // mid-transition.
+    // Above `questionSlot` in the paint/hit order: the slot's ScrollView
+    // spans from just-below-the-pills to the bottom of the stage, which
+    // overlaps where the *centred* (unselected) pills sit — this keeps the
+    // pills painted on top and tappable there (the slot is also
+    // pointerEvents:'none' while nothing's selected).
     zIndex: 1,
   },
   // The intro floats *above* the pill row (absolute, its bottom pinned to
@@ -1045,22 +1115,155 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: Theme.spacing.sm,
   },
-  // Epic C Part 2 placeholder — a dashed themed box, absolutely positioned
-  // at its final resting spot just below the pills; it only fades/rises in.
-  // Part 3 replaces it with the real restyled QuestionSelect.
-  questionArea: {
+  // Epic C Part 2/3 — `ModeSelectFlow`'s question slot: absolutely positioned
+  // from just below the pills (`top`) to the bottom of the stage, only
+  // fades/rises in (opacity + translateY via `questionStyle`). Holds a
+  // `ScrollView` wrapping `QuestionArea` (a long question + the disc + hint
+  // can still overflow a short screen).
+  questionSlot: {
     position: 'absolute',
     left: 0,
     right: 0,
+    bottom: 0,
+    alignItems: 'stretch',
+  },
+  questionScroll: {
+    flex: 1,
+    alignSelf: 'stretch',
+  },
+  questionScrollContent: {
+    // Fill the slot (so the flex spacers inside have room); question + link
+    // stay near the top, the record disc + hint are pushed down by a flex
+    // spacer. Scrolls if a long question makes it all overflow.
+    flexGrow: 1,
+    alignItems: 'center',
+    paddingTop: Theme.spacing.sm,
+    paddingBottom: Theme.spacing.xl,
+  },
+  // Epic C Part 3 — `QuestionArea` root: a plain column (no card / border of
+  // its own — the quoted question stands alone; only the custom input state
+  // has a box). `flex: 1` so the per-state flex spacers work.
+  questionArea: {
+    flex: 1,
+    alignSelf: 'stretch',
+    alignItems: 'center',
+    gap: Theme.spacing.lg,
+    paddingHorizontal: Theme.spacing.sm,
+  },
+  questionState: {
+    flex: 1,
+    alignSelf: 'stretch',
     alignItems: 'center',
     gap: Theme.spacing.md,
-    paddingVertical: Theme.spacing.xl,
-    paddingHorizontal: Theme.spacing.lg,
-    borderRadius: Theme.radius.card,
+  },
+  // Flex spacers that push the record disc down into the lower part of the
+  // slot, sitting a touch above the centre of that gap (top spacer < bottom).
+  questionGapTop: {
+    flex: 1,
+  },
+  questionGapBottom: {
+    flex: 1.3,
+  },
+  // Centred question text — `regular` weight, 20px: just a touch larger than
+  // "Choose a mode." (`body`, 16), which everything else on this screen is
+  // scaled around. The slot still scrolls in case a long pool question +
+  // the disc overflow a short screen.
+  questionQuote: {
+    fontFamily: Theme.typography.fontFamily.regular,
+    fontSize: 20,
+    lineHeight: 26,
+    textAlign: 'center',
+    color: Theme.colors.textPrimary,
+  },
+  questionQuoteRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'center',
+    gap: Theme.spacing.sm,
+    alignSelf: 'stretch',
+  },
+  questionQuoteInRow: {
+    flexShrink: 1,
+  },
+  editPencil: {
+    // small nudge so the pencil sits on the first line's optical centre.
+    marginTop: 2,
+  },
+  // The interactive links ("Ask my own question instead" / "‹ Use prompt
+  // instead" / "Try again"). Colour `#4B75DF` — the blue the user picked
+  // for this control specifically. It's not a palette token: it's the one
+  // deliberate exception to the warm palette (a warm-palette link would be
+  // `#56453D`, identical to body text). No underline — the blue carries it.
+  questionLink: {
+    fontFamily: Theme.typography.fontFamily.medium,
+    fontSize: Theme.typography.variants.label.fontSize,
+    lineHeight: Theme.typography.variants.label.lineHeight,
+    color: '#4B75DF',
+  },
+  backLink: {
+    alignSelf: 'flex-start',
+  },
+  // The custom-question input box — Theme tokens, 30px corners, NOT a raw
+  // RN TextInput border. Icon submit button on the right.
+  customInputBox: {
+    alignSelf: 'stretch',
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    gap: Theme.spacing.sm,
+    backgroundColor: Theme.colors.card,
     borderWidth: 1,
     borderColor: Theme.colors.border,
-    borderStyle: 'dashed',
-    backgroundColor: Theme.colors.card,
+    borderRadius: 30,
+    paddingLeft: Theme.spacing.lg,
+    paddingRight: Theme.spacing.sm,
+    paddingVertical: Theme.spacing.sm,
+  },
+  customInputField: {
+    flex: 1,
+    minHeight: 36,
+    maxHeight: 120,
+    paddingVertical: Theme.spacing.xs,
+    fontFamily: Theme.typography.fontFamily.regular,
+    fontSize: 16,
+    lineHeight: 22,
+    color: Theme.colors.textPrimary,
+    textAlignVertical: 'top',
+  },
+  customSubmit: {
+    paddingBottom: Theme.spacing.xs,
+  },
+  // Interim record affordance below the question — a red disc (#C53030,
+  // 62) layered on a larger off-white disc (#FFFEFE, 76, 1px #56453D
+  // border) — same ~1.22 ratio as the design's 200/245, scaled to sit with
+  // the 20px question. Hint below. Advances to `flowScreen === 'record'`;
+  // Epic C Part 4 makes this the real record button.
+  recordStart: {
+    alignItems: 'center',
+    gap: Theme.spacing.sm,
+  },
+  recordOuter: {
+    width: 76,
+    height: 76,
+    borderRadius: 38,
+    backgroundColor: Theme.colors.card, // #FFFEFE
+    borderWidth: 1,
+    borderColor: Theme.colors.cardBorder, // #56453D
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  recordInner: {
+    width: 62,
+    height: 62,
+    borderRadius: 31,
+    backgroundColor: Theme.colors.recordRed, // #C53030
+  },
+  // Same size as `questionLink` (`label`, 14) — per the design.
+  recordHint: {
+    fontFamily: Theme.typography.fontFamily.regular,
+    fontSize: Theme.typography.variants.label.fontSize,
+    lineHeight: Theme.typography.variants.label.lineHeight,
+    color: Theme.colors.textPrimary, // #2D1306
+    textAlign: 'center',
   },
   modePill: {
     flex: 1,
@@ -1160,21 +1363,6 @@ const styles = StyleSheet.create({
   },
   uriLabel: {
     textAlign: 'center',
-  },
-  customSection: {
-    alignSelf: 'stretch',
-    alignItems: 'center',
-    gap: Spacing.two,
-    marginTop: Spacing.two,
-  },
-  customInput: {
-    alignSelf: 'stretch',
-    minHeight: 44,
-    paddingHorizontal: Spacing.three,
-    paddingVertical: Spacing.two,
-    borderRadius: Spacing.three,
-    borderWidth: StyleSheet.hairlineWidth,
-    textAlignVertical: 'top',
   },
   errorCard: {
     alignSelf: 'stretch',

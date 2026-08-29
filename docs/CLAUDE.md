@@ -386,10 +386,11 @@ for this pass): `#e5484d` (error/delete red — `settings.tsx`, `index.tsx` reco
 `recording-status.ts`), `#f5a623` (favorite star, `favorite-star.tsx`), and the Expo-template
 splash blues in `animated-icon.tsx` (`#208AEF`, `#3C9FFE`/`#0274DF`).
 
-### Epic C — mode-select restyle + shift animation (Parts 1–2 done)
+### Epic C — Record-flow restyle (Parts 1–3 done, Part 4 = record button + stay-on-screen)
 
-Epic C restyles the **Record flow** and is **multi-part**. Parts 1–2 (below) are done and touch
-only the mode-select screen; Part 3 (the question/custom-question screen) is next.
+Epic C restyles the **Record flow** and is **multi-part**. Parts 1–3 (below) are done: the
+mode-select screen, the shift animation, and the folded-in question/custom-question area. Part 4 —
+the record-button restyle and the post-upload "stay on Record" behaviour — is the last part.
 
 - **Part 1 (done):** the mode-select screen's visual restyle only — flat `#FFFAF6` background
   (already there via the Epic B `Colors` repoint), Noto Sans typography for the new static
@@ -442,37 +443,90 @@ only the mode-select screen; Part 3 (the question/custom-question screen) is nex
   - **Measurement:** `ModeSelectFlow` measures the stage height, pill-row height and (floating)
     intro height via `onLayout`; until all three are in, `modeFlowInner` is held at `opacity: 0`
     (a frame or two) rather than risk a first-paint jump.
-  - **Flow change:** tapping a mode no longer jumps to the question/record screen — it sets
-    `selectedMode` (a *sub-state* of `flowScreen === 'mode-select'`, not a new `flowScreen`). A
-    **"Continue"** / **"Start recording"** button in the placeholder calls
-    `handleContinueFromMode` → `setFlowScreen('record')` for miscellaneous, `loadQuestion` +
-    `setFlowScreen('question')` for interview/story. Cap check runs once, on the first tap only.
-    **Part 3 replaces the placeholder + Continue hop with the real `QuestionSelect` folded into
-    this same persistent flow.**
+  - **Flow change:** tapping a mode no longer jumps to a separate screen — it sets `selectedMode`
+    (a *sub-state* of `flowScreen === 'mode-select'`, not a new `flowScreen`). Part 2 had a
+    placeholder box with a "Continue" button here; **Part 3 replaced it** with the real
+    `QuestionArea` and its own "Start recording" button (miscellaneous now skips straight to
+    `'record'` in `startModeSelection`). Cap check runs once, on the first tap only.
   - **"‹ Change mode" moved to the header** — because the picked sub-state reads as a detail view,
     the back affordance sits top-left in the header row, sharing it with the profile icon
     (`styles.header` is now `flexDirection: 'row'` + `space-between`). It's `FadeIn`/`FadeOut` and
     only shown while `flowScreen === 'mode-select' && selectedMode`.
-  - **Not in Part 2:** real question content, the record button restyle, the "stay on Record
-    showing processing status" behaviour change — all still pending.
+  - **Not in Part 2:** real question content (→ Part 3, done), the record button restyle and the
+    "stay on Record showing processing status" behaviour change (→ Part 4).
   - **Known rough edges:** interrupting the 1s transition mid-flight (tap "‹ Change mode" while the
     pills are still sliding) still reverses but with a brief hold before the pills move back — the
     `withDelay` schedule isn't interruption-aware. `withTiming` doesn't auto-respect the OS "Reduce
     Motion" setting (only layout/entering animations do) — add a `useReducedMotion()` short-circuit
     if that matters.
-- **Part 3 (next):** the **prompt / custom-question** screen restyle (`QuestionSelect`) — folded
-  into `ModeSelectFlow` so the pills stay put through it — and unifying the `"Storytelling"` pill
-  label with `MODE_LABELS`' `"Story"` (see [Mode selection](#mode-selection)).
-- Still open: the tagline over the flat instruction line, and whether "Choose a mode." earns its
-  place once the pills read as obviously tappable — flagged for the human's on-device review.
-- **`borderStyle: 'dashed'` + `borderRadius`** on the placeholder box renders imperfectly on iOS
-  (dashes don't follow the curve) — it's a throwaway placeholder so this is fine; Part 3's real
-  content won't use a dashed border.
+- **Part 3 (done):** the real question content, restyled, folded into `ModeSelectFlow`'s slot
+  (replacing Part 2's placeholder box). `QuestionSelect` and the separate `flowScreen ===
+  'question'` are **gone** — `FlowScreen` is now just `'mode-select' | 'record'`. New component
+  `QuestionArea` (`src/app/(tabs)/index.tsx`), rendered inside the animated slot, with three
+  display states:
+  - **`pool`** — the AI-picked question as centred text (`styles.questionQuote`: **`regular`
+    weight, 20px** — "just a bit larger than 'Choose a mode.'" (`body`/16), which the rest of the
+    screen is scaled around), curly quote marks, with an **"Ask my own question instead"** link
+    below it and the interim **record disc** (below).
+  - **`input`** — a bordered box (`styles.customInputBox`: `Theme.colors.card` fill,
+    `Theme.colors.border`, **30px corners** — *not* a raw RN `TextInput` border; placeholder text
+    `#56453D` at 50% opacity, `#56453D80`) with a `SymbolView` `arrow.up.circle.fill` submit
+    button; the link becomes **"‹ Use prompt instead"**, **left-aligned** (`styles.backLink`,
+    `alignSelf: 'flex-start'` — the only left-aligned thing in the otherwise-centred column),
+    abandons any custom text back to the pool pick. Validation unchanged: non-empty after trim.
+  - **`custom`** — the confirmed typed text in the same `questionQuote` style with a `pencil`
+    `SymbolView` beside it (re-opens `input`, pre-filled); left-aligned **"‹ Use prompt instead"**
+    still abandons it.
+  - **Interim record disc** (`styles.recordStart` / `recordOuter` / `recordInner` / `recordHint`,
+    in `pool` + `custom`): a **62px red disc** (`Theme.colors.recordRed`, `#C53030`) centred on a
+    **76px off-white disc** (`Theme.colors.card`, `#FFFEFE`, 1px `Theme.colors.cardBorder`
+    `#56453D` border) — the design's 200/245 ratio (~1.22), scaled to sit with the 20px question —
+    with **"Tap to start recording"** below it (`regular`, **14px** = same size as the links, per
+    the design, `#2D1306`). Tapping advances to `flowScreen === 'record'`. **Epic C Part 4 makes
+    this the real record button** and folds recording into this screen — for now the actual
+    recording still happens on the separate `'record'` screen.
+  - **Vertical layout:** `ModeSelectFlow`'s `questionSlot` is `top: questionTop, bottom: 0`,
+    wrapping a `ScrollView` (`contentContainerStyle` `flexGrow: 1`). Question + link sit near the
+    **top** (just under the pills); the record disc + hint are pushed **down** into the lower part
+    of the slot by flex spacers (`questionGapTop` / `questionGapBottom`, ratio 1 : 1.3 so the disc
+    lands a touch above centre of that gap). Scrolls if a long question makes it all overflow.
+    (`modeFlowInner`'s `zIndex: 1` matters — the slot overlaps where the centred/unselected pills
+    sit.)
+  - State swaps are a plain `FadeIn` per block + a light `LinearTransition` on the `QuestionArea`
+    root for the height change — deliberately far simpler than Part 2's choreography.
+  - **`poolQuestion` / `customQuestion` are separate parent state** now (were one conflated
+    `selectedQuestion`). The recording uses `customQuestion ?? poolQuestion?.text`. `<QuestionArea
+    key={selectedMode}>` remounts on a mode switch so its local `editing`/`draft` reset cleanly.
+  - **Miscellaneous skips all of this** — `startModeSelection('miscellaneous')` sets
+    `flowScreen = 'record'` immediately (no pill animation, no question slot), matching the
+    pre-Part-2 "straight to record" behaviour.
+  - **Link colour = `#4B75DF`** (a literal, `styles.questionLink`, no underline). The user picked
+    this blue for this control specifically; it is **the one deliberate exception** to the warm
+    palette (a warm-palette link would be `#56453D`, identical to body text — invisible as a link).
+    It is **not** a `Palette` token — kept as an inline literal so it stays clearly the exception.
+    Applied to all three QuestionArea links ("Ask my own question instead", "‹ Use prompt instead",
+    "Try again") for coherence.
+  - **Naming unified:** `"Storytelling"` everywhere user-facing. `MODE_LABELS` moved to
+    `src/lib/modes.ts` (`Record<RecordingMode, string>`), plus a `formatMode(string)` helper the
+    History screens use (`recording.mode` is typed `string` there). `mode: 'story'` in the
+    DB/schema and `QuestionMode` are unchanged — display-string only.
+- **Part 4 (next, final part of Epic C):** the record-button restyle and the post-upload
+  "stay on Record" behaviour change. After Part 4, Epic C's visual restyle of the Record flow is
+  complete.
+- Still open, for the human's on-device review: the tagline over the flat instruction line;
+  whether "Choose a mode." still earns its place; and the scaled-down question-area sizes
+  (`questionQuote` 20 / `recordHint` 14 / disc 62·76 / input `borderRadius: 30`) and the
+  vertical placement of the question block against the design screenshots.
 
 ### Still flagged for Epic C/D
 
-- **`recordRed` mismatch:** the record button in `index.tsx` uses `#e5484d`, not
-  `Theme.colors.recordRed` (`#C53030`). Reconcile when Record is rebuilt.
+- **`#4B75DF` link literal** (`styles.questionLink`, Epic C Part 3) is the one sanctioned
+  warm-palette exception (user's explicit pick for that control); it's not a `Palette` token by
+  design. If more blue links appear later, reconsider whether it earns a token then.
+- **`recordRed` mismatch:** the record button on the `'record'` screen (`index.tsx`) still uses
+  `#e5484d`, not `Theme.colors.recordRed` (`#C53030`). The **Part 3 interim record disc** in
+  `QuestionArea` *does* use `Theme.colors.recordRed` — reconcile the `'record'` screen's when it's
+  rebuilt in Part 4.
 - **Status badge colours** (`recording-status.ts`) still hardcode red/green — no warm-palette
   tokens for error/success yet.
 - **`linkPrimary` blue** (`#3c87f7`) and the **auth submit-button blue** don't fit the warm palette
@@ -629,74 +683,60 @@ Interview/Story now lead to a real question-selection screen instead of a placeh
 shell around it.
 
 - **Lives in the same file, `src/app/(tabs)/index.tsx` — not a new route.** The Home tab renders
-  one of three "screens" via local component state (`FlowScreen`: `'mode-select' | 'question' |
-  'record'`), the same pattern this file already used before Step 2 for switching between its
-  record button / cap-blocked card / playback card. This was deliberate, not an oversight — this
-  flow doesn't need a distinct URL, a real back-stack entry, or deep-linkability the way
-  [History](#history)'s list -> detail push does (that's why *that* flow uses a real nested route
-  and this one doesn't); still true post-Step 3 — the question screen turned out not to need any
-  of that either, just its own local loading/error state.
+  via local component state. As of Epic C Part 3, `FlowScreen` is just **`'mode-select' |
+  'record'`** — the old separate `'question'` screen is gone, folded into `ModeSelectFlow`.
   - `'mode-select'` (default): handled by `ModeSelectFlow`, which has **two animated sub-states**
     (not separate `FlowScreen` values):
     - *Nothing picked:* a centred group — static tagline **"Unmute your potential."** (`title`
       variant / 28px) over **"Choose a mode."** (`body` variant), then the horizontal pill row.
-    - *Mode picked (`selectedMode` set):* a **1-second choreographed transition** — brown fill →
-      tagline fades out → pill row slides to the **top** → placeholder question box fades in below
-      (with a "Continue" / "Start recording" button). "‹ Change mode" appears **in the header**
-      (top-left, next to the profile icon) and reverses it. Full timeline + the fact that it's
-      *not* a symmetric reverse are in [Design system](#design-system)'s Epic C subsection.
+    - *Mode picked (`selectedMode` set — interview/story only):* a **1-second choreographed
+      transition** — brown fill → tagline fades out → pill row slides to the **top** → the
+      **`QuestionArea`** fades in below. "‹ Change mode" appears **in the header** (top-left, next
+      to the profile icon) and reverses it. Full timeline + the fact that it's *not* a symmetric
+      reverse are in [Design system](#design-system)'s Epic C subsection.
     - The pills are **one row of `flex: 1` pill buttons** (white fill / tan border / soft `#BEA398`
       @ 15% shadow / low `paddingVertical` so they aren't over-round). All three labels share one
       measured font size (row width via `onLayout` + longest label's width via `onTextLayout` on a
       hidden measurer → largest size leaving ~16px each side of "Miscellaneous", clamped 11–18px).
-      The middle pill reads **"Storytelling"** while `mode` stays `'story'` and `MODE_LABELS`
-      (`'question'`/`'record'` screens) still says "Story" — unify in Part 3.
+      The middle pill reads **"Storytelling"**; `mode` stays `'story'` internally.
     - **Width fix (Part 1):** `heroSection` needs `alignSelf: 'stretch'` — `safeArea` centres its
       children, so without it `heroSection` hugged its widest child and the pill row could never
       exceed that width. The gutter was also de-doubled (`heroSection` lost its `paddingHorizontal`,
       `safeArea`'s went 24 → 16) — affects the whole Record tab.
-  - `'question'`: shown after selecting Interview or Story. `QuestionSelect` (Phase 4 Step 3,
-    replacing Step 2's dead-end `ModePlaceholder`) kicks off `pickQuestionForMode()`
-    (`src/lib/question-selection.ts` — see [Question selection](#question-selection)) the moment
-    the mode is chosen, shows a brief "Choosing a question…" spinner while that's in flight, then
-    renders the picked question's text plus a "Start recording" button that advances to
-    `'record'`. A failed lookup (the underlying Supabase query itself throwing, not just finding no
-    previous recording — see below) shows an inline error and a "Try again" button that re-runs the
-    same lookup. A "‹ Change mode" link back to `'mode-select'` is always present, same position as
-    the old placeholder had it.
-  - `'record'`: shown after selecting Miscellaneous, or after tapping "Start recording" from the
-    question screen. The same record/playback/upload UI that used to be the Home tab's only
-    content. As of Step 3, whenever the active mode is Interview/Story it also renders a small
-    banner above the record button showing "{Interview|Story} question" plus the chosen question's
-    text, so the user isn't recording blind to something they saw once on a previous screen and
-    then lost. A "‹ Change mode" link is still shown alongside the record button, same as Step 2.
-- **Interview/Story now reach recording for real** — `selectedMode`/`selectedQuestion` (component
-  state in `index.tsx`) are set the moment a mode is chosen (miscellaneous: `selectedQuestion =
-  null` immediately; interview/story: set once `pickQuestionForMode` resolves) and carried through
-  to `'record'` and into `handleKeepAndUpload`'s call to `uploadRecording()` — see [Question
-  selection](#question-selection) for the exclusion logic and [Upload](#upload) for the insert
-  itself. Tapping "Discard & re-record" or "Record another" does **not** re-run selection or clear
-  `selectedMode`/`selectedQuestion` — it only resets the local unsaved-take state
-  (`resetRecordingState`), so re-recording after a discard reuses the same already-chosen question
-  rather than picking a new one. Getting a fresh pick requires going back through "‹ Change mode".
-- **Cap check** — runs once in `handleSelectMode` on the **first** mode tap (before the animation),
-  not in `handleStartRecording`. Switching which mode is selected afterwards skips the re-check
-  (recording count can't have changed). See [Recording cap](#recording-cap).
-- **Advancing past mode-select (v2 Epic C Part 2):** `handleSelectMode` no longer sets `flowScreen`
-  — it only sets `selectedMode`, which drives `ModeSelectFlow`'s "mode picked" animation. The
-  placeholder's **"Continue"** button calls `handleContinueFromMode`, which does what tapping a
-  mode used to do directly: `setFlowScreen('record')` for miscellaneous, or `loadQuestion` +
-  `setFlowScreen('question')` for interview/story. Part 3 folds the real `QuestionSelect` into
-  `ModeSelectFlow` and this Continue hop disappears.
+    - **`QuestionArea`** (Epic C Part 3, replacing the old `QuestionSelect` + `flowScreen ===
+      'question'`) — the pool-pick / custom-input / confirmed-custom question UI, with an interim
+      "Start recording" button that advances to `'record'`. Full description (the three states,
+      the accent-coloured link, the naming unification) is in
+      [Design system](#design-system)'s Epic C Part 3 bullet and
+      [Question selection](#question-selection).
+  - `'record'`: shown after selecting **Miscellaneous** (straight there, no question step — see
+    below), or after "Start recording" from `QuestionArea`. The record/playback/upload UI. Renders
+    a banner above the record button — "{Interview|Storytelling} question" plus
+    `customQuestion ?? poolQuestion?.text` — whenever there's a question. A "‹ Change mode" link is
+    shown alongside the record button.
+- **Interview/Story reach recording for real** — `selectedMode` plus `poolQuestion` /
+  `customQuestion` (component state in `index.tsx`) carry through to `'record'` and into
+  `handleKeepAndUpload`'s `uploadRecording()` call as `mode` + `customQuestion ?? poolQuestion?.text
+  ?? null` — see [Question selection](#question-selection) for the exclusion logic and
+  [Upload](#upload) for the insert. Tapping "Discard & re-record" / "Record another" does **not**
+  re-run selection or clear those — re-recording after a discard reuses the same question. A fresh
+  pick needs "‹ Change mode".
+- **Cap check** — runs once in `handleSelectMode` on the **first** mode tap. Switching mode
+  afterwards skips the re-check (recording count can't have changed). See
+  [Recording cap](#recording-cap).
+- **Advancing past mode-select:** `handleSelectMode` → `startModeSelection(mode)`. For
+  **miscellaneous** that sets `flowScreen = 'record'` immediately (no animation, no question
+  step). For **interview/story** it sets `selectedMode` (driving the shift animation) and fires
+  `loadQuestion(mode)`; `QuestionArea`'s own "Start recording" button is what later sets
+  `flowScreen = 'record'`. (The Part 2 "Continue" hop is gone.)
 - **Greeting removed (v2 Epic C Part 1):** the Phase 1 `'mode-select'` header showed a static
   `"Brevado"` title plus a `"Logged in as {email}"` line (the last bit of per-user text left on
   this tab — it was already flagged for Epic B to reconcile). Both are gone. There was never any
   real greeting-*personalization* logic (no name derivation, no first-time/returning branch) — just
   those two lines — and they're replaced by the genuinely static **"Unmute your potential." /
   "Choose a mode."** pair, identical for every user every time. The email now lives only on the
-  [Settings screen](#settings-screen). The `"Brevado"` title and email line were rendered above all
-  three flow screens, so `'question'` and `'record'` also lose them — those screens have their own
-  context headers ("Mode: …", the question banner) and weren't otherwise restyled in this part.
+  [Settings screen](#settings-screen). The `"Brevado"` title and email line were rendered above the
+  whole flow, so `'record'` also loses them — it has its own context header (the question banner).
 - **Verification status:** frontend type-checks clean (`npx tsc --noEmit`). Not yet exercised in
   Expo Go on the physical test iPhone — same caveat as several Phase 3 steps (see [Phase 3
   assessment](#phase-3-assessment)) — including re-confirming the cap check still blocks/unblocks
@@ -710,8 +750,16 @@ shell around it.
 ## Question selection
 
 Phase 4 Step 3 — replaces Step 2's `ModePlaceholder` dead end with real question-selection logic
-for Interview/Story, and threads the result into the database for the first time (Miscellaneous
-still inserts `mode: 'miscellaneous', question: null`, unchanged).
+for Interview/Storytelling, and threads the result into the database for the first time
+(Miscellaneous still inserts `mode: 'miscellaneous', question: null`, unchanged). The *UI* around
+this logic was rebuilt in v2 Epic C Part 3 (`QuestionArea`) — see below and
+[Design system](#design-system).
+
+**Mode naming (v2 Epic C Part 3):** every user-facing label is now **"Storytelling"** (not
+"Story"), matching the design and the mode-select pill. `MODE_LABELS` lives in `src/lib/modes.ts`
+(`Record<RecordingMode, string>`); `formatMode(string)` there is what the History list/detail use
+(their `recording.mode` is typed `string`). The internal `mode: 'story'` value and the
+`QuestionMode` type are **unchanged** — display strings only.
 
 - **Lives in `src/lib/question-selection.ts`, a new sibling file to `src/lib/questions.ts` — not
   added to `questions.ts` itself.** `questions.ts` is Step 1's pure data + lookup module (no
@@ -750,31 +798,23 @@ still inserts `mode: 'miscellaneous', question: null`, unchanged).
   failure than the lookup alone — in practice it would only fire if something in
   `pickQuestionForMode` failed in a way that isn't the network lookup, which shouldn't happen given
   the pool is always non-empty static data.
-- **Reaching the database:** `index.tsx` carries the picked `Question` in `selectedQuestion` state
-  and, in `handleKeepAndUpload`, passes `mode: selectedMode` and `question:
-  selectedQuestion?.text ?? null` into `uploadRecording()` (`src/lib/recordings.ts`) — replacing
-  the hardcoded `'miscellaneous'`/`null` literals from Phase 1. `uploadRecording` itself just takes
-  `mode`/`question` as parameters now and inserts them as-is; it has no selection logic of its own.
-  See [Upload](#upload) and [Mode selection](#mode-selection).
-- **Custom topic input (Phase 4 Step 4, done).** `QuestionSelect` (`src/app/(tabs)/index.tsx`)
-  renders a free-text input + "Use this instead" button alongside — not replacing — the pool
-  question + "Start recording" button, in every state (loading/error/loaded), since typing a
-  custom topic doesn't depend on the pool lookup having succeeded. Validation is just
-  trim-then-check-non-empty (`handleUseCustomPress` in `QuestionSelect`) — no length limit or
-  content filtering, consistent with how relaxed the rest of this app's input handling already is
-  (see [Auth](#auth)'s "keep it simple" framing). Tapping "Use this instead" calls
-  `handleUseCustomQuestion(mode, text)` (the screen's own component, not a new file), which builds
-  a `{ id: 'custom', mode, text }` object — same `Question` shape `selectedQuestion` already holds
-  for a pool pick, so `id` is just a placeholder never read anywhere — and advances straight to
-  `'record'`, mirroring what tapping the pool's "Start recording" already does.
-  - **No schema or `uploadRecording()` changes were needed, confirmed by reading the code, not
-    assumed.** `selectedQuestion` was already typed as `Question | null` and
-    `handleKeepAndUpload` already reads only `selectedQuestion?.text` when building the
-    `uploadRecording()` call (see [Upload](#upload)) — it has no idea whether that text came from
-    the pool or was typed by hand, and `uploadRecording()` itself just inserts whatever `question`
-    string it's given. A custom question flows through the exact same `mode`/`question` state and
-    insert path Step 3 already built; this step only added a second way to populate
-    `selectedQuestion`, alongside `loadQuestion`'s pool pick, not a new one.
+- **Reaching the database:** `index.tsx` keeps the pool pick in `poolQuestion` and any confirmed
+  custom text in `customQuestion` (Epic C Part 3 — these were one conflated `selectedQuestion`
+  before). `handleKeepAndUpload` passes `mode: selectedMode` and `question: customQuestion ??
+  poolQuestion?.text ?? null` into `uploadRecording()` (`src/lib/recordings.ts`). `uploadRecording`
+  just takes `mode`/`question` as parameters and inserts them as-is; it has no selection logic of
+  its own. See [Upload](#upload) and [Mode selection](#mode-selection).
+- **Custom topic input** — Phase 4 Step 4 built it functionally; **v2 Epic C Part 3 restyled it**
+  into the `QuestionArea` component (`src/app/(tabs)/index.tsx`), replacing the old
+  `QuestionSelect`. Three states — pool pick (large quoted text + "Ask my own question instead"),
+  a bordered `Theme`-token input box with an icon submit, and confirmed-custom (quoted text +
+  pencil to re-edit) — see [Design system](#design-system)'s Epic C Part 3 bullet for the visual
+  detail. Validation is unchanged: trim-then-check-non-empty (`submitDraft` in `QuestionArea`), no
+  length limit or content filtering.
+  - **No schema or `uploadRecording()` changes were ever needed** — `uploadRecording()` just
+    inserts whatever `question` string it's given, pool-picked or hand-typed. Part 3 only changed
+    *how* the two are held in state (`poolQuestion` + `customQuestion` instead of one
+    `selectedQuestion`), not the insert path.
   - **Exclusion on the next recording in that mode still works, confirmed by reading
     `pickQuestionForMode`, not assumed.** Its lookup reads whatever raw text is in the previous
     recording's `question` column and filters it out of the pool by exact match (see this file's
@@ -784,15 +824,15 @@ still inserts `mode: 'miscellaneous', question: null`, unchanged).
     for a custom question specifically, since custom text won't match a pool entry anyway — but it
     does mean the *same* custom text won't be immediately re-suggested if a future step ever
     surfaces past custom questions as suggestions.
-  - **Verification status — the concrete test plan for this step:** select Interview, type a
-    custom question, tap "Use this instead," record and upload, then check the row in Supabase's
-    Table Editor — `mode` should read `'interview'` and `question` should contain the exact custom
-    text. Select Interview again and confirm the suggested pool question is *not* that custom
-    text (proving exclusion still fires across the custom path). Separately confirm the pool-pick
-    path (ignoring the custom input entirely) still works exactly as Step 3 left it. This has not
-    yet been run against the live Expo Go app + Supabase project — same caveat as several Phase 3
-    steps (see [Phase 3 assessment](#phase-3-assessment)) and as Step 3 itself above — frontend
-    type-checking clean is the only verification so far.
+  - **Verification status (Epic C Part 3):** `npx tsc --noEmit` clean, iOS bundle exports clean.
+    Not yet exercised on the physical test iPhone. Test plan: select Interview → confirm the pool
+    question shows as large quoted text with "Ask my own question instead" below; tap it → input
+    box appears, link becomes "‹ Use prompt instead"; type + tap the submit icon → confirmed-custom
+    state with the pencil; tap the pencil → input box pre-filled with your text; "‹ Use prompt
+    instead" from either custom state → back to the pool question. Repeat for Storytelling.
+    Miscellaneous → straight to recording, no question step. Then upload one of each and check the
+    `recordings` rows in Supabase — `question` should be the pool text / the exact custom text /
+    `null` respectively, and the next Interview pick should exclude whatever you last used.
 
 ## History
 
