@@ -46,7 +46,8 @@
     "android": "expo start --android",
     "ios": "expo start --ios",
     "web": "expo start --web",
-    "lint": "expo lint"
+    "lint": "expo lint",
+    "test:streaks": "tsc src/lib/streaks.ts src/lib/streaks.test.ts --outDir .expo/streaks-test --module commonjs --target es2022 --moduleResolution node --skipLibCheck --esModuleInterop --types node && node --test .expo/streaks-test/streaks.test.js"
   },
   "private": true
 }

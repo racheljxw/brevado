@@ -24,7 +24,7 @@ import { BottomTabInset, MaxContentWidth, NotoSans, Spacing, Theme } from '@/con
 import { useTheme } from '@/hooks/use-theme';
 import { deleteRecording, deleteRecordingAudio, regenerateReport } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
-import { formatRecordedAt } from '@/lib/format-time';
+import { dayKeyToDate, formatRecordedAt, localDayKey as dayKey } from '@/lib/format-time';
 import { formatMode, modePillColors } from '@/lib/modes';
 import { TERMINAL_STATUSES } from '@/lib/recording-status';
 import { fetchRecordings, setFavorite, shareRecordingAudio, type RecordingRow } from '@/lib/recordings';
@@ -225,17 +225,15 @@ type HistoryView = 'calendar' | 'list';
 
 const WEEKDAY_LABELS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
 
-// Local-date key (YYYY-MM-DD) for grouping recordings by calendar day. Uses
-// the device's local date parts on purpose — a recording made at 11pm shows
-// on the day the user actually made it, not a UTC-shifted one.
-function dayKey(d: Date): string {
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-}
+// `dayKey` (the local-date `YYYY-MM-DD` grouping key) and `dayKeyToDate` now
+// live in `src/lib/format-time.ts` (`localDayKey` / `dayKeyToDate`) so v3's
+// Streaks aggregation groups recordings by the exact same rule — see the
+// note there. Imported above as `dayKey` to keep this file's call sites
+// unchanged.
 
 // "Mon, Aug 25" — for the day-filter chip and the empty-day notice.
 function formatDayLabel(key: string): string {
-  const [y, m, d] = key.split('-').map(Number);
-  return new Date(y, m - 1, d).toLocaleDateString(undefined, {
+  return dayKeyToDate(key).toLocaleDateString(undefined, {
     weekday: 'short',
     month: 'short',
     day: 'numeric',

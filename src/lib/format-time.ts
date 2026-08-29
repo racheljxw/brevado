@@ -16,3 +16,37 @@ export function formatRecordedAt(isoString: string): string {
   const timeLabel = date.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
   return `${dateLabel} · ${timeLabel}`;
 }
+
+// ---------------------------------------------------------------------------
+// Local calendar-day keys
+//
+// `localDayKey` is the "which calendar day did this happen on" grouping key,
+// first written inline for History's Calendar view (v2 Epic D Part 6) and
+// pulled out here so v3's Streaks aggregation (`src/lib/streaks.ts`, Epic G)
+// groups by the exact same rule instead of re-deriving date bucketing
+// differently. It uses the device's LOCAL date parts on purpose — a
+// recording made at 11pm is filed under the day the user actually made it,
+// not a UTC-shifted one. Consequence: a user who travels across time zones
+// between recording and viewing can see a recording shift days (accepted —
+// it matches how a phone's own Photos/Calendar behave).
+// ---------------------------------------------------------------------------
+
+/** `YYYY-MM-DD` in the device's local time zone. Zero-padded, so plain
+ *  string comparison (`<`, `>`, `===`) is also chronological order. */
+export function localDayKey(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+/** Inverse of `localDayKey` — a `Date` at local midnight on that day. */
+export function dayKeyToDate(key: string): Date {
+  const [y, m, d] = key.split('-').map(Number);
+  return new Date(y, m - 1, d);
+}
+
+/** A new `Date` `n` local calendar days from `d` (negative = earlier).
+ *  Calendar arithmetic via `setDate`, so it stays correct across DST. */
+export function addLocalDays(d: Date, n: number): Date {
+  const next = new Date(d);
+  next.setDate(next.getDate() + n);
+  return next;
+}

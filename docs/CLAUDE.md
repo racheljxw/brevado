@@ -190,6 +190,13 @@ swap — type-check / lint / backend pytest clean, no on-device pass yet). Migra
 [History](#history)) now describe the scored pipeline. **Epic F Step 2** would be any remaining
 scoring polish; **Epic G** is the Streaks tab.
 
+**Epic G Part 1 is done** — the pure client-side aggregation logic (`src/lib/streaks.ts`), no UI
+yet. Isolated, dependency-free, unit-tested functions (`buildDailyAverages` / `calculateStreak` /
+`calculateTrend` / `buildGraphPoints`) verified against hand-written cases before any screen
+consumes them, same spirit as the backend's `metrics.py`. Type-check / lint clean; `npm run
+test:streaks` (25 cases) green. Full contract in [Streaks aggregation](#streaks-aggregation) below.
+**Epic G Part 2** onward builds the actual Streaks tab screens on top of these.
+
 **The three scores.** Every new recording gets `impact_score`, `clarity_score`, `structure_score`
 — each an **integer 0–100** — displayed in that order (Impact, Clarity, Structure). **No combined
 "overall" score.** They are produced by *extending the existing Gemini feedback call* (the one in
@@ -242,6 +249,123 @@ scoring-grounding inputs).
 
 **Not in v3 — do not build:** re-practice mode, the dynamic AI question pool, additional modes.
 Those are **v4** (Phase 7). Old notes / git history may still lump them under "v3".
+
+## Streaks aggregation
+
+v3 Epic G Part 1 — the **pure computation layer** the Streaks tab (Part 2 onward) renders on top
+of. Lives in `src/lib/streaks.ts`: four functions, no React / React Native / Supabase imports, no
+network, all deriving from the already-fetched recordings list (**no new backend endpoint** —
+consistent with v2's History search / calendar; `fetchRecordings()` will be widened in Part 2 to
+select the three score columns). Unit-tested in `src/lib/streaks.test.ts` — see
+[Running the streaks tests](#running-the-streaks-tests) below.
+
+**Day-key reuse.** All day grouping goes through **`localDayKey(d: Date)`** (now in
+`src/lib/format-time.ts`, alongside new `dayKeyToDate` / `addLocalDays` helpers) — the *exact*
+same `YYYY-MM-DD`-in-device-local-time rule History's Calendar view (v2 Epic D Part 6) groups by.
+That function was extracted from `history/index.tsx`'s inline `dayKey` in this step; `history/
+index.tsx` now imports it (aliased back to `dayKey`, call sites unchanged). Local-time-zone
+tradeoff (a recording can appear to shift days if the user travels across time zones between
+recording and viewing) is unchanged and documented at the function.
+
+**Input shape.** Every function takes `StreakRecording[]` — `{ status, created_at, impact_score,
+clarity_score, structure_score }` (the minimal subset; a widened `RecordingRow` is assignable to
+it). `ScoreMetric` = `'impact_score' | 'clarity_score' | 'structure_score'` (note:
+`grammar_issue_count` is **not** a trend metric — it's a Clarity grounding input only).
+
+### `buildDailyAverages(recordings, metric)` → `DailyAverage[]`
+
+Groups **`done`** recordings that have a **non-null, finite** value for `metric` by local calendar
+day, averages each day, returns a new array **sorted ascending by `date`**. `DailyAverage` =
+`{ date: string /* localDayKey */, average: number }`. The average is **not rounded** (scores
+80 + 95 → `87.5`) so downstream trend math stays exact — the UI rounds for display.
+
+- **`done`-only** and **non-null-only** are the two filters. A `pending`/`processing`/`failed`
+  recording never contributes; neither does a recording whose `metric` is `null` (pre-v3 row, or
+  a score that missed generation per Epic F's lenient failure).
+- Empty input, or nothing qualifying, → `[]`.
+- Multiple recordings on one day → that day's single entry is their mean.
+
+### `calculateStreak(recordings)` → `{ current, longest }`
+
+Practice-**activity** streak — counts days the user *recorded*, **regardless of scores** (a
+recording with all-null scores still counts). Only **`status === 'done'`** recordings count as a
+completed practice day. Multiple recordings on a day count that day **once**.
+
+- **`current`** — consecutive local days with ≥1 `done` recording, counted **backward from
+  today**. If today has a recording, it's included and counting continues into yesterday, etc. If
+  today has **none**, that's allowed ("haven't practised yet today") and counting anchors on
+  **yesterday** instead. The streak ends at the first **fully skipped day**. If **neither today
+  nor yesterday** has a recording, `current` is `0`.
+- **`longest`** — the longest consecutive-day run anywhere in history (DST-safe: day gaps are
+  computed by rounding the ms delta between local-midnight dates, so a 23h/25h DST day still
+  counts as 1).
+- No `done` recordings at all → `{ current: 0, longest: 0 }`.
+
+### `calculateTrend(dailyAverages, windowDays)` → `TrendResult`
+
+`dailyAverages` is `buildDailyAverages`' output; `windowDays` is `7` (Week) / `30` (Month) /
+`365` (Year) / `'all-time'`. Returns a **discriminated union on `status`**:
+
+| `status` | fields | when |
+|---|---|---|
+| `'no-data'` | — | `dailyAverages` is empty. UI shows a "New" / empty state. |
+| `'insufficient-history'` | `todayValue`, `todayDate` | There's a current value but nothing valid to compare against. UI shows the value with no delta. |
+| `'ok'` | `percentChange`, `todayValue`, `todayDate`, `comparisonValue`, `comparisonDate` | Normal case. |
+
+- **"today"** = the most recent entry (last in the sorted array) — **not** necessarily the real
+  calendar today.
+- **Windowed (7/30/365):** the comparison target is `today − windowDays`. If that exact day has
+  **no data OR its value is exactly `0`**, walk **further back** day by day to the most recent
+  earlier day with real, **non-zero** data. None exists → `'insufficient-history'` (this is what
+  prevents a divide-by-zero — a `0` comparison is never used).
+- **`'all-time'`:** the comparison is the **earliest** dated entry with a **non-zero** value.
+- `percentChange = ((today − comparison) / comparison) * 100`.
+
+### `buildGraphPoints(dailyAverages, tab)` → `GraphPoint[]`
+
+`tab` is `'week' | 'month' | 'year' | 'all-time'`. Returns a **fixed, contiguous run of buckets**
+covering the window, each `{ date: string /* bucket anchor day */, label: string /* short axis
+tick */, value: number | null }` — **`value` is `null` for a bucket with no qualifying
+recordings**, so the UI gets an even x-axis and decides how to render gaps itself. All windows are
+anchored on the **real local today**.
+
+| `tab` | window | buckets | each `value` |
+|---|---|---|---|
+| `week` | last **7 days** (`today−6 … today`) | 7 daily | that day's average (or null) |
+| `month` | last **28 days** | 4 consecutive **7-day** buckets, oldest first | mean of that bucket's **daily averages** (not recording-weighted) |
+| `year` | current calendar month + the **11 before** it | 12 monthly | mean of that month's daily averages |
+| `all-time` | month of earliest data → current month | **monthly** if span ≤ 24 months, else **quarterly** (`Q1 26`-style labels) | mean of that bucket's daily averages |
+
+`all-time` with no data → `[]`.
+
+### The three edge-case behaviors (for Part 2's UI)
+
+1. **Zero-skip** (`calculateTrend`, windowed) — a comparison day whose average is **exactly 0** is
+   treated as "no usable data there" and the walk-back continues past it. Rationale: a 0 would
+   divide-by-zero the % formula, and in practice a genuine 0 daily-average score is
+   indistinguishable from a data artifact. A *today* value of 0 is fine (yields `percentChange`
+   `-100`); only the *comparison* is zero-skipped.
+2. **Gap-skip** (`calculateStreak`, `current`) — a fully skipped local day ends the current
+   streak. Today itself not-yet-recorded is **not** a gap (the anchor falls back to yesterday);
+   two consecutive dayless days *is*.
+3. **No-data** — `buildDailyAverages` → `[]`; `calculateStreak` → `{ current: 0, longest: 0 }`;
+   `calculateTrend` → `{ status: 'no-data' }`; `buildGraphPoints('all-time')` → `[]` (the other
+   tabs still return their fixed bucket run, all `value: null`). Part 2 should render a distinct
+   "start practicing" empty state off these rather than showing `0%` / `0`-length graphs.
+
+### Running the streaks tests
+
+The Expo project has **no test runner of its own** (only `backend/` uses pytest). Rather than add
+`jest-expo` + its toolchain for four pure functions, `src/lib/streaks.test.ts` runs on **Node's
+built-in test runner** (`node:test`, zero new dependencies): **`npm run test:streaks`** compiles
+just `streaks.ts` + its test to plain JS under `.expo/streaks-test/` (gitignored) and runs
+`node --test` on it. 25 cases — normal paths for all four functions plus the zero-skip, gap-skip
+(active / broken-today / broken-yesterday), no-data, and multi-recording-same-day cases.
+
+**Recommendation if the frontend grows more logic worth testing:** add `jest-expo`
+(`npx expo install -- --save-dev jest-expo @types/jest`, run **by the human** per the
+[dependency convention](#dependency-installation-convention)) and port these — the assertions
+translate directly. The `test:streaks` script is a deliberate stopgap, not the long-term answer.
 
 ## Database
 
