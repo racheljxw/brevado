@@ -2,6 +2,18 @@ import { AudioModule, RecordingPresets, setAudioModeAsync, useAudioRecorder, use
 import { useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Animated, Linking, Platform, Pressable, StyleSheet, TextInput, View } from 'react-native';
+import Reanimated, {
+  cancelAnimation,
+  Easing,
+  FadeIn,
+  FadeOut,
+  interpolate,
+  interpolateColor,
+  useAnimatedStyle,
+  useSharedValue,
+  withDelay,
+  withTiming,
+} from 'react-native-reanimated';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { AudioPlaybackControls } from '@/components/audio-playback-controls';
@@ -164,22 +176,98 @@ function CapBlockedCard({ onGoToHistory }: { onGoToHistory: () => void }) {
 
 // Phase 4 Step 2 — the entry point into the recording flow, replacing the
 // old bare record button. Three options: Interview, Storytelling,
-// Miscellaneous. `onSelectMode` runs the (now-relocated) recording-cap
-// check before letting any of them proceed — see docs/CLAUDE.md's Recording
-// cap section.
+// Miscellaneous. Selecting one runs the (now-relocated) recording-cap check
+// first — see docs/CLAUDE.md's Recording cap section.
 //
-// v2 Epic C Part 1 — restyled to the design system: the three modes sit on
-// one horizontal row of pill-shaped buttons (white fill, tan hairline
-// border, soft #BEA398 drop shadow) in their unselected state, per the
-// design screenshots. The per-mode one-line descriptions that used to sit
-// under each label were dropped to keep the pills compact. The
-// selected/filled state is deliberately NOT built here — Epic C Part 2's
-// mode-select transition animation has to touch that anyway.
+// v2 Epic C Part 1 — restyled to the design system: the three modes are a
+// horizontal row of pill-shaped buttons (white fill, tan hairline border,
+// soft #BEA398 drop shadow), per the design screenshots.
+//
+// v2 Epic C Part 2 — the mode-select *shift animation*. Picking a mode no
+// longer swaps one screen for another: the same three pill elements stay
+// mounted and reposition (Reanimated layout animation) from a centred group
+// to a top row, the picked pill fills with `Theme.colors.accent` (still the
+// Part 1 placeholder brown — exact value TBD) and `onAccent` text, and a
+// placeholder question container animates in below. "‹ Change mode"
+// reverses the whole thing. Part 3 swaps the placeholder for the real
+// restyled QuestionSelect (and folds it into this same persistent flow, so
+// the current Continue→'question' hop goes away).
 const MODE_OPTIONS: { mode: Mode; label: string }[] = [
   { mode: 'interview', label: 'Interview' },
   { mode: 'story', label: 'Storytelling' },
   { mode: 'miscellaneous', label: 'Miscellaneous' },
 ];
+
+// Shift-animation timeline (ms) — the whole choreography runs in 1s.
+//   forward (mode tapped):   fill 0–180 | intro fades 180–430 | pills shift
+//                            430–1000 | question fades in 720–1000
+//   reverse ("Change mode"): un-fill 0–180 | question fades 180–430 | pills
+//                            shift 430–1000 | intro fades in 720–1000
+// The asymmetry the design calls for: the brown fill is *first* in both
+// directions (not mirrored), and the pill shift only starts once the
+// intro/question fade has fully finished. The shift uses `Easing.out` so
+// the pills clear the question zone early and settle slowly, letting the
+// question fade overlap the tail.
+const T_FILL = 180; // pill brown fill / un-fill (phase 1, both directions)
+const T_FADE = 250; // intro-out (fwd) / question-out (rev) — phase 2
+const T_SHIFT = 570; // pills sliding centred <-> top — phase 3 (430 -> 1000)
+const T_PHASE2 = T_FILL + T_FADE; // 430 — pill shift starts here
+const T_REFADE_START = T_PHASE2 + 290; // 720 — the second fade starts here
+const T_REFADE = 1000 - T_REFADE_START; // 280 — question-in (fwd) / intro-in (rev)
+
+// Selected pills rest this far below the top of the flow area.
+const MODE_PILLS_TOP_INSET = 12;
+
+const AnimatedPressable = Reanimated.createAnimatedComponent(Pressable);
+
+// One mode pill. Owns its own fill animation (0 = unselected white/border,
+// 1 = selected accent). This is phase 1 of the shift choreography — it
+// fires immediately on `selected` change, in both directions (fill first
+// on select, un-fill first on deselect). It also crossfades cleanly when
+// the active mode is switched without leaving the picked sub-state.
+function ModePill({
+  label,
+  fontSize,
+  selected,
+  onPress,
+}: {
+  label: string;
+  fontSize: number;
+  selected: boolean;
+  onPress: () => void;
+}) {
+  const fill = useSharedValue(selected ? 1 : 0);
+  const press = useSharedValue(0);
+
+  useEffect(() => {
+    fill.value = withTiming(selected ? 1 : 0, { duration: T_FILL });
+  }, [selected, fill]);
+
+  const pillStyle = useAnimatedStyle(() => ({
+    backgroundColor: interpolateColor(fill.value, [0, 1], [Theme.colors.card, Theme.colors.accent]),
+    borderColor: interpolateColor(fill.value, [0, 1], [Theme.colors.border, Theme.colors.accent]),
+    opacity: 1 - press.value * 0.25,
+  }));
+  const textStyle = useAnimatedStyle(() => ({
+    color: interpolateColor(fill.value, [0, 1], [Theme.colors.textPrimary, Theme.colors.onAccent]),
+  }));
+
+  return (
+    <AnimatedPressable
+      onPress={onPress}
+      onPressIn={() => {
+        press.value = withTiming(1, { duration: 80 });
+      }}
+      onPressOut={() => {
+        press.value = withTiming(0, { duration: 140 });
+      }}
+      style={[styles.modePill, pillStyle]}>
+      <Reanimated.Text style={[styles.modePillLabel, { fontSize }, textStyle]} numberOfLines={1}>
+        {label}
+      </Reanimated.Text>
+    </AnimatedPressable>
+  );
+}
 
 // Pill-label sizing. All three pills share ONE font size (per-`<Text>`
 // `adjustsFontSizeToFit` was rejected — it shrank "Miscellaneous" alone,
@@ -196,10 +284,79 @@ const MODE_LABEL_MEASURE_FONT = 16; // reference size the hidden measurer render
 const MODE_LABEL_SIDE_GAP = 16; // clear space each side of the longest word → 32 total
 const MODE_LONGEST_LABEL = MODE_OPTIONS.reduce((a, o) => (o.label.length > a.length ? o.label : a), '');
 
-function ModeSelect({ onSelectMode }: { onSelectMode: (mode: Mode) => void }) {
+// The whole mode-select area and its shift choreography (Epic C Part 2).
+//
+// Everything stays mounted the whole time — nothing swaps screens:
+//   - `introWrap` floats *above* the pill row (absolute, `bottom: '100%'`)
+//     so it never affects where the pills sit; only its opacity animates.
+//   - `pillRow` is the one element that moves. `modeFlowInner` (which holds
+//     it) gets a `translateY` that interpolates between a centred position
+//     and `MODE_PILLS_TOP_INSET`, driven by the `shift` shared value.
+//   - `questionArea` is absolutely positioned at its final resting spot
+//     (just below where the pills end up) and only fades/rises in.
+//
+// A single `useEffect` on `isSelected` schedules the three shared values
+// (`introOpacity`, `shift`, `questionOpacity`) with `withDelay` so the
+// phases run in the exact order + timing the design calls for. The pill
+// fill (phase 1) lives in `ModePill` and fires on its own.
+function ModeSelectFlow({
+  selectedMode,
+  onSelectMode,
+  onContinue,
+}: {
+  selectedMode: Mode | null;
+  onSelectMode: (mode: Mode) => void;
+  onContinue: () => void;
+}) {
+  const theme = useTheme();
   const [rowWidth, setRowWidth] = useState(0);
+  const [pillRowHeight, setPillRowHeight] = useState(0);
+  const [introHeight, setIntroHeight] = useState(0);
+  const [flowHeight, setFlowHeight] = useState(0);
   // Rendered width of MODE_LONGEST_LABEL at MODE_LABEL_MEASURE_FONT.
   const [measuredLabelWidth, setMeasuredLabelWidth] = useState(0);
+
+  const isSelected = selectedMode != null;
+  const wasSelected = useRef(isSelected);
+
+  const introOpacity = useSharedValue(isSelected ? 0 : 1);
+  const shift = useSharedValue(isSelected ? 1 : 0); // 0 = centred, 1 = top
+  const questionOpacity = useSharedValue(isSelected ? 1 : 0);
+
+  useEffect(() => {
+    if (wasSelected.current === isSelected) return;
+    wasSelected.current = isSelected;
+
+    cancelAnimation(introOpacity);
+    cancelAnimation(shift);
+    cancelAnimation(questionOpacity);
+
+    if (isSelected) {
+      // forward: pill fill (ModePill, 0–180) -> intro fades out (180–430)
+      // -> pills shift up (430–1000), question fades in over the tail.
+      introOpacity.value = withDelay(T_FILL, withTiming(0, { duration: T_FADE, easing: Easing.out(Easing.quad) }));
+      shift.value = withDelay(T_PHASE2, withTiming(1, { duration: T_SHIFT, easing: Easing.out(Easing.cubic) }));
+      questionOpacity.value = withDelay(
+        T_REFADE_START,
+        withTiming(1, { duration: T_REFADE, easing: Easing.out(Easing.quad) })
+      );
+    } else {
+      // reverse: un-fill first (ModePill, 0–180) -> question fades out
+      // (180–430) -> pills shift back down (430–1000), intro fades in.
+      questionOpacity.value = withDelay(T_FILL, withTiming(0, { duration: T_FADE, easing: Easing.out(Easing.quad) }));
+      shift.value = withDelay(T_PHASE2, withTiming(0, { duration: T_SHIFT, easing: Easing.out(Easing.cubic) }));
+      introOpacity.value = withDelay(
+        T_REFADE_START,
+        withTiming(1, { duration: T_REFADE, easing: Easing.out(Easing.quad) })
+      );
+    }
+
+    return () => {
+      cancelAnimation(introOpacity);
+      cancelAnimation(shift);
+      cancelAnimation(questionOpacity);
+    };
+  }, [isSelected, introOpacity, shift, questionOpacity]);
 
   let labelFontSize = MODE_LABEL_FALLBACK_FONT;
   if (rowWidth > 0 && measuredLabelWidth > 0) {
@@ -209,28 +366,87 @@ function ModeSelect({ onSelectMode }: { onSelectMode: (mode: Mode) => void }) {
     labelFontSize = Math.max(MODE_LABEL_MIN_FONT, Math.min(MODE_LABEL_MAX_FONT, Math.round(raw)));
   }
 
+  // Position the pill row with a transform, once we've measured the stage
+  // height, the row height and the (floating) intro height. `centred` puts
+  // the intro+row group in the vertical middle of the stage; `selected`
+  // parks the row near the top. Until measured, the inner is kept invisible
+  // (a frame or two) rather than risk a first-paint jump.
+  const positioned = flowHeight > 0 && pillRowHeight > 0 && introHeight > 0;
+  const centredTranslateY = positioned ? (flowHeight - pillRowHeight) / 2 + introHeight / 2 : 0;
+
+  const innerStyle = useAnimatedStyle(() => ({
+    opacity: positioned ? 1 : 0,
+    transform: [
+      { translateY: interpolate(shift.value, [0, 1], [centredTranslateY, MODE_PILLS_TOP_INSET]) },
+    ],
+  }));
+  const introStyle = useAnimatedStyle(() => ({ opacity: introOpacity.value }));
+  const questionStyle = useAnimatedStyle(() => ({
+    opacity: questionOpacity.value,
+    transform: [{ translateY: (1 - questionOpacity.value) * 10 }],
+  }));
+
+  const continueLabel = selectedMode === 'miscellaneous' ? 'Start recording' : 'Continue';
+  const questionTop = positioned ? MODE_PILLS_TOP_INSET + pillRowHeight + Theme.spacing.xl : 0;
+
   return (
-    <View style={styles.modeList} onLayout={(e) => setRowWidth(e.nativeEvent.layout.width)}>
-      {/* Hidden measurer — laid out (so onTextLayout fires) but not drawn
-          and not part of the row's flow. */}
-      <ThemedText
-        style={[styles.modePillLabel, styles.modeLabelMeasurer, { fontSize: MODE_LABEL_MEASURE_FONT }]}
-        onTextLayout={(e) => {
-          const width = e.nativeEvent.lines[0]?.width ?? 0;
-          if (width) setMeasuredLabelWidth((prev) => (Math.abs(prev - width) < 0.5 ? prev : width));
-        }}>
-        {MODE_LONGEST_LABEL}
-      </ThemedText>
-      {MODE_OPTIONS.map((option) => (
-        <Pressable
-          key={option.mode}
-          style={({ pressed }) => [styles.modePill, pressed && styles.pressed]}
-          onPress={() => onSelectMode(option.mode)}>
-          <ThemedText style={[styles.modePillLabel, { fontSize: labelFontSize }]} numberOfLines={1}>
-            {option.label}
+    <View style={styles.modeFlow} onLayout={(e) => setFlowHeight(e.nativeEvent.layout.height)}>
+      <Reanimated.View style={[styles.modeFlowInner, innerStyle]}>
+        <Reanimated.View
+          style={[styles.introWrap, introStyle]}
+          pointerEvents="none"
+          onLayout={(e) => {
+            const h = e.nativeEvent.layout.height;
+            setIntroHeight((p) => (Math.abs(p - h) < 0.5 ? p : h));
+          }}>
+          <ThemedText style={styles.tagline}>Unmute your potential.</ThemedText>
+          <ThemedText style={styles.chooseMode} themeColor="textSecondary">
+            Choose a mode.
           </ThemedText>
+        </Reanimated.View>
+
+        <View
+          style={styles.modeList}
+          onLayout={(e) => {
+            const { width, height } = e.nativeEvent.layout;
+            setRowWidth((p) => (Math.abs(p - width) < 0.5 ? p : width));
+            setPillRowHeight((p) => (Math.abs(p - height) < 0.5 ? p : height));
+          }}>
+          {/* Hidden measurer — laid out (so onTextLayout fires) but not drawn
+              and not part of the row's flow. */}
+          <ThemedText
+            style={[styles.modePillLabel, styles.modeLabelMeasurer, { fontSize: MODE_LABEL_MEASURE_FONT }]}
+            onTextLayout={(e) => {
+              const width = e.nativeEvent.lines[0]?.width ?? 0;
+              if (width) setMeasuredLabelWidth((prev) => (Math.abs(prev - width) < 0.5 ? prev : width));
+            }}>
+            {MODE_LONGEST_LABEL}
+          </ThemedText>
+          {MODE_OPTIONS.map((option) => (
+            <ModePill
+              key={option.mode}
+              label={option.label}
+              fontSize={labelFontSize}
+              selected={selectedMode === option.mode}
+              onPress={() => onSelectMode(option.mode)}
+            />
+          ))}
+        </View>
+      </Reanimated.View>
+
+      <Reanimated.View
+        style={[styles.questionArea, questionStyle, { top: questionTop }]}
+        pointerEvents={isSelected ? 'auto' : 'none'}>
+        {/* Epic C Part 3 replaces this with the real restyled QuestionSelect. */}
+        <ThemedText type="small" themeColor="textSecondary" style={styles.uriLabel}>
+          Question area — Epic C Part 3
+        </ThemedText>
+        <Pressable
+          style={({ pressed }) => [styles.playButton, { borderColor: theme.text }, pressed && styles.pressed]}
+          onPress={onContinue}>
+          <ThemedText type="smallBold">{continueLabel}</ThemedText>
         </Pressable>
-      ))}
+      </Reanimated.View>
     </View>
   );
 }
@@ -485,13 +701,32 @@ export default function RecordScreen() {
     setFlowScreen('record');
   }
 
-  // Phase 4 Step 2: the recording-cap check now runs here — before any mode
-  // is entered — rather than in handleStartRecording below. This is the
-  // real entry point into the recording flow now, replacing the old bare
-  // record button (see docs/CLAUDE.md's Recording cap section for the
-  // "note to self" this closes out).
+  // Phase 4 Step 2: the recording-cap check runs here — before any mode is
+  // entered — rather than in handleStartRecording below. This is the real
+  // entry point into the recording flow now (see docs/CLAUDE.md's Recording
+  // cap section).
+  //
+  // v2 Epic C Part 2: selecting a mode no longer jumps straight to the
+  // question/record screen — it sets `selectedMode`, which drives the
+  // shift animation into the "mode picked" sub-state of 'mode-select'
+  // (ModeSelectFlow). `handleContinueFromMode` is what advances into the
+  // existing flow from there.
+  function applyModeSelection(mode: Mode) {
+    setSelectedMode(mode);
+    setSelectedQuestion(null);
+    setQuestionError(null);
+  }
+
   async function handleSelectMode(mode: Mode) {
     if (!user || checkingCap) return;
+
+    // Already in the "mode picked" sub-state — just switch which pill is
+    // filled. The cap check already passed and the recording count can't
+    // have changed since, so don't re-run it.
+    if (selectedMode) {
+      applyModeSelection(mode);
+      return;
+    }
 
     setCheckingCap(true);
     try {
@@ -510,18 +745,24 @@ export default function RecordScreen() {
       setCheckingCap(false);
     }
 
-    if (mode === 'miscellaneous') {
-      setSelectedMode('miscellaneous');
-      setSelectedQuestion(null);
+    applyModeSelection(mode);
+  }
+
+  // v2 Epic C Part 2: "Continue" (or "Start recording" for miscellaneous)
+  // from the placeholder question area advances into the existing flow —
+  // exactly what tapping a mode used to do directly. Part 3 replaces the
+  // placeholder with the real restyled QuestionSelect and this hop goes
+  // away.
+  function handleContinueFromMode() {
+    if (!selectedMode) return;
+    if (selectedMode === 'miscellaneous') {
       setFlowScreen('record');
       return;
     }
-
     // Interview/Story: Phase 4 Step 3 — pick a real question (excluding the
     // immediate previous one in this mode) and show it before recording.
-    setSelectedMode(mode);
+    loadQuestion(selectedMode);
     setFlowScreen('question');
-    await loadQuestion(mode);
   }
 
   async function handleStartRecording() {
@@ -599,6 +840,24 @@ export default function RecordScreen() {
     <ThemedView style={styles.container}>
       <SafeAreaView style={styles.safeArea}>
         <View style={styles.header}>
+          {/* v2 Epic C Part 2: once a mode is picked, the mode-select screen
+              reads as a detail view — its back affordance ("‹ Change mode")
+              moves up here, top-left, sharing the header row with the
+              profile icon. */}
+          {flowScreen === 'mode-select' && selectedMode ? (
+            <Reanimated.View entering={FadeIn.duration(200)} exiting={FadeOut.duration(150)}>
+              <Pressable
+                onPress={handleBackToModeSelect}
+                hitSlop={8}
+                style={({ pressed }) => pressed && styles.pressed}>
+                <ThemedText type="smallBold" themeColor="textSecondary">
+                  ‹ Change mode
+                </ThemedText>
+              </Pressable>
+            </Reanimated.View>
+          ) : (
+            <View />
+          )}
           <ProfileButton />
         </View>
         <ThemedView style={styles.heroSection}>
@@ -606,18 +865,11 @@ export default function RecordScreen() {
             (blockedByCap ? (
               <CapBlockedCard onGoToHistory={() => router.navigate('/history')} />
             ) : (
-              <View style={styles.modeSelect}>
-                {/* v2 Epic C Part 1 — a fixed, static tagline for every user
-                    every time (no greeting/personalization logic), with the
-                    functional instruction kept as the line beneath it. */}
-                <View style={styles.modeSelectIntro}>
-                  <ThemedText style={styles.tagline}>Unmute your potential.</ThemedText>
-                  <ThemedText style={styles.chooseMode} themeColor="textSecondary">
-                    Choose a mode.
-                  </ThemedText>
-                </View>
-                <ModeSelect onSelectMode={handleSelectMode} />
-              </View>
+              <ModeSelectFlow
+                selectedMode={selectedMode}
+                onSelectMode={handleSelectMode}
+                onContinue={handleContinueFromMode}
+              />
             ))}
 
           {flowScreen === 'question' && selectedMode && selectedMode !== 'miscellaneous' && (
@@ -745,21 +997,38 @@ const styles = StyleSheet.create({
     flex: 1,
     gap: Spacing.four,
   },
-  // v2 Epic C Part 1 — mode-select screen.
-  modeSelect: {
+  // v2 Epic C Part 1/2 — mode-select screen. `modeFlow` is the full-height
+  // stage; `modeFlowInner` (pill row + the floating intro) sits at the top
+  // of it and gets the animated `translateY` that slides it between centred
+  // and top.
+  modeFlow: {
+    flex: 1,
     alignSelf: 'stretch',
-    gap: Theme.spacing.xxl,
   },
-  modeSelectIntro: {
+  modeFlowInner: {
+    alignSelf: 'stretch',
+    // Above `questionArea` in the paint/hit order so a pill tap is never
+    // stolen by the (invisible, opacity-0) placeholder while they overlap
+    // mid-transition.
+    zIndex: 1,
+  },
+  // The intro floats *above* the pill row (absolute, its bottom pinned to
+  // the row's top) so fading/moving it never shifts the pills.
+  introWrap: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: '100%',
     alignItems: 'center',
     gap: Theme.spacing.sm,
+    paddingBottom: Theme.spacing.xl,
   },
   tagline: {
-    // A bit larger than the `heading` variant (20) — sits between `heading`
-    // and `title` (28) as a hero line. Weight stays semiBold.
-    fontFamily: Theme.typography.variants.heading.fontFamily,
-    fontSize: 24,
-    lineHeight: 30,
+    // v2 Epic C Part 2 — bumped from a one-off 24px to the `title` variant
+    // (28) for more hero impact on this screen.
+    fontFamily: Theme.typography.variants.title.fontFamily,
+    fontSize: Theme.typography.variants.title.fontSize,
+    lineHeight: Theme.typography.variants.title.lineHeight,
     textAlign: 'center',
   },
   chooseMode: {
@@ -768,15 +1037,30 @@ const styles = StyleSheet.create({
     lineHeight: Theme.typography.variants.body.lineHeight,
     textAlign: 'center',
   },
-  // The three mode pills sit on one horizontal row (Epic C Part 1 follow-up),
-  // each `flex: 1` (equal thirds of the row). The label font size is
-  // measured/shared across all three in `ModeSelect` so the longest word
-  // ("Miscellaneous") always fits without truncating or looking smaller
-  // than its neighbours.
+  // The three mode pills on one horizontal row, each `flex: 1` (equal
+  // thirds). Shared measured label font size (see `ModeSelectFlow`). This
+  // row is the one element that moves in the Part 2 shift animation.
   modeList: {
     alignSelf: 'stretch',
     flexDirection: 'row',
     gap: Theme.spacing.sm,
+  },
+  // Epic C Part 2 placeholder — a dashed themed box, absolutely positioned
+  // at its final resting spot just below the pills; it only fades/rises in.
+  // Part 3 replaces it with the real restyled QuestionSelect.
+  questionArea: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    alignItems: 'center',
+    gap: Theme.spacing.md,
+    paddingVertical: Theme.spacing.xl,
+    paddingHorizontal: Theme.spacing.lg,
+    borderRadius: Theme.radius.card,
+    borderWidth: 1,
+    borderColor: Theme.colors.border,
+    borderStyle: 'dashed',
+    backgroundColor: Theme.colors.card,
   },
   modePill: {
     flex: 1,
@@ -798,8 +1082,8 @@ const styles = StyleSheet.create({
     elevation: 3,
   },
   modePillLabel: {
-    // `fontSize` is set inline by `ModeSelect` (one measured value shared by
-    // all three pills — see the MODE_LABEL_* constants).
+    // `fontSize` is set inline by `ModeSelectFlow` (one measured value shared
+    // by all three pills — see the MODE_LABEL_* constants).
     fontFamily: Theme.typography.variants.label.fontFamily,
     fontSize: MODE_LABEL_FALLBACK_FONT,
     textAlign: 'center',
@@ -911,7 +1195,10 @@ const styles = StyleSheet.create({
   },
   header: {
     alignSelf: 'stretch',
-    alignItems: 'flex-end',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    minHeight: 24,
   },
   pressed: {
     opacity: 0.7,

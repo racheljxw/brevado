@@ -352,6 +352,16 @@ active-tab pill. Label colour constant. Scaffold cruft removed (the "Expo Starte
 now "Brevado", the Docs external-link is gone). Web isn't a shipping target but the file compiles
 and previews correctly.
 
+**`app.json` `web.output` is `"single"`, not the scaffold default `"static"`.** `"static"` makes
+`expo start` / `expo export` **prerender every route in Node**, and that path crashes:
+`src/lib/supabase.ts` hands `AsyncStorage` to `createClient` as the auth store, AsyncStorage's web
+build reads `window` at import/init, and `window` doesn't exist in Node → `ReferenceError: window
+is not defined` inside Supabase's `_initialize`, which takes down the whole dev server (so iOS
+testing breaks too, even though nothing web-related is wanted). `"single"` = client-rendered SPA,
+no Node prerender, so that path never runs; `w` / web preview still work. If static web is ever
+actually needed, the real fix is a platform-conditional auth storage in `supabase.ts` (skip
+`AsyncStorage` when `Platform.OS === 'web'`).
+
 ### White / black sweep (Epic B Part 2 global rule: never pure `#FFFFFF` / `#000000`)
 
 Every hardcoded pure white/black in `src/` was found and replaced. Full list of what was using it:
@@ -376,16 +386,17 @@ for this pass): `#e5484d` (error/delete red — `settings.tsx`, `index.tsx` reco
 `recording-status.ts`), `#f5a623` (favorite star, `favorite-star.tsx`), and the Expo-template
 splash blues in `animated-icon.tsx` (`#208AEF`, `#3C9FFE`/`#0274DF`).
 
-### Epic C Part 1 — mode-select screen restyle
+### Epic C — mode-select restyle + shift animation (Parts 1–2 done)
 
-Epic C restyles the **Record flow** and is **multi-part**; nothing outside the mode-select
-screen's *look* was touched in Part 1:
+Epic C restyles the **Record flow** and is **multi-part**. Parts 1–2 (below) are done and touch
+only the mode-select screen; Part 3 (the question/custom-question screen) is next.
 
 - **Part 1 (done):** the mode-select screen's visual restyle only — flat `#FFFAF6` background
   (already there via the Epic B `Colors` repoint), Noto Sans typography for the new static
-  **"Unmute your potential."** (24px, a step up from the `heading` variant) over **"Choose a
-  mode."** (`body` variant) two-line intro, and the three mode options as a **single horizontal
-  row of small pill-shaped buttons** (`flex: 1` each, `Theme.radius.pill`, `Theme.colors.card`
+  **"Unmute your potential."** (the `title` variant / 28px as of Part 2 — was a one-off 24px in
+  Part 1) over **"Choose a mode."** (`body` variant) two-line intro, and the three mode options as
+  a **single horizontal row of small pill-shaped buttons** (`flex: 1` each, `Theme.radius.pill`,
+  `Theme.colors.card`
   fill, `Theme.colors.border` 1px border, a soft `Theme.colors.shadow` `#BEA398` @ 15% drop shadow
   with 0/0 offset — RN can't do the design's 5 spread / 50 blur so `shadowRadius: 25` + `elevation:
   3` stand in), in their **unselected state only** (`paddingVertical` `sm`/8 — deliberately low so the pill
@@ -404,15 +415,59 @@ screen's *look* was touched in Part 1:
   `paddingHorizontal`, `safeArea`'s goes 24 → 16 — affects the whole Record tab. The old per-option descriptions were dropped; the old `"Brevado"` title + `"Logged
   in as {email}"` lines were removed (see [Mode selection](#mode-selection)'s "Greeting removed"
   bullet). `ModeSelect` no longer wraps `<Card>` — it renders bordered `Pressable` pills directly.
-- **Part 2 (pending):** the mode-select → question/record **transition animation**, and with it
-  the mode pill's **selected/filled state** (deliberately not built in Part 1 since the animation
-  work has to touch it), plus the "stay on Record showing processing status" behaviour change.
-- **Part 3 (pending):** the **prompt / custom-question** screen restyle (`QuestionSelect`), and
-  unifying the `"Storytelling"` pill label with `MODE_LABELS`' `"Story"` (see
-  [Mode selection](#mode-selection)).
-- Still open from this part: the tagline may read oddly stacked over the flat instruction line
-  once seen against the design screenshots — flagged for the human's on-device review, in case
-  "Choose a mode." is worth cutting or rewording.
+- **Part 2 (done):** the mode-select **shift animation** + the pill's **selected/filled state**
+  (built now because the animation needs it). Implementation lives in `ModeSelectFlow` /
+  `ModePill` in `src/app/(tabs)/index.tsx`:
+  - **Filled state:** selected pill animates to `Theme.colors.accent` fill + `borderColor`, with
+    `Theme.colors.onAccent` (`#FFFEFE`, never pure white) text. `accent` is still the Part 1
+    **placeholder** `#56453D` brown — **flagged, exact value TBD** (Epic C/D or from a screenshot).
+    Unselected pills keep the Part 1 white/`card` + `border` look. The fill is a Reanimated
+    `interpolateColor` on a per-pill shared value.
+  - **Choreography — the whole thing runs in exactly 1s**, and is *not* a symmetric time-reverse:
+    the brown fill is first in **both** directions, and the pill shift only begins once the
+    tagline fade has fully finished. Timeline (`T_*` consts at the top of the file):
+    - *Forward (mode tapped):* fill `0–180` → **"Unmute your potential." / "Choose a mode." fade
+      out** `180–430` → **pills shift up** `430–1000` (`Easing.out` cubic, so they clear the
+      question zone early and settle slowly) → **question area fades/rises in** `720–1000`,
+      overlapping the shift's tail.
+    - *Reverse ("‹ Change mode"):* un-fill `0–180` → question area fades out `180–430` → pills
+      shift back down `430–1000` → tagline fades back in `720–1000`.
+  - **Nothing unmounts / remounts.** The intro floats *above* the pill row (`introWrap`, absolute,
+    `bottom: '100%'`) so its opacity animating never moves the pills. The pill row is the only
+    thing that moves: `modeFlowInner` gets an animated `translateY` (`shift` shared value) between
+    a measured centred position and `MODE_PILLS_TOP_INSET`. The question area is absolutely
+    positioned at its final resting spot and only fades/rises. Three shared values
+    (`introOpacity` / `shift` / `questionOpacity`) are scheduled with `withDelay` in one
+    `useEffect` on `isSelected`; the pill fill lives in `ModePill` and fires on its own.
+  - **Measurement:** `ModeSelectFlow` measures the stage height, pill-row height and (floating)
+    intro height via `onLayout`; until all three are in, `modeFlowInner` is held at `opacity: 0`
+    (a frame or two) rather than risk a first-paint jump.
+  - **Flow change:** tapping a mode no longer jumps to the question/record screen — it sets
+    `selectedMode` (a *sub-state* of `flowScreen === 'mode-select'`, not a new `flowScreen`). A
+    **"Continue"** / **"Start recording"** button in the placeholder calls
+    `handleContinueFromMode` → `setFlowScreen('record')` for miscellaneous, `loadQuestion` +
+    `setFlowScreen('question')` for interview/story. Cap check runs once, on the first tap only.
+    **Part 3 replaces the placeholder + Continue hop with the real `QuestionSelect` folded into
+    this same persistent flow.**
+  - **"‹ Change mode" moved to the header** — because the picked sub-state reads as a detail view,
+    the back affordance sits top-left in the header row, sharing it with the profile icon
+    (`styles.header` is now `flexDirection: 'row'` + `space-between`). It's `FadeIn`/`FadeOut` and
+    only shown while `flowScreen === 'mode-select' && selectedMode`.
+  - **Not in Part 2:** real question content, the record button restyle, the "stay on Record
+    showing processing status" behaviour change — all still pending.
+  - **Known rough edges:** interrupting the 1s transition mid-flight (tap "‹ Change mode" while the
+    pills are still sliding) still reverses but with a brief hold before the pills move back — the
+    `withDelay` schedule isn't interruption-aware. `withTiming` doesn't auto-respect the OS "Reduce
+    Motion" setting (only layout/entering animations do) — add a `useReducedMotion()` short-circuit
+    if that matters.
+- **Part 3 (next):** the **prompt / custom-question** screen restyle (`QuestionSelect`) — folded
+  into `ModeSelectFlow` so the pills stay put through it — and unifying the `"Storytelling"` pill
+  label with `MODE_LABELS`' `"Story"` (see [Mode selection](#mode-selection)).
+- Still open: the tagline over the flat instruction line, and whether "Choose a mode." earns its
+  place once the pills read as obviously tappable — flagged for the human's on-device review.
+- **`borderStyle: 'dashed'` + `borderRadius`** on the placeholder box renders imperfectly on iOS
+  (dashes don't follow the curve) — it's a throwaway placeholder so this is fine; Part 3's real
+  content won't use a dashed border.
 
 ### Still flagged for Epic C/D
 
@@ -581,27 +636,25 @@ shell around it.
   [History](#history)'s list -> detail push does (that's why *that* flow uses a real nested route
   and this one doesn't); still true post-Step 3 — the question screen turned out not to need any
   of that either, just its own local loading/error state.
-  - `'mode-select'` (default): a fixed two-line intro — the static tagline **"Unmute your
-    potential."** (heading variant) over the instruction **"Choose a mode."** (body variant) — then
-    the three mode options (`ModeSelect`). As of v2 Epic C Part 1 the options sit on **one
-    horizontal row of pill-shaped buttons** (each `flex: 1`, white fill, tan hairline border, a soft
-    `#BEA398` @ 15% drop shadow, `paddingVertical` `sm`/8 — kept low so the pill doesn't read as
-    over-round, unselected state only). All three labels share **one** font size, computed from real
-    measurements: the row width (`onLayout`) and the longest label's rendered width (`onTextLayout`
-    on a hidden measurer at a fixed reference size) → the largest size that leaves ~16px clear on
-    each side of "Miscellaneous" within its pill (~32px total), clamped 11–18px, adapting to any
-    screen with no glyph-width guessing. Per-`<Text>` `adjustsFontSizeToFit` was rejected because it
-    shrank "Miscellaneous" alone. The one-line descriptions each option used to carry were dropped
-    in the restyle. The tagline above renders at 24px (a step up from the `heading` variant's 20).
-    - **Width fix:** `heroSection` needs `alignSelf: 'stretch'` — `safeArea` centres its children,
-      so without it `heroSection` hugged its widest child (the tagline) and the pill row could
-      never exceed that line's width, making every gutter/padding tweak invisible. With it,
-      `heroSection` fills `safeArea` and the row spans the screen. The gutter was also de-doubled
-      (`heroSection` lost its own `paddingHorizontal`, `safeArea`'s went 24 → 16) — applies to the
-      whole Record tab, not just mode-select. The middle option's pill reads **"Storytelling"**, though `mode`
-    is still `'story'` and `MODE_LABELS` (used by the `'question'`/`'record'` screens) still renders
-    it as "Story" — that label mismatch is left for Epic C Part 3 to unify. See
-    [Design system](#design-system)'s "Epic C Part 1" subsection.
+  - `'mode-select'` (default): handled by `ModeSelectFlow`, which has **two animated sub-states**
+    (not separate `FlowScreen` values):
+    - *Nothing picked:* a centred group — static tagline **"Unmute your potential."** (`title`
+      variant / 28px) over **"Choose a mode."** (`body` variant), then the horizontal pill row.
+    - *Mode picked (`selectedMode` set):* a **1-second choreographed transition** — brown fill →
+      tagline fades out → pill row slides to the **top** → placeholder question box fades in below
+      (with a "Continue" / "Start recording" button). "‹ Change mode" appears **in the header**
+      (top-left, next to the profile icon) and reverses it. Full timeline + the fact that it's
+      *not* a symmetric reverse are in [Design system](#design-system)'s Epic C subsection.
+    - The pills are **one row of `flex: 1` pill buttons** (white fill / tan border / soft `#BEA398`
+      @ 15% shadow / low `paddingVertical` so they aren't over-round). All three labels share one
+      measured font size (row width via `onLayout` + longest label's width via `onTextLayout` on a
+      hidden measurer → largest size leaving ~16px each side of "Miscellaneous", clamped 11–18px).
+      The middle pill reads **"Storytelling"** while `mode` stays `'story'` and `MODE_LABELS`
+      (`'question'`/`'record'` screens) still says "Story" — unify in Part 3.
+    - **Width fix (Part 1):** `heroSection` needs `alignSelf: 'stretch'` — `safeArea` centres its
+      children, so without it `heroSection` hugged its widest child and the pill row could never
+      exceed that width. The gutter was also de-doubled (`heroSection` lost its `paddingHorizontal`,
+      `safeArea`'s went 24 → 16) — affects the whole Record tab.
   - `'question'`: shown after selecting Interview or Story. `QuestionSelect` (Phase 4 Step 3,
     replacing Step 2's dead-end `ModePlaceholder`) kicks off `pickQuestionForMode()`
     (`src/lib/question-selection.ts` — see [Question selection](#question-selection)) the moment
@@ -626,9 +679,15 @@ shell around it.
   `selectedMode`/`selectedQuestion` — it only resets the local unsaved-take state
   (`resetRecordingState`), so re-recording after a discard reuses the same already-chosen question
   rather than picking a new one. Getting a fresh pick requires going back through "‹ Change mode".
-- **Cap check relocated here** from the old record button — see [Recording cap](#recording-cap)
-  for the full detail. It now runs once in `handleSelectMode`, before any mode is entered, rather
-  than in `handleStartRecording`.
+- **Cap check** — runs once in `handleSelectMode` on the **first** mode tap (before the animation),
+  not in `handleStartRecording`. Switching which mode is selected afterwards skips the re-check
+  (recording count can't have changed). See [Recording cap](#recording-cap).
+- **Advancing past mode-select (v2 Epic C Part 2):** `handleSelectMode` no longer sets `flowScreen`
+  — it only sets `selectedMode`, which drives `ModeSelectFlow`'s "mode picked" animation. The
+  placeholder's **"Continue"** button calls `handleContinueFromMode`, which does what tapping a
+  mode used to do directly: `setFlowScreen('record')` for miscellaneous, or `loadQuestion` +
+  `setFlowScreen('question')` for interview/story. Part 3 folds the real `QuestionSelect` into
+  `ModeSelectFlow` and this Continue hop disappears.
 - **Greeting removed (v2 Epic C Part 1):** the Phase 1 `'mode-select'` header showed a static
   `"Brevado"` title plus a `"Logged in as {email}"` line (the last bit of per-user text left on
   this tab — it was already flagged for Epic B to reconcile). Both are gone. There was never any
