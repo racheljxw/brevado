@@ -39,6 +39,7 @@ export const Palette = {
   navIconActive: '#B63700', // active bottom-nav tab icon (Figma-authoritative)
   shadow: '#BEA398', // drop-shadow tint for cards + the nav capsule (Figma-authoritative; RN can only approximate spread/blur)
   link: '#4B75DF', // the ONE blue for links / interactive text, app-wide (see Theme.colors.link)
+  positive: '#2F7A55', // upward / improving trend indicator (v3 Epic G — no Figma sample, approximate; a warm-compatible green). Declines reuse `recordRed`.
 } as const;
 
 export const Colors = {
@@ -208,6 +209,15 @@ export const Theme = {
      * colour anywhere else; reference this token.
      */
     link: Palette.link,
+
+    /**
+     * An upward / improving trend — the "+12%" reading and its up-triangle
+     * on a Streaks metric card (v3 Epic G Part 2). The one green in the app:
+     * no Figma sample, approximate, tuned to sit with the warm palette. A
+     * *declining* trend deliberately reuses `recordRed` rather than adding a
+     * second negative colour.
+     */
+    positive: Palette.positive,
   },
 
   /**

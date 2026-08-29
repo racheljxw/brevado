@@ -70,6 +70,14 @@ export class RecordingUploadError extends Error {
 // or where generation returned nothing usable — the card falls back to
 // "Untitled recording" then). The detail screen selects it via
 // `RecordingDetail` below (Part 1/2).
+// `impact_score` / `clarity_score` / `structure_score` were added in v3 Epic
+// G Part 2 — the Streaks tab aggregates them client-side over this same
+// query (no new backend endpoint, consistent with how v2's History search /
+// calendar view were built). Nullable: a pre-v3 recording, or a score that
+// missed generation (Epic F's lenient failure), stays null and is excluded
+// from every Streaks aggregation. This makes `RecordingRow` structurally a
+// `StreakRecording` (src/lib/streaks.ts). The History screens don't read
+// these — they just ride along on the widened select.
 export type RecordingRow = {
   id: string;
   mode: string;
@@ -80,12 +88,17 @@ export type RecordingRow = {
   favorite: boolean;
   audio_deleted: boolean;
   audio_path: string | null;
+  impact_score: number | null;
+  clarity_score: number | null;
+  structure_score: number | null;
 };
 
 export async function fetchRecordings(userId: string): Promise<RecordingRow[]> {
   const { data, error } = await supabase
     .from('recordings')
-    .select('id, mode, question, title, status, created_at, favorite, audio_deleted, audio_path')
+    .select(
+      'id, mode, question, title, status, created_at, favorite, audio_deleted, audio_path, impact_score, clarity_score, structure_score'
+    )
     .eq('user_id', userId)
     .order('created_at', { ascending: false });
   if (error) {

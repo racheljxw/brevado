@@ -195,7 +195,16 @@ yet. Isolated, dependency-free, unit-tested functions (`buildDailyAverages` / `c
 `calculateTrend` / `buildGraphPoints`) verified against hand-written cases before any screen
 consumes them, same spirit as the backend's `metrics.py`. Type-check / lint clean; `npm run
 test:streaks` (25 cases) green. Full contract in [Streaks aggregation](#streaks-aggregation) below.
-**Epic G Part 2** onward builds the actual Streaks tab screens on top of these.
+
+**Epic G Part 2 is done** — the Streaks **home screen** (`src/app/(tabs)/streaks.tsx`), replacing
+the Epic A empty placeholder: a streak header ("You're on a {n} day streak!" + a "Longest streak"
+line) and three metric cards (Impact / Clarity / Structure), each with a fixed **7-day** % change,
+an up/down trend triangle, a mini inline line graph, and a (currently inert) "See details" link.
+All client-side over the same `fetchRecordings()` query History uses — widened in this part to also
+select `impact_score` / `clarity_score` / `structure_score`. Type-check / lint / `test:streaks`
+clean; no on-device pass yet. Full layout in [Streaks home screen](#streaks-home-screen) below.
+**Epic G Part 3** builds the per-metric **detail screens** (Week / Month / Year / All Time tabs,
+full-size graphs) that "See details" will open.
 
 **The three scores.** Every new recording gets `impact_score`, `clarity_score`, `structure_score`
 — each an **integer 0–100** — displayed in that order (Impact, Clarity, Structure). **No combined
@@ -367,6 +376,76 @@ just `streaks.ts` + its test to plain JS under `.expo/streaks-test/` (gitignored
 [dependency convention](#dependency-installation-convention)) and port these — the assertions
 translate directly. The `test:streaks` script is a deliberate stopgap, not the long-term answer.
 
+## Streaks home screen
+
+v3 Epic G Part 2 — `src/app/(tabs)/streaks.tsx`, replacing the Epic A empty placeholder. The
+**home screen only**; the per-metric detail screens (Week/Month/Year/All Time tabs, full graphs)
+are **Part 3**. Everything is computed **client-side** over the same recordings list History uses —
+**no new backend endpoint**, consistent with v2's History search / calendar.
+
+- **Data:** `fetchRecordings(user.id)` (`src/lib/recordings.ts`), the exact query History's list
+  runs, so Streaks and History never disagree about what recordings exist. **Widened in this
+  part:** `RecordingRow` and the `select()` now also carry `impact_score` / `clarity_score` /
+  `structure_score` (nullable — a pre-v3 row or a missed score stays `null`), which makes
+  `RecordingRow` structurally a `StreakRecording`. The History screens don't read those columns,
+  they just ride along. Same fetch shell as the History list: `useFocusEffect` refetch,
+  `requestSeqRef` out-of-order guard, pull-to-refresh, and a 1.5s poll while any row is
+  non-terminal (`TERMINAL_STATUSES`) so a just-uploaded session's scores fold in without a manual
+  refresh. Loading / fetch-error (with Retry) / empty ("No recordings yet…") states all explicit.
+- **Aggregation:** `src/lib/streaks.ts` (Part 1) — `calculateStreak(recordings)` for the header;
+  per metric, `buildDailyAverages(recordings, metric)` → `calculateTrend(daily, 7)` +
+  `buildGraphPoints(daily, 'week')` for the cards. All in `useMemo`s keyed on `recordings`.
+- **Streak header (`StreakHeader`):** three states off `{ current, longest }`:
+  - `current > 0` → **"You're on a {current} day streak!"** + **"Longest streak: {longest}
+    day(s)"** (the longest line is a confirmed addition, not in the original mockup).
+  - `current === 0` but `longest > 0` → **"No active streak right now"** + "Record today to start
+    a new one · longest was {longest} day(s)". **Never** renders "0 day streak".
+  - `current === 0` and `longest === 0` (brand-new account, no `done` recordings) → **"Start your
+    first streak today"** + "Record a session on the Record tab to get going".
+- **Metric cards (`MetricCard`), order Impact / Clarity / Structure.** The metric **name**
+  (`metricName`, 20px Noto Sans bold) sits **outside / above** the `<Card>`. Card interior is a
+  two-row layout:
+  - **top row:** a `medium`-weight `textSecondary` short description (top-left) sharing the line
+    with the "See details" link (top-right). Descriptions (from the `METRICS` array, kept short so
+    they fit on one line beside the link): Impact → "Relevance & engagement", Clarity → "Brevity &
+    grammar", Structure → "Speaking frameworks".
+  - **bottom row:** the **statistic** (bottom-left) beside the **mini line graph** (bottom-right,
+    `flex: 1`).
+  - the **statistic** is the **7-day % change** as a large bold number (`trendBig`, 30px Noto Sans
+    bold) via `TrendReadout`, which maps `calculateTrend`'s discriminated union so the card can
+    never show `NaN%`:
+    - `status: 'ok'` → signed `{+/-}{Math.round(percentChange)}%` in **`Theme.colors.positive`**
+      (the new green — up) or **`Theme.colors.recordRed`** (down), with a matching `TrendTriangle`;
+      a rounded value of exactly `0` shows a plain grey "0%", no triangle. Sublabel: "Last 7 days".
+    - `status: 'no-data'` → **"New"** (grey) + "No sessions yet".
+    - `status: 'insufficient-history'` → the current value (`Math.round(todayValue)%`, grey) +
+      **"Insufficient history"** (kept short so the graph fits beside it).
+  - the **mini line graph** is `MiniLineGraph` (`src/components/mini-line-graph.tsx`) over the
+    week-granularity `GraphPoint[]`. This project has **no `react-native-svg`**, so the line is a
+    run of thin **rotated `View` segments** between consecutive non-null points (a `null` bucket
+    leaves a gap); y-axis pinned to 0–100 so cards are comparable. No baseline/axis line — with
+    < 2 plottable points it just renders the dot(s), or nothing. Small/glanceable — the full-size
+    graphs are Part 3.
+  - the **"See details" link** is `ThemedText type="link"` + a chevron, **visually present but
+    inert** (no `Pressable`, no route). Chosen over a stub screen: there's no detail route yet,
+    and stubbing one would mean restructuring `streaks.tsx` into a directory (`streaks/` with
+    `index` + `[metric]`) that Part 3 will lay out properly anyway — not worth the throwaway
+    churn. Wiring it up is the first thing Part 3 does.
+- **Trend colours (the confirmation asked for):** declines use the existing
+  **`Theme.colors.recordRed`** token (no new negative colour introduced); gains use a **new
+  `Theme.colors.positive` / `Palette.positive` (`#2F7A55`)** token — the one green in the app,
+  approximate (no Figma sample), added because the warm palette had no green and a warm-palette
+  "up" colour would be indistinguishable from body text. Documented in
+  [Design system](#design-system)'s `Theme.colors` table.
+- **Styling:** flat cream background, Noto Sans, `Theme.colors.card` card fills via `<Card>`,
+  `Theme` radius/spacing, no pure white/black — same standing rules as the rest of v2.
+- **Verification:** `npx tsc --noEmit`, `expo lint`, and `npm run test:streaks` (25 cases) all
+  clean. **No on-device pass yet** — same standing caveat as every Phase 3/4 and Epic C/D step.
+  Test plan: open the Streaks tab and confirm the streak count + longest streak against your real
+  history; confirm all three cards render a 7-day % change, a trend triangle, a mini graph, and a
+  "See details" link; and confirm a brand-new account (or a metric with too little scored history)
+  shows "New" / "Insufficient history" rather than a broken number.
+
 ## Database
 
 Supabase Postgres, no ORM — query via the `supabase-js` client (`src/lib/supabase.ts`) using
@@ -463,10 +542,9 @@ UI), both rendered from `src/app/(tabs)/_layout.tsx`.
   upload → inline status) is **completely unchanged** — only the tab's `<Label>` moved from "Home"
   to "Record". Any older "Home tab" reference elsewhere in this doc means this same screen.
 - **History** — `src/app/(tabs)/history/` — unchanged in this step; its redesign is Epic D.
-- **Streaks** — `src/app/(tabs)/streaks.tsx` — an **intentional empty placeholder**: a heading plus
-  a "coming soon" line, nothing functional. Real streak/progress content is **v3 / Phase 6** (which
-  fills this tab, but does not introduce it — the tab is added now, in v2). Don't build anything
-  into it before then.
+- **Streaks** — `src/app/(tabs)/streaks.tsx` — was an intentional empty placeholder through v2;
+  **v3 Epic G Part 2 filled it** with the real streak header + three metric cards (see
+  [Streaks home screen](#streaks-home-screen)). The per-metric detail screens are Epic G Part 3.
 - No dedicated Streaks icon asset yet — the native tab uses an `sf="flame"` SF Symbol placeholder,
   same "swap when a real asset exists" situation as History still reusing the scaffold's
   `explore.png`.
@@ -551,6 +629,7 @@ Part 1 covered only the mode-select screen's look.
 | `navIconActive` | `#B63700` | active bottom-nav tab icon (Figma-authoritative) |
 | `shadow` | `#BEA398` | drop-shadow tint — **cards and** the nav capsule (Figma-authoritative; RN approximates spread/blur) |
 | `link` | `#4B75DF` | **all** link / interactive text, app-wide — the single source of truth (Epic D Part 1). A deliberate warm-palette exception; see "Link colour consolidation" |
+| `positive` | `#2F7A55` | an upward / improving trend — the Streaks metric cards' "+%" reading + up-triangle (v3 Epic G Part 2). The one green in the app; approximate, no Figma sample. A *declining* trend reuses `recordRed`, not a second negative token |
 
 Old `navActive` / `navActiveIcon` (`#FF8040` / `#FF9966`, pixel-sampled in Part 1) are **removed** —
 the Figma nav spec superseded them (capsule is `background`, active pill is `border`, active icon
