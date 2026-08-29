@@ -1,6 +1,16 @@
 import { useFocusEffect, useRouter } from 'expo-router';
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, FlatList, Platform, Pressable, RefreshControl, StyleSheet, View } from 'react-native';
+import { SymbolView } from 'expo-symbols';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  ActivityIndicator,
+  FlatList,
+  Platform,
+  Pressable,
+  RefreshControl,
+  StyleSheet,
+  TextInput,
+  View,
+} from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { Card } from '@/components/card';
@@ -10,7 +20,7 @@ import { RecordingActionsMenu, type RecordingMenuAction } from '@/components/rec
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { WebBadge } from '@/components/web-badge';
-import { BottomTabInset, MaxContentWidth, Spacing, Theme } from '@/constants/theme';
+import { BottomTabInset, MaxContentWidth, NotoSans, Spacing, Theme } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import { deleteRecording, deleteRecordingAudio, regenerateReport } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
@@ -43,6 +53,12 @@ import { fetchRecordings, setFavorite, shareRecordingAudio, type RecordingRow } 
 // the heading line next to the favorite star, which also carries the new
 // "Delete recording" action (removes the whole row + its audio). The star
 // deliberately stays its own always-visible icon, not a menu item.
+// The heading shown for a recording with a NULL `title` (a legacy row from
+// before Epic D Part 1, or one where generation returned nothing usable).
+// Pulled out as a constant so the client-side search below matches against
+// exactly what the card displays — searching "untitled" surfaces these rows.
+const UNTITLED_LABEL = 'Untitled recording';
+
 function modePillColors(mode: string): { backgroundColor: string; color: string } {
   switch (mode) {
     case 'interview':
@@ -113,7 +129,7 @@ function RecordingListItem({
             themeColor={recording.title ? 'text' : 'textSecondary'}
             numberOfLines={2}
             style={[styles.cardTitle, styles.titleFlex]}>
-            {recording.title ?? 'Untitled recording'}
+            {recording.title ?? UNTITLED_LABEL}
           </ThemedText>
           <FavoriteStar favorite={recording.favorite} onToggle={onToggleFavorite} disabled={favoritePending} size={20} />
           <RecordingActionsMenu
@@ -177,6 +193,228 @@ function RecordingListItem({
   );
 }
 
+// v2 Epic D Part 5 — the search bar + Calendar/List toggle above the list.
+//
+// Search is a purely CLIENT-SIDE substring filter over the already-loaded
+// `recordings` (no new backend query — a deliberate decision, the list is
+// capped at 30 rows/user so there's nothing to paginate or server-filter).
+// It matches, case-insensitively, against the recording `title` (or the
+// "Untitled recording" fallback text when the title is NULL, since that's
+// what the card actually shows) and the `question`/prompt text.
+//
+// The toggle is a minimalist underline-style tab pair. "List" is the
+// existing restyled-card list. "Calendar" is a real month grid as of Epic D
+// Part 6 — see `MonthCalendar` below.
+//
+// Typing a non-empty search term while on Calendar auto-switches to List so
+// the results are actually visible. Clearing the search does NOT switch
+// back — that would feel like the UI fighting the user; they stay on
+// whichever view they last chose.
+//
+// v2 Epic D Part 6 — the real Calendar view. A standard 7-column month grid,
+// current month by default, with prev/next month navigation (next is capped
+// at the current month — there can be no future recordings). Each day that
+// has at least one recording gets a dot; the counts are grouped CLIENT-SIDE
+// from the already-loaded `recordings` list by the LOCAL date portion of
+// `created_at` (`dayKey`) — no new backend query, same data source as List
+// and search.
+//
+// Tapping a day WITH recordings switches to List view filtered to that date
+// (`dayFilter`) — reusing Part 3's card styling and Part 4's menu rather
+// than building a second list rendering. Tapping the already-selected day
+// again clears the filter. Tapping a day with NO recordings is a no-op
+// beyond a subtle "No recordings on …" line under the grid.
+//
+// Search + day filter are treated as MUTUALLY EXCLUSIVE: tapping a day
+// clears any active search term ("everything from this day" is a singular
+// intent a leftover search would confusingly narrow), and typing a search
+// term clears any active day filter. A "Showing {date}" chip above the
+// filtered list is the explicit way back to viewing everything.
+type HistoryView = 'calendar' | 'list';
+
+const WEEKDAY_LABELS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
+
+// Local-date key (YYYY-MM-DD) for grouping recordings by calendar day. Uses
+// the device's local date parts on purpose — a recording made at 11pm shows
+// on the day the user actually made it, not a UTC-shifted one.
+function dayKey(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+// "Mon, Aug 25" — for the day-filter chip and the empty-day notice.
+function formatDayLabel(key: string): string {
+  const [y, m, d] = key.split('-').map(Number);
+  return new Date(y, m - 1, d).toLocaleDateString(undefined, {
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+  });
+}
+
+function matchesSearch(recording: RecordingRow, query: string): boolean {
+  const title = (recording.title ?? UNTITLED_LABEL).toLowerCase();
+  const question = (recording.question ?? '').toLowerCase();
+  return title.includes(query) || question.includes(query);
+}
+
+function SearchBar({ value, onChangeText }: { value: string; onChangeText: (next: string) => void }) {
+  const theme = useTheme();
+  return (
+    <View style={styles.searchBar}>
+      <SymbolView name="magnifyingglass" size={16} tintColor={theme.textSecondary} />
+      <TextInput
+        style={styles.searchInput}
+        value={value}
+        onChangeText={onChangeText}
+        placeholder="Search by title or prompt"
+        placeholderTextColor={theme.textSecondary}
+        autoCorrect={false}
+        autoCapitalize="none"
+        returnKeyType="search"
+        accessibilityLabel="Search recordings"
+      />
+      {value.length > 0 && (
+        <Pressable
+          onPress={() => onChangeText('')}
+          hitSlop={8}
+          accessibilityRole="button"
+          accessibilityLabel="Clear search">
+          <SymbolView name="xmark.circle.fill" size={16} tintColor={theme.textSecondary} />
+        </Pressable>
+      )}
+    </View>
+  );
+}
+
+function ViewToggle({ view, onChange }: { view: HistoryView; onChange: (next: HistoryView) => void }) {
+  const tabs: { key: HistoryView; label: string }[] = [
+    { key: 'calendar', label: 'Calendar' },
+    { key: 'list', label: 'List' },
+  ];
+  return (
+    <View style={styles.toggleRow}>
+      {tabs.map((tab) => {
+        const active = view === tab.key;
+        return (
+          <Pressable
+            key={tab.key}
+            onPress={() => onChange(tab.key)}
+            style={[styles.toggleTab, active && styles.toggleTabActive]}
+            accessibilityRole="tab"
+            accessibilityState={{ selected: active }}>
+            <ThemedText type={active ? 'smallBold' : 'small'} themeColor={active ? 'text' : 'textSecondary'}>
+              {tab.label}
+            </ThemedText>
+          </Pressable>
+        );
+      })}
+    </View>
+  );
+}
+
+function MonthCalendar({
+  year,
+  month,
+  countsByDay,
+  selectedKey,
+  canGoNext,
+  onChangeMonth,
+  onSelectDay,
+}: {
+  year: number;
+  month: number; // 0-11
+  countsByDay: Map<string, number>;
+  selectedKey: string | null;
+  canGoNext: boolean;
+  onChangeMonth: (delta: number) => void;
+  onSelectDay: (key: string, count: number) => void;
+}) {
+  const theme = useTheme();
+  const todayKey = dayKey(new Date());
+
+  const firstWeekday = new Date(year, month, 1).getDay(); // 0 = Sunday
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const monthLabel = new Date(year, month, 1).toLocaleDateString(undefined, {
+    month: 'long',
+    year: 'numeric',
+  });
+
+  // Leading blanks for the first week, then the day numbers, padded out to a
+  // whole number of weeks so the grid stays rectangular.
+  const cells: (number | null)[] = [];
+  for (let i = 0; i < firstWeekday; i += 1) cells.push(null);
+  for (let d = 1; d <= daysInMonth; d += 1) cells.push(d);
+  while (cells.length % 7 !== 0) cells.push(null);
+
+  return (
+    <View>
+      <View style={styles.calendarHeader}>
+        <Pressable
+          onPress={() => onChangeMonth(-1)}
+          hitSlop={12}
+          accessibilityRole="button"
+          accessibilityLabel="Previous month">
+          <SymbolView name="chevron.left" size={16} tintColor={theme.text} />
+        </Pressable>
+        <ThemedText type="smallBold">{monthLabel}</ThemedText>
+        <Pressable
+          onPress={() => canGoNext && onChangeMonth(1)}
+          disabled={!canGoNext}
+          hitSlop={12}
+          accessibilityRole="button"
+          accessibilityLabel="Next month">
+          <SymbolView
+            name="chevron.right"
+            size={16}
+            tintColor={canGoNext ? theme.text : Theme.colors.border}
+          />
+        </Pressable>
+      </View>
+
+      <View style={styles.weekRow}>
+        {WEEKDAY_LABELS.map((label, i) => (
+          <View key={i} style={styles.weekdayCell}>
+            <ThemedText type="small" themeColor="textSecondary">
+              {label}
+            </ThemedText>
+          </View>
+        ))}
+      </View>
+
+      <View style={styles.grid}>
+        {cells.map((day, i) => {
+          if (day === null) return <View key={i} style={styles.dayCell} />;
+          const key = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+          const count = countsByDay.get(key) ?? 0;
+          const isSelected = selectedKey === key;
+          const isToday = todayKey === key;
+          return (
+            <Pressable
+              key={i}
+              style={styles.dayCell}
+              onPress={() => onSelectDay(key, count)}
+              accessibilityRole="button"
+              accessibilityState={{ selected: isSelected }}
+              accessibilityLabel={`${formatDayLabel(key)}, ${
+                count > 0 ? `${count} recording${count === 1 ? '' : 's'}` : 'no recordings'
+              }`}>
+              <View style={[styles.dayInner, isToday && styles.dayToday, isSelected && styles.daySelected]}>
+                <ThemedText
+                  type={count > 0 ? 'smallBold' : 'small'}
+                  themeColor={count > 0 ? 'text' : 'textSecondary'}
+                  style={isSelected ? styles.daySelectedText : undefined}>
+                  {day}
+                </ThemedText>
+              </View>
+              <View style={styles.dotSlot}>{count > 0 && <View style={styles.dot} />}</View>
+            </Pressable>
+          );
+        })}
+      </View>
+    </View>
+  );
+}
+
 export default function HistoryScreen() {
   const { user } = useAuth();
   const theme = useTheme();
@@ -187,6 +425,73 @@ export default function HistoryScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // v2 Epic D Part 5 — client-side search + the Calendar/List view toggle.
+  // `view` defaults to List (the functional view; Calendar is a placeholder
+  // this step). `search` filters the list client-side — see `matchesSearch`.
+  const [search, setSearch] = useState('');
+  const [view, setView] = useState<HistoryView>('list');
+
+  // v2 Epic D Part 6 — Calendar state. `calendar` is the month currently
+  // shown in the grid (defaults to the current month). `dayFilter` is the
+  // selected day's `dayKey`, which — when set — narrows the List view to
+  // that day. `emptyDayNotice` is the `dayKey` of a tapped day that had no
+  // recordings, shown as a subtle line under the grid.
+  const [calendar, setCalendar] = useState(() => {
+    const now = new Date();
+    return { year: now.getFullYear(), month: now.getMonth() };
+  });
+  const [dayFilter, setDayFilter] = useState<string | null>(null);
+  const [emptyDayNotice, setEmptyDayNotice] = useState<string | null>(null);
+
+  const now = new Date();
+  const canGoNext =
+    calendar.year < now.getFullYear() ||
+    (calendar.year === now.getFullYear() && calendar.month < now.getMonth());
+
+  const changeMonth = useCallback((delta: number) => {
+    setCalendar((c) => {
+      const d = new Date(c.year, c.month + delta, 1);
+      return { year: d.getFullYear(), month: d.getMonth() };
+    });
+    setEmptyDayNotice(null);
+  }, []);
+
+  // Tapping a day: no recordings -> just the subtle notice; the
+  // already-selected day -> clear the filter (toggle off); otherwise -> set
+  // the day filter, clear any active search (mutually exclusive — see the
+  // comment block above `MonthCalendar`), and switch to List so the filtered
+  // cards are visible.
+  const handleSelectDay = useCallback(
+    (key: string, count: number) => {
+      if (count === 0) {
+        setEmptyDayNotice(key);
+        return;
+      }
+      setEmptyDayNotice(null);
+      setDayFilter((current) => (current === key ? null : key));
+      setSearch('');
+      setView('list');
+    },
+    []
+  );
+
+  const handleChangeView = useCallback((next: HistoryView) => {
+    setView(next);
+    setEmptyDayNotice(null);
+  }, []);
+
+  // Typing a search term jumps to List so the filtered results are visible
+  // and clears any active day filter (mutually exclusive); clearing the
+  // search deliberately does NOT jump back or restore a day filter.
+  const handleSearchChange = useCallback((next: string) => {
+    setSearch(next);
+    if (next.trim().length > 0) {
+      setDayFilter(null);
+      setEmptyDayNotice(null);
+      setView((current) => (current === 'calendar' ? 'list' : current));
+    }
+  }, []);
 
   // Phase 3 Step 2: per-row "Regenerate report" state — keyed by recording
   // id since any number of failed rows could be regenerated independently
@@ -455,8 +760,41 @@ export default function HistoryScreen() {
     }
   }
 
+  const query = search.trim().toLowerCase();
+  const filteredRecordings = useMemo(() => {
+    if (!recordings) return [];
+    let rows = recordings;
+    // Day filter and search are mutually exclusive in the UI, but applying
+    // both here is harmless and keeps this robust if that ever changes.
+    if (dayFilter) rows = rows.filter((row) => dayKey(new Date(row.created_at)) === dayFilter);
+    if (query) rows = rows.filter((row) => matchesSearch(row, query));
+    return rows;
+  }, [recordings, query, dayFilter]);
+
+  // v2 Epic D Part 6 — recording counts grouped by local calendar day, for
+  // the month grid's per-day dots. Computed from the full already-loaded
+  // list (not the filtered one) so the dots always reflect every recording.
+  const recordingsByDay = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const row of recordings ?? []) {
+      const key = dayKey(new Date(row.created_at));
+      map.set(key, (map.get(key) ?? 0) + 1);
+    }
+    return map;
+  }, [recordings]);
+
+  const hasRecordings = !!recordings && recordings.length > 0;
   const showInitialLoading = loading && recordings === null;
+  // Error on the very first load (nothing to fall back to) — show just the
+  // error card, no search bar / toggle / list.
+  const showErrorOnly = !!error && !hasRecordings && !showInitialLoading;
   const showEmpty = !loading && !error && recordings?.length === 0;
+  // A search that matched nothing — distinct from "no recordings at all".
+  const showNoResults = view === 'list' && hasRecordings && query.length > 0 && filteredRecordings.length === 0;
+  // A day filter that now matches nothing (e.g. the day's last recording was
+  // just deleted) — the "Showing {date}" chip is still the way back.
+  const showEmptyDayFilter =
+    view === 'list' && hasRecordings && !!dayFilter && query.length === 0 && filteredRecordings.length === 0;
 
   return (
     <ThemedView style={styles.container}>
@@ -481,42 +819,94 @@ export default function HistoryScreen() {
           <View style={styles.centerFill}>
             <ActivityIndicator color={theme.textSecondary} />
           </View>
-        ) : showEmpty ? (
+        ) : showErrorOnly ? null : showEmpty ? (
           <View style={styles.centerFill}>
             <ThemedText type="small" themeColor="textSecondary" style={styles.emptyText}>
               No recordings yet. Head to the Record tab and record your first practice session.
             </ThemedText>
           </View>
         ) : (
-          <FlatList
-            data={recordings ?? []}
-            keyExtractor={(item) => item.id}
-            renderItem={({ item }) => (
-              <RecordingListItem
-                recording={item}
-                onPress={() => router.push({ pathname: '/history/[id]', params: { id: item.id } })}
-                onToggleFavorite={() => handleToggleFavorite(item.id, !item.favorite)}
-                favoritePending={favoritingIds.has(item.id)}
-                onRegenerate={() => handleRegenerate(item.id)}
-                regenerating={regeneratingIds.has(item.id)}
-                regenerateError={regenerateErrors[item.id]}
-                onDeleteAudio={() => handleDeleteAudio(item.id)}
-                deletingAudio={deletingAudioIds.has(item.id)}
-                deleteAudioError={deleteAudioErrors[item.id]}
-                onDeleteRecording={() => handleDeleteRecording(item.id)}
-                deletingRecording={deletingRecordingIds.has(item.id)}
-                deleteRecordingError={deleteRecordingErrors[item.id]}
-                onDownloadAudio={() => handleDownloadAudio(item.id, item.audio_path)}
-                downloadingAudio={downloadingAudioIds.has(item.id)}
-                downloadAudioError={downloadAudioErrors[item.id]}
-              />
+          <>
+            <SearchBar value={search} onChangeText={handleSearchChange} />
+            <ViewToggle view={view} onChange={handleChangeView} />
+            {view === 'calendar' ? (
+              <View style={styles.calendarScreen}>
+                <MonthCalendar
+                  year={calendar.year}
+                  month={calendar.month}
+                  countsByDay={recordingsByDay}
+                  selectedKey={dayFilter}
+                  canGoNext={canGoNext}
+                  onChangeMonth={changeMonth}
+                  onSelectDay={handleSelectDay}
+                />
+                {emptyDayNotice && (
+                  <ThemedText type="small" themeColor="textSecondary" style={styles.dayNotice}>
+                    No recordings on {formatDayLabel(emptyDayNotice)}.
+                  </ThemedText>
+                )}
+              </View>
+            ) : (
+              <>
+                {dayFilter && (
+                  <Pressable
+                    onPress={() => setDayFilter(null)}
+                    style={styles.dayFilterChip}
+                    accessibilityRole="button"
+                    accessibilityLabel="Show all recordings">
+                    <ThemedText type="small" themeColor="text">
+                      Showing {formatDayLabel(dayFilter)}
+                    </ThemedText>
+                    <SymbolView name="xmark.circle.fill" size={16} tintColor={theme.textSecondary} />
+                  </Pressable>
+                )}
+                {showNoResults || showEmptyDayFilter ? (
+                  <View style={styles.centerFill}>
+                    <ThemedText type="small" themeColor="textSecondary" style={styles.emptyText}>
+                      {showEmptyDayFilter
+                        ? `No recordings on ${formatDayLabel(dayFilter!)}.`
+                        : `No recordings match “${search.trim()}”. Try a different search.`}
+                    </ThemedText>
+                  </View>
+                ) : (
+                  <FlatList
+                    style={styles.list}
+                    data={filteredRecordings}
+                    keyExtractor={(item) => item.id}
+                    renderItem={({ item }) => (
+                      <RecordingListItem
+                        recording={item}
+                        onPress={() => router.push({ pathname: '/history/[id]', params: { id: item.id } })}
+                        onToggleFavorite={() => handleToggleFavorite(item.id, !item.favorite)}
+                        favoritePending={favoritingIds.has(item.id)}
+                        onRegenerate={() => handleRegenerate(item.id)}
+                        regenerating={regeneratingIds.has(item.id)}
+                        regenerateError={regenerateErrors[item.id]}
+                        onDeleteAudio={() => handleDeleteAudio(item.id)}
+                        deletingAudio={deletingAudioIds.has(item.id)}
+                        deleteAudioError={deleteAudioErrors[item.id]}
+                        onDeleteRecording={() => handleDeleteRecording(item.id)}
+                        deletingRecording={deletingRecordingIds.has(item.id)}
+                        deleteRecordingError={deleteRecordingErrors[item.id]}
+                        onDownloadAudio={() => handleDownloadAudio(item.id, item.audio_path)}
+                        downloadingAudio={downloadingAudioIds.has(item.id)}
+                        downloadAudioError={downloadAudioErrors[item.id]}
+                      />
+                    )}
+                    contentContainerStyle={styles.listContent}
+                    showsVerticalScrollIndicator={false}
+                    refreshControl={
+                      <RefreshControl
+                        refreshing={refreshing}
+                        onRefresh={handleRefresh}
+                        tintColor={theme.textSecondary}
+                      />
+                    }
+                  />
+                )}
+              </>
             )}
-            contentContainerStyle={styles.listContent}
-            showsVerticalScrollIndicator={false}
-            refreshControl={
-              <RefreshControl refreshing={refreshing} onRefresh={handleRefresh} tintColor={theme.textSecondary} />
-            }
-          />
+          </>
         )}
 
         {Platform.OS === 'web' && <WebBadge />}
@@ -557,10 +947,139 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
+    gap: Spacing.three,
     paddingHorizontal: Spacing.four,
   },
   emptyText: {
     textAlign: 'center',
+  },
+  // v2 Epic D Part 5 — pill-shaped search bar (card fill + hairline border),
+  // sitting in the same horizontal gutter as the header and list.
+  searchBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.two,
+    backgroundColor: Theme.colors.card,
+    borderWidth: 1,
+    borderColor: Theme.colors.border,
+    borderRadius: Theme.radius.pill,
+    paddingHorizontal: Spacing.three,
+    paddingVertical: Platform.OS === 'ios' ? Spacing.two : Spacing.one,
+    marginHorizontal: Spacing.four,
+    marginTop: Spacing.one,
+  },
+  searchInput: {
+    flex: 1,
+    padding: 0,
+    fontFamily: NotoSans.regular,
+    fontSize: 16,
+    lineHeight: 20,
+    color: Theme.colors.textPrimary,
+  },
+  // Minimalist underline-style tabs — active tab carries a 2px bottom
+  // border sitting on the row's hairline divider.
+  toggleRow: {
+    flexDirection: 'row',
+    gap: Spacing.four,
+    marginHorizontal: Spacing.four,
+    marginTop: Spacing.three,
+    marginBottom: Spacing.one,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: Theme.colors.border,
+  },
+  toggleTab: {
+    paddingVertical: Spacing.two,
+    borderBottomWidth: 2,
+    borderBottomColor: 'transparent',
+    marginBottom: -StyleSheet.hairlineWidth,
+  },
+  toggleTabActive: {
+    borderBottomColor: Theme.colors.textPrimary,
+  },
+  list: {
+    // fill the space left under the header / search bar / toggle so the
+    // list scrolls within its own frame
+    flex: 1,
+  },
+  // v2 Epic D Part 6 — Calendar view.
+  calendarScreen: {
+    flex: 1,
+    paddingHorizontal: Spacing.four,
+    paddingTop: Spacing.two,
+  },
+  calendarHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: Spacing.two,
+    paddingVertical: Spacing.two,
+  },
+  weekRow: {
+    flexDirection: 'row',
+    marginBottom: Spacing.one,
+  },
+  weekdayCell: {
+    width: '14.2857%',
+    alignItems: 'center',
+    paddingVertical: Spacing.one,
+  },
+  grid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+  },
+  dayCell: {
+    width: '14.2857%',
+    alignItems: 'center',
+    paddingVertical: Spacing.one,
+  },
+  dayInner: {
+    width: 34,
+    height: 34,
+    borderRadius: Theme.radius.pill,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  dayToday: {
+    borderWidth: 1,
+    borderColor: Theme.colors.border,
+  },
+  daySelected: {
+    backgroundColor: Theme.colors.accent,
+  },
+  daySelectedText: {
+    color: Theme.colors.onAccent,
+  },
+  dotSlot: {
+    height: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  dot: {
+    width: 5,
+    height: 5,
+    borderRadius: Theme.radius.pill,
+    backgroundColor: Theme.colors.accent,
+  },
+  dayNotice: {
+    textAlign: 'center',
+    marginTop: Spacing.three,
+  },
+  // The "Showing {date}" chip above a day-filtered list — the explicit way
+  // back to viewing everything.
+  dayFilterChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: Spacing.two,
+    alignSelf: 'center',
+    backgroundColor: Theme.colors.card,
+    borderWidth: 1,
+    borderColor: Theme.colors.border,
+    borderRadius: Theme.radius.pill,
+    paddingHorizontal: Spacing.three,
+    paddingVertical: Spacing.one,
+    marginHorizontal: Spacing.four,
+    marginTop: Spacing.two,
   },
   listContent: {
     // generous vertical padding so the first/last card's drop shadow has

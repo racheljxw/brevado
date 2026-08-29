@@ -34,7 +34,9 @@ for the full summary. Progress so far:
   the `QuestionArea` (pool / custom question), the record disc, and the **post-recording
   behaviour change** (stay on Record + live status + "See more details", replacing the
   auto-navigate-to-History). See [Epic C](#epic-c--record-flow-restyle-parts-14-all-done--epic-c-is-complete).
-- **Epic D (in progress):** the History redesign + recording titles.
+- **Epic D (done — all 6 parts):** the History redesign + recording titles — title generation,
+  title editing, list restyle, 3-dot menu, search + Calendar/List toggle, and the real Calendar
+  view. See the per-part breakdown below and the [Epic D wrap-up](#epic-d-wrap-up) assessment.
   - **Part 1 (done):** a colour consolidation (all link blues → one `Theme.colors.link`
     token — see [Design system](#design-system)'s "Link colour consolidation"), plus the
     `title` column + its AI generation, backend/data only. See
@@ -65,11 +67,32 @@ for the full summary. Progress so far:
     one action gated behind an `Alert.alert` confirmation; "Delete audio" keeps its explicit
     no-confirmation behaviour. See [History](#history)'s "3-dot actions menu (Epic D Part 4)"
     bullet and [Delete recording](#delete-recording).
-  - **Part 5 (next):** the search bar, the calendar/list toggle, and the detail-screen
-    visual restyle.
+  - **Part 5 (done):** the History **search bar** + the **Calendar/List view toggle**.
+    Search is a client-side substring filter (case-insensitive) over the already-loaded
+    list, matching `title` (incl. the "Untitled recording" NULL fallback text) and the
+    `question`/prompt — no new backend query. The toggle is a minimalist underline-style
+    tab pair; **List** is the existing restyled-card list (now filtered by the search term,
+    with a distinct "no results" empty state), **Calendar** was an intentional **placeholder**
+    this step (the real grid landed in Part 6). Typing a non-empty search
+    term while on Calendar auto-switches to List; clearing it does not switch back. See
+    [History](#history)'s "Search + view toggle (Epic D Part 5)" bullet.
+  - **Part 6 (done):** the real **Calendar view** — a standard 7-column month grid, current
+    month by default, prev/next month navigation (next capped at the current month), a dot on
+    each day that has ≥1 recording (counts grouped **client-side** from the already-loaded
+    list by the local-date portion of `created_at` — no new backend query), and tap-to-filter:
+    tapping a day with recordings switches to **List** view filtered to that date (reusing
+    Part 3/4's card + menu), tapping it again clears the filter, tapping an empty day is a
+    no-op beyond a subtle "No recordings on …" line. Search and the day filter are **mutually
+    exclusive** — tapping a day clears any search term, typing a search clears any day filter.
+    A "Showing {date}" chip above the filtered list is the explicit reset. **Not** in Part 6:
+    the History detail-screen visual restyle — deferred (see [Recording titles](#recording-titles)
+    and the [Epic D wrap-up](#epic-d-wrap-up)). See [History](#history)'s "Calendar view (Epic D
+    Part 6)" bullet.
 
 Sections below that predate a given Epic still describe the v1 implementation where that Epic
-hasn't rewritten them — History especially is still all-v1 until Epic D.
+hasn't rewritten them. History's list/search/calendar are now fully v2 (Epic D); its **detail
+screen** is still on the pre-redesign layout (the visual restyle was deferred out of Epic D —
+see [Epic D wrap-up](#epic-d-wrap-up)).
 
 **Terminology note:** docs/PROJECT_PLAN.md's old "v2" scope (criteria-based scoring, progress
 charts, streak calendar, re-practice mode, dynamic question pool, additional modes) has been
@@ -973,6 +996,83 @@ this logic was rebuilt in v2 Epic C Part 3 (`QuestionArea`) — see below and
   (all `Spacing.three`+) for the same reason vertically. The vertical scroll indicator is
   hidden (`showsVerticalScrollIndicator={false}`). The detail screen's `ScrollView` got the
   identical treatment.
+- **Search + view toggle (Epic D Part 5, done):** between the header and the list sit two
+  new controls, both defined inline in `history/index.tsx` (`SearchBar` / `ViewToggle`
+  local components; the Part 5 `CalendarPlaceholder` was replaced by `MonthCalendar` in
+  Part 6):
+  - **Search bar** — a pill-shaped `Theme.colors.card` field (`Theme.colors.border` 1px
+    outline, `Theme.radius.pill`, `magnifyingglass` leading icon, an `xmark.circle.fill`
+    clear button once non-empty). It drives a **purely client-side** filter — `search` state
+    → trimmed/lowercased `query` → a `useMemo`'d `filteredRecordings` that keeps rows where
+    `matchesSearch()` finds `query` as a **case-insensitive substring** of either the
+    `title` (or the literal **`'Untitled recording'`** — `UNTITLED_LABEL`, the same constant
+    the card's NULL-title fallback renders, so searching "untitled" surfaces those rows) or
+    the `question`/prompt text (a NULL question simply never matches — the "No prompt" card
+    fallback is *not* searchable). **No new backend query** — a deliberate decision (the
+    list is capped at 30 rows/user; `fetchRecordings()` is unchanged). No fuzzy matching, no
+    ranking. The FlatList renders `filteredRecordings`; polling / focus-refetch / all the
+    per-row action state are untouched and still operate on the full `recordings` list.
+  - **Calendar/List toggle** — a minimalist **underline-style** tab pair (`ViewToggle`:
+    two `Pressable`s, the active one carries a 2px `Theme.colors.textPrimary` bottom border
+    sitting on the row's hairline `Theme.colors.border` divider; active label is `smallBold`
+    + `text`, inactive `small` + `textSecondary`). Not a segmented control / button pair.
+    `view` state defaults to **`'list'`**.
+    - **`'list'`** — the existing restyled cards (Part 3) + 3-dot menu (Part 4), now showing
+      `filteredRecordings`. A search that matches nothing shows a distinct **"No recordings
+      match …"** centred message — separate from the Phase 1 **"No recordings yet"** empty
+      state (which still only shows when the user genuinely has zero recordings; the search
+      bar + toggle are hidden entirely in that case, and during the initial load).
+    - **`'calendar'`** — the real month grid as of Part 6 (`MonthCalendar`); see the
+      "Calendar view (Epic D Part 6)" bullet below.
+  - **Auto-switch:** `handleSearchChange` — typing a **non-empty** term flips `view` to
+    `'list'` (if it was `'calendar'`) so the filtered results are visible, **and** clears any
+    active `dayFilter` (search and day filter are mutually exclusive — see Part 6). Clearing
+    the search does **not** switch back or restore a day filter (that would feel like the UI
+    fighting the user — they stay on whatever view they last chose).
+
+- **Calendar view (Epic D Part 6, done):** `MonthCalendar`, a local component in
+  `history/index.tsx`, plus `dayKey()` / `formatDayLabel()` helpers and a `WEEKDAY_LABELS`
+  const. No card surface — the grid sits directly on the flat cream background.
+  - **Grid:** a standard 7-column week layout. `new Date(year, month, 1).getDay()` gives the
+    leading-blank count, `new Date(year, month + 1, 0).getDate()` the day count; cells are
+    padded with trailing `null`s to a whole number of weeks. Weekday header row is
+    `S M T W T F S`. Each in-month day is a `Pressable` (`width: '14.2857%'`) with a 34×34
+    rounded inner circle for the number and a fixed-height dot slot below it. **Today** gets a
+    hairline `Theme.colors.border` ring; the **selected** day (`selectedKey === dayFilter`)
+    gets a `Theme.colors.accent` fill with `Theme.colors.onAccent` text.
+  - **Month nav:** `calendar` state (`{ year, month }`, `month` 0-11, defaults to the current
+    month). `changeMonth(delta)` rolls over via `new Date(year, month + delta, 1)`. The
+    **next** chevron is disabled (and dimmed to `Theme.colors.border`) once `calendar` is at
+    or past the current month — there can be no future recordings.
+  - **Per-day dots:** `recordingsByDay`, a `useMemo`'d `Map<dayKey, count>` built from the
+    **full** already-loaded `recordings` list (not `filteredRecordings` — dots always reflect
+    every recording), grouping by `dayKey(new Date(row.created_at))` = the **local** `YYYY-MM-DD`
+    (local date parts on purpose, so an 11pm recording lands on the day the user made it).
+    **No new backend query** — same data source as List and search.
+  - **Day tap (`handleSelectDay(key, count)`):**
+    - `count === 0` → set `emptyDayNotice = key` (a subtle "No recordings on {date}." line
+      under the grid) and return. No navigation, no crash.
+    - `key === dayFilter` (tapping the already-selected day) → clear the filter (`setDayFilter(null)`).
+    - otherwise → `setDayFilter(key)`, `setSearch('')` (clear any search — mutually exclusive),
+      `setView('list')`. This **switches to List view pre-filtered to that date** rather than
+      rendering an inline list — deliberately, so Part 3's card styling and Part 4's 3-dot menu
+      are reused as-is instead of building a second list rendering.
+  - **`dayFilter` in `filteredRecordings`:** when set, `filteredRecordings` also filters to
+    rows whose `dayKey(created_at)` matches. Search and day filter are applied independently in
+    the `useMemo` (robust even though the UI keeps them mutually exclusive). Polling /
+    focus-refetch / per-row action state are untouched and still operate on the full list.
+  - **Getting back to "everything":** a **"Showing {date}" chip** (pill, `Theme.colors.card` +
+    `border`, an `xmark.circle.fill`) renders above the filtered List; tapping it clears
+    `dayFilter`. If a day filter ends up matching nothing (e.g. the day's last recording was
+    just deleted), the List shows a "No recordings on {date}." centred message with the chip
+    still present as the way out.
+  - **Search interaction (the decision):** tapping a day **clears** any active search term,
+    rather than AND-combining the two filters. "Show me everything from this day" is a clear,
+    singular intent that a leftover search term would confusingly narrow. The reverse also
+    holds — typing a search clears any active day filter. The two are never active at once.
+  - **View-switch:** switching Calendar↔List via the toggle (`handleChangeView`) keeps
+    `dayFilter` (so returning to Calendar still highlights the selected day, and returning to
+    List still shows it filtered) but clears `emptyDayNotice`.
 - **List card restyle (v2 Epic D Part 3, done):** each row is a `<Card>` (so the fill is
   `Theme.colors.card`, plus the shared inset border, `Theme.radius.card`, and card shadow — the
   card border is left as `<Card>`'s own `cardBorder`, not overridden to `Theme.colors.border`,
@@ -1876,7 +1976,9 @@ v2 Epic D — a short, human-readable label per recording ("Challenging Coworker
 heading of each restyled History **list** card (see "List display (Part 3)" below and
 [History](#history)'s "List card restyle" bullet). Existing recordings keep `title = null` —
 **no backfill**; they get a title if regenerated, if a user sets one by hand (Part 2), or
-naturally on new recordings. The History **detail-screen** visual restyle is still Part 5+.
+naturally on new recordings. The History **detail-screen** visual restyle was **not** part of
+Epic D (Part 6 shipped the calendar instead) — it's deferred to a later epic; the detail
+screen is still functionally correct on the pre-restyle layout.
 
 - **Schema:** `title` nullable `text` on `recordings`, migration
   `supabase/migrations/0005_recording_title.sql` (`alter table public.recordings add column
@@ -1962,6 +2064,86 @@ naturally on new recordings. The History **detail-screen** visual restyle is sti
   generation miss — both rare, and both fixable by the user via the Part 2 detail-screen editor.
 - The question/"No prompt" secondary line, the mode pill, date and star are described in
   [History](#history)'s "List card restyle" bullet.
+
+## Epic D wrap-up
+
+Same spirit as the [Phase 3 assessment](#phase-3-assessment) and [Phase 4 exit
+checkpoint](#phase-4-exit-checkpoint): does the full History experience hold together as one
+coherent screen after all 6 parts, and what's still shaky before Epic E?
+
+**All 6 parts, and where each lives:**
+1. **Title generation** (Part 1) — `backend/app/services/feedback.py` returns
+   `GeneratedFeedback(feedback, title)` from one structured-JSON Gemini call; `process_recording`
+   stores `title` alongside `status: 'done'`. Migration `0005_recording_title.sql`. Lenient on a
+   missing title (row still `done`, `title` = `NULL`).
+2. **Title editing** (Part 2) — `TitleSection` on the detail screen; pencil → pre-filled input →
+   `updateRecordingTitle()` direct-Supabase update, not optimistic, handles `NULL`.
+3. **List card restyle** (Part 3) — each row a `<Card>`: title heading (muted "Untitled
+   recording" fallback), question/"No prompt" line, colour-coded mode pill, right-aligned
+   date, favorite star.
+4. **3-dot menu** (Part 4) — shared `RecordingActionsMenu` on list + detail: Download audio,
+   Delete audio, Delete recording (new backend `DELETE /recordings/{id}`, `Alert.alert`-gated),
+   Regenerate report (failed only). `DownloadAudioButton` / `DeleteAudioButton` deleted.
+5. **Search + toggle** (Part 5) — client-side substring filter over `title` + `question`;
+   minimalist underline Calendar/List tabs.
+6. **Calendar** (Part 6) — `MonthCalendar`: 7-column month grid, capped next-month nav,
+   client-side per-day dots from `created_at` local date, tap-a-day → List filtered to that
+   date, "Showing {date}" chip to reset, search and day filter mutually exclusive.
+
+**Built and internally consistent, confirmed by reading the code:** every part composes through
+the same `RecordingRow` shape and the one `fetchRecordings()` query (widened once, for `title`).
+The Part 6 calendar adds only client-side derived state (`recordingsByDay` memo, `dayFilter` /
+`calendar` / `emptyDayNotice`) — no new query, no backend change, no new dependency. Polling,
+focus-refetch, and every per-row action (favorite / regenerate / delete audio / delete recording
+/ download) still operate on the **full** `recordings` list; only what the `FlatList` renders
+(`filteredRecordings`) is narrowed by search/day. `npx tsc --noEmit` and `eslint` are clean.
+
+**What's verified vs. not:** type-check + lint only — **no on-device pass yet**, same standing
+caveat as every Phase 3/4 step (see [Phase 3 assessment](#phase-3-assessment)). Epic D's earlier
+parts (1–5) were also never given a dedicated Expo-Go pass; this wrap-up's test plan below covers
+the whole History surface in one run.
+
+**Shaky / worth knowing before Epic E:**
+- **A pipeline run still overwrites a hand-set title** (flagged in [Recording
+  titles](#recording-titles)) — unchanged by Part 6.
+- **`formatRecordedAt` vs. `dayKey` both use local time** — consistent with each other, so a
+  card's displayed date always matches the calendar cell it's filed under. But a user who
+  travels across timezones between recording and viewing could see a recording shift days.
+  Accepted — matches how a phone's own calendar/photos behave.
+- **The History detail-screen visual restyle never happened** — Part 6 shipped the calendar
+  instead. The detail screen is functionally complete but still on the pre-redesign layout
+  (`ThemedText`/`ThemedView`, no `<Card>` treatment for its main sections beyond what Part 2/4
+  touched). Not a regression; just unfinished polish, to be picked up in a later epic.
+- **`MonthCalendar` re-derives the grid every render** (no `useMemo` on `cells`) — trivial at
+  28–31 cells, not worth memoising.
+- **Month nav has no lower bound** — you can page back indefinitely into empty months. Harmless
+  (grid just shows no dots); a "jump to today" affordance could be nice later but isn't needed.
+
+**Nothing found that blocks starting Epic E.**
+
+**History end-to-end test plan** (one pass, supersedes per-part spot checks):
+1. Open History with several recordings — confirm the restyled list: title headings, "Untitled
+   recording" on any NULL-title row, question / "No prompt" line, colour-coded mode pills,
+   dates, stars.
+2. Tap a row → detail screen. Edit the title (pencil → change → confirm), back out, confirm the
+   list shows the new title. Re-open, "Cancel" an edit, confirm no change.
+3. On the list, open the 3-dot menu on a row: confirm Download / Delete audio / Delete recording
+   appear (Regenerate only on a `failed` row). Run Download (share sheet opens), Delete audio
+   (no confirm, menu items update). On a throwaway row run Delete recording → confirm the
+   `Alert.alert`, confirm, and the **whole row** disappears.
+4. Type in the search bar — confirm the list filters live on title + prompt substring; confirm
+   "No recordings match …" for a non-matching term; clear it.
+5. Switch to **Calendar** — confirm the current month renders with a dot on each day you
+   actually recorded something, today ringed.
+6. Tap a day **with** a recording — confirm it switches to List, shows a "Showing {date}" chip,
+   and lists only that day's recording(s). Tap the chip → back to the full list.
+7. Switch back to Calendar, tap a day with **nothing** — confirm no crash, just a subtle "No
+   recordings on …" line.
+8. Navigate to a previous month (‹) — confirm it renders correctly (dots if you have old
+   recordings, an empty grid otherwise). Confirm the next-month (›) chevron is disabled/dimmed
+   once you're back on the current month.
+9. Type a search term, then switch to Calendar and tap a day — confirm the search term is
+   **cleared** (not AND-combined) and you see everything from that day.
 
 ## Background processing
 
