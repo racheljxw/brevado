@@ -14,15 +14,14 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { AudioPlaybackControls } from '@/components/audio-playback-controls';
 import { Card } from '@/components/card';
-import { DeleteAudioButton } from '@/components/delete-audio-button';
-import { DownloadAudioButton } from '@/components/download-audio-button';
 import { FavoriteStar } from '@/components/favorite-star';
+import { RecordingActionsMenu, type RecordingMenuAction } from '@/components/recording-actions-menu';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { WebBadge } from '@/components/web-badge';
 import { BottomTabInset, MaxContentWidth, Spacing, Theme } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
-import { deleteRecordingAudio, regenerateReport } from '@/lib/api';
+import { deleteRecording, deleteRecordingAudio, regenerateReport } from '@/lib/api';
 import { formatRecordedAt } from '@/lib/format-time';
 import { formatMode } from '@/lib/modes';
 import { getStatusPresentation, TERMINAL_STATUSES } from '@/lib/recording-status';
@@ -193,27 +192,14 @@ function TitleSection({
 // Audio playback section: reused as-is regardless of the recording's
 // `status` — audio finishes uploading (and the row is created) *before*
 // backend processing ever starts, so it exists for a pending/processing/
-// failed recording just as much as a done one. Only `audio_deleted` (Step 5,
-// not built yet — see docs/CLAUDE.md's History section) changes what this
-// renders, which is why that check is built now even though the flag is
-// always false today.
-function AudioSection({
-  recording,
-  onDeleteAudio,
-  deletingAudio,
-  deleteAudioError,
-  onDownloadAudio,
-  downloadingAudio,
-  downloadAudioError,
-}: {
-  recording: RecordingDetail;
-  onDeleteAudio: () => void;
-  deletingAudio: boolean;
-  deleteAudioError: string | null;
-  onDownloadAudio: () => void;
-  downloadingAudio: boolean;
-  downloadAudioError: string | null;
-}) {
+// failed recording just as much as a done one. Only `audio_deleted` changes
+// what this renders.
+//
+// v2 Epic D Part 4 — the "Download audio" / "Delete audio" rows that used to
+// live here are gone; those actions (plus "Delete recording" and, when
+// failed, "Regenerate report") now live in the header's `RecordingActionsMenu`.
+// This section is purely playback again.
+function AudioSection({ recording }: { recording: RecordingDetail }) {
   const theme = useTheme();
   const [audioState, setAudioState] = useState<AudioState>('idle');
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
@@ -263,80 +249,26 @@ function AudioSection({
     );
   }
 
-  // Phase 3 Step 6 — the download/export action, rendered above delete
-  // (below) for the same reason both exist in the list's `audioActionsRow`
-  // side by side — this pairs naturally with delete as an "export before
-  // delete" flow, though the two are fully independent (no forced
-  // ordering, no dependency between them). Rendered in every playback state
-  // just like delete — audio exists to download whether or not the
-  // playback signed URL happened to load successfully.
-  const downloadRow = (
-    <View style={styles.deleteAudioRow}>
-      <DownloadAudioButton onDownload={onDownloadAudio} pending={downloadingAudio} />
-      <ThemedText type="small" themeColor="textSecondary">
-        Download audio
-      </ThemedText>
-      {downloadAudioError && (
-        <ThemedText type="small" style={{ color: '#e5484d' }}>
-          {downloadAudioError}
-        </ThemedText>
-      )}
-    </View>
-  );
-
-  // Phase 3 Step 5 — the delete action itself, rendered below playback
-  // regardless of whether playback is still loading/ready/errored (audio
-  // exists in all three of those states, so there's always something to
-  // delete). No confirmation dialog, per an explicit product decision — see
-  // docs/CLAUDE.md's History section.
-  const deleteRow = (
-    <View style={styles.deleteAudioRow}>
-      <DeleteAudioButton onDelete={onDeleteAudio} pending={deletingAudio} />
-      <ThemedText type="small" themeColor="textSecondary">
-        Delete audio
-      </ThemedText>
-      {deleteAudioError && (
-        <ThemedText type="small" style={{ color: '#e5484d' }}>
-          {deleteAudioError}
-        </ThemedText>
-      )}
-    </View>
-  );
-
   if (audioState === 'loading' || audioState === 'idle') {
     return (
-      <>
-        <View style={styles.centerRow}>
-          <ActivityIndicator color={theme.textSecondary} />
-        </View>
-        {downloadRow}
-        {deleteRow}
-      </>
+      <View style={styles.centerRow}>
+        <ActivityIndicator color={theme.textSecondary} />
+      </View>
     );
   }
 
   if (audioState === 'error') {
     return (
-      <>
-        <Card style={styles.card}>
-          <ThemedText type="small">{audioError ?? 'Could not load audio.'}</ThemedText>
-          <Pressable onPress={loadAudioUrl}>
-            <ThemedText type="link">Retry</ThemedText>
-          </Pressable>
-        </Card>
-        {downloadRow}
-        {deleteRow}
-      </>
+      <Card style={styles.card}>
+        <ThemedText type="small">{audioError ?? 'Could not load audio.'}</ThemedText>
+        <Pressable onPress={loadAudioUrl}>
+          <ThemedText type="link">Retry</ThemedText>
+        </Pressable>
+      </Card>
     );
   }
 
-  return (
-    <>
-      <AudioPlaybackControls uri={audioUrl!} />
-      {downloadRow}
-      {deleteRow}
-    </>
-  );
+  return <AudioPlaybackControls uri={audioUrl!} />;
 }
 
 // The transcript/metrics/feedback section — only meaningful once the
@@ -453,6 +385,7 @@ export default function RecordingDetailScreen() {
   const params = useLocalSearchParams<{ id: string }>();
   const id = Array.isArray(params.id) ? params.id[0] : params.id;
   const theme = useTheme();
+  const router = useRouter();
 
   const [screenState, setScreenState] = useState<ScreenState>('loading');
   const [recording, setRecording] = useState<RecordingDetail | null>(null);
@@ -464,6 +397,8 @@ export default function RecordingDetailScreen() {
   const [deleteAudioError, setDeleteAudioError] = useState<string | null>(null);
   const [downloadingAudio, setDownloadingAudio] = useState(false);
   const [downloadAudioError, setDownloadAudioError] = useState<string | null>(null);
+  const [deletingRecording, setDeletingRecording] = useState(false);
+  const [deleteRecordingError, setDeleteRecordingError] = useState<string | null>(null);
   const [savingTitle, setSavingTitle] = useState(false);
   const [titleSaveError, setTitleSaveError] = useState<string | null>(null);
 
@@ -617,6 +552,36 @@ export default function RecordingDetailScreen() {
     }
   }, [recording]);
 
+  // v2 Epic D Part 4 — permanently delete the whole recording (row + audio).
+  // Gated behind a confirmation dialog in `RecordingActionsMenu` before it
+  // reaches here — the irreversible loss of transcript/feedback/metrics is
+  // why this one action confirms where "Delete audio" doesn't. Not
+  // optimistic: on success there's nothing left to show, so we navigate back
+  // to the list (which refetches on focus, so the row — and its freed cap
+  // slot — reflect immediately). On failure, stay put with an inline error.
+  const handleDeleteRecording = useCallback(async () => {
+    if (!recording) return;
+    setDeletingRecording(true);
+    setDeleteRecordingError(null);
+    try {
+      await deleteRecording(recording.id);
+      router.back();
+    } catch (err) {
+      setDeleteRecordingError(err instanceof Error ? err.message : 'Could not delete recording — try again.');
+      setDeletingRecording(false);
+    }
+  }, [recording, router]);
+
+  const handleMenuAction = useCallback(
+    (action: RecordingMenuAction) => {
+      if (action === 'download') handleDownloadAudio();
+      else if (action === 'delete-audio') handleDeleteAudio();
+      else if (action === 'delete-recording') handleDeleteRecording();
+      else if (action === 'regenerate') handleRegenerate();
+    },
+    [handleDownloadAudio, handleDeleteAudio, handleDeleteRecording, handleRegenerate]
+  );
+
   // v2 Epic D Part 2 — persist a user-edited title. A direct Supabase update
   // (`updateRecordingTitle`), not a backend endpoint — same call and same
   // reasoning as the favorite toggle: RLS already scopes it to this user and
@@ -699,11 +664,43 @@ export default function RecordingDetailScreen() {
                   </ThemedText>
                 </View>
                 <FavoriteStar favorite={recording.favorite} onToggle={handleToggleFavorite} disabled={favoritePending} />
+                {/* v2 Epic D Part 4 — the same 3-dot menu as the History list
+                    card. Download / Delete audio / Delete recording, plus
+                    Regenerate report when failed (also offered as the
+                    prominent button in `ReportSection` below — kept in both
+                    for menu parity with the list). */}
+                <RecordingActionsMenu
+                  canDownload={!recording.audio_deleted && !!recording.audio_path}
+                  canDeleteAudio={!recording.audio_deleted}
+                  canRegenerate={recording.status === 'failed'}
+                  busy={downloadingAudio || deletingAudio || deletingRecording || regenerating}
+                  onSelect={handleMenuAction}
+                />
               </View>
             </View>
             <ThemedText type="small" themeColor="textSecondary" style={styles.modeLabel}>
               {formatMode(recording.mode)}
             </ThemedText>
+
+            {(downloadAudioError || deleteAudioError || deleteRecordingError) && (
+              <View style={styles.actionErrors}>
+                {downloadAudioError && (
+                  <ThemedText type="small" style={styles.actionErrorText}>
+                    {downloadAudioError}
+                  </ThemedText>
+                )}
+                {deleteAudioError && (
+                  <ThemedText type="small" style={styles.actionErrorText}>
+                    {deleteAudioError}
+                  </ThemedText>
+                )}
+                {deleteRecordingError && (
+                  <ThemedText type="small" style={styles.actionErrorText}>
+                    {deleteRecordingError}
+                  </ThemedText>
+                )}
+              </View>
+            )}
 
             {/* Phase 4 Step 5 exit-checkpoint review: `question` was already
                 fetched (`fetchRecordingById` selects it) but never rendered —
@@ -720,15 +717,7 @@ export default function RecordingDetailScreen() {
             )}
 
             <View style={styles.section}>
-              <AudioSection
-                recording={recording}
-                onDeleteAudio={handleDeleteAudio}
-                deletingAudio={deletingAudio}
-                deleteAudioError={deleteAudioError}
-                onDownloadAudio={handleDownloadAudio}
-                downloadingAudio={downloadingAudio}
-                downloadAudioError={downloadAudioError}
-              />
+              <AudioSection recording={recording} />
             </View>
 
             <ReportSection
@@ -772,11 +761,12 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     paddingVertical: Spacing.four,
   },
-  deleteAudioRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: Spacing.two,
-    marginTop: Spacing.two,
+  actionErrors: {
+    gap: Spacing.one,
+    marginTop: -Spacing.one,
+  },
+  actionErrorText: {
+    color: '#e5484d',
   },
   centerText: {
     textAlign: 'center',

@@ -5,13 +5,18 @@ const apiUrl = process.env.EXPO_PUBLIC_API_URL;
 export class ProcessingRequestError extends Error {}
 
 /**
- * Shared by `startProcessing` and `regenerateReport` — both are the same
- * shape of request (POST, bearer token, no body, expect 202) against
- * different paths on the same backend router
- * (`backend/app/routers/recordings.py`). Kept private; callers use the two
- * named exports below so call sites stay self-explanatory.
+ * Shared by every backend `recordings` call in this module — `startProcessing`
+ * / `regenerateReport` (POST, expect 202), `deleteRecordingAudio` and
+ * `deleteRecording` (DELETE, expect 200). All are the same shape: a
+ * bearer-token request with no body against a path on the same backend router
+ * (`backend/app/routers/recordings.py`). Kept private; callers use the named
+ * exports below so call sites stay self-explanatory.
  */
-async function postRecordingAction(recordingId: string, action: 'process' | 'regenerate'): Promise<void> {
+async function authorizedRecordingRequest(
+  path: string,
+  method: 'POST' | 'DELETE',
+  actionLabel: string
+): Promise<void> {
   if (!apiUrl) {
     throw new ProcessingRequestError(
       'Missing EXPO_PUBLIC_API_URL. Copy .env.example to .env and set it, then restart the dev server.'
@@ -24,15 +29,19 @@ async function postRecordingAction(recordingId: string, action: 'process' | 'reg
     throw new ProcessingRequestError('No active session — cannot authorize the request.');
   }
 
-  const response = await fetch(`${apiUrl}/recordings/${recordingId}/${action}`, {
-    method: 'POST',
+  const response = await fetch(`${apiUrl}${path}`, {
+    method,
     headers: { Authorization: `Bearer ${accessToken}` },
   });
 
   if (!response.ok) {
     const body = await response.text().catch(() => '');
-    throw new ProcessingRequestError(`Backend rejected the ${action} request (${response.status}): ${body}`);
+    throw new ProcessingRequestError(`Backend rejected the ${actionLabel} request (${response.status}): ${body}`);
   }
+}
+
+function postRecordingAction(recordingId: string, action: 'process' | 'regenerate'): Promise<void> {
+  return authorizedRecordingRequest(`/recordings/${recordingId}/${action}`, 'POST', action);
 }
 
 /**
@@ -91,25 +100,27 @@ export async function regenerateReport(recordingId: string): Promise<void> {
  * "are you sure?" prompt.
  */
 export async function deleteRecordingAudio(recordingId: string): Promise<void> {
-  if (!apiUrl) {
-    throw new ProcessingRequestError(
-      'Missing EXPO_PUBLIC_API_URL. Copy .env.example to .env and set it, then restart the dev server.'
-    );
-  }
+  return authorizedRecordingRequest(`/recordings/${recordingId}/audio`, 'DELETE', 'delete-audio');
+}
 
-  const { data, error: sessionError } = await supabase.auth.getSession();
-  const accessToken = data.session?.access_token;
-  if (sessionError || !accessToken) {
-    throw new ProcessingRequestError('No active session — cannot authorize the request.');
-  }
-
-  const response = await fetch(`${apiUrl}/recordings/${recordingId}/audio`, {
-    method: 'DELETE',
-    headers: { Authorization: `Bearer ${accessToken}` },
-  });
-
-  if (!response.ok) {
-    const body = await response.text().catch(() => '');
-    throw new ProcessingRequestError(`Backend rejected the delete-audio request (${response.status}): ${body}`);
-  }
+/**
+ * v2 Epic D Part 4 — permanently deletes a whole recording: the `recordings`
+ * row AND its Storage audio file, together. Stronger and more destructive
+ * than `deleteRecordingAudio` above, which keeps the row (and its
+ * transcript/feedback/metrics) and only clears the audio file.
+ *
+ * Calls `DELETE /recordings/{id}` — a backend endpoint, not a direct Supabase
+ * call, for the same reason as `deleteRecordingAudio`: a Storage delete + a
+ * DB write both have to happen and must not disagree, and Storage has no
+ * client-side delete policy (see the `delete_recording` docstring in
+ * `backend/app/routers/recordings.py`). The endpoint is idempotent — calling
+ * it again once the row is gone returns success, not an error.
+ *
+ * Unlike `deleteRecordingAudio`, the UI DOES gate this behind a confirmation
+ * dialog (in `RecordingActionsMenu`) — losing the transcript/feedback/metrics
+ * permanently is a meaningfully bigger, irreversible loss than losing just
+ * the re-exportable audio file, so a stray menu tap shouldn't be enough.
+ */
+export async function deleteRecording(recordingId: string): Promise<void> {
+  return authorizedRecordingRequest(`/recordings/${recordingId}`, 'DELETE', 'delete-recording');
 }

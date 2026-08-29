@@ -4,16 +4,15 @@ import { ActivityIndicator, FlatList, Platform, Pressable, RefreshControl, Style
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { Card } from '@/components/card';
-import { DeleteAudioButton } from '@/components/delete-audio-button';
-import { DownloadAudioButton } from '@/components/download-audio-button';
 import { FavoriteStar } from '@/components/favorite-star';
 import { ProfileButton } from '@/components/profile-button';
+import { RecordingActionsMenu, type RecordingMenuAction } from '@/components/recording-actions-menu';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { WebBadge } from '@/components/web-badge';
 import { BottomTabInset, MaxContentWidth, Spacing, Theme } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
-import { deleteRecordingAudio, regenerateReport } from '@/lib/api';
+import { deleteRecording, deleteRecordingAudio, regenerateReport } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
 import { formatRecordedAt } from '@/lib/format-time';
 import { formatMode } from '@/lib/modes';
@@ -24,16 +23,6 @@ import { fetchRecordings, setFavorite, shareRecordingAudio, type RecordingRow } 
 // detail view (transcript/feedback/metrics/playback). `onPress` is threaded
 // through rather than reading `useRouter()` in here so this stays a plain
 // presentational component.
-//
-// Phase 3 Step 2: a `failed` row also gets its own "Regenerate report"
-// affordance, nested inside the row's outer `Pressable` (which still
-// navigates to the detail view on tap elsewhere in the row) — React
-// Native's touch responder system gives the inner `Pressable` exclusive
-// claim on its own taps, so pressing it doesn't also trigger navigation.
-// The spec calls for this living in a 3-dot menu; a plain inline text
-// action reads just as clearly at this app's scale and needs no new menu
-// component, so that's what's here for now (consolidation into that menu is
-// Epic D Part 4).
 //
 // v2 Epic D Part 3 — the card is restyled to the design screenshots:
 //   - the recording `title` (Part 1/2) as the bold heading, with the
@@ -47,10 +36,13 @@ import { fetchRecordings, setFavorite, shareRecordingAudio, type RecordingRow } 
 //     meta row, with the date/time right-aligned opposite it. No status
 //     badge — the failed-row "Regenerate report" action keys off
 //     `recording.status` directly, not a visible badge.
-//   - the existing download/delete/regenerate actions are unchanged in
-//     behaviour — only their icon tint was neutralised to theme tokens so
-//     they don't clash with the restyled card. Consolidating them into a
-//     3-dot menu (+ a new "Delete recording") is Part 4.
+//
+// v2 Epic D Part 4 — the old inline row of icon actions (download / delete
+// audio) plus the inline "Regenerate report" text action are gone,
+// consolidated into a single `RecordingActionsMenu` (the "3-dot" menu) on
+// the heading line next to the favorite star, which also carries the new
+// "Delete recording" action (removes the whole row + its audio). The star
+// deliberately stays its own always-visible icon, not a menu item.
 function modePillColors(mode: string): { backgroundColor: string; color: string } {
   switch (mode) {
     case 'interview':
@@ -75,6 +67,9 @@ function RecordingListItem({
   onDeleteAudio,
   deletingAudio,
   deleteAudioError,
+  onDeleteRecording,
+  deletingRecording,
+  deleteRecordingError,
   onDownloadAudio,
   downloadingAudio,
   downloadAudioError,
@@ -89,19 +84,29 @@ function RecordingListItem({
   onDeleteAudio: () => void;
   deletingAudio: boolean;
   deleteAudioError?: string;
+  onDeleteRecording: () => void;
+  deletingRecording: boolean;
+  deleteRecordingError?: string;
   onDownloadAudio: () => void;
   downloadingAudio: boolean;
   downloadAudioError?: string;
 }) {
-  const theme = useTheme();
   const modePill = modePillColors(recording.mode);
+
+  function handleMenuAction(action: RecordingMenuAction) {
+    if (action === 'download') onDownloadAudio();
+    else if (action === 'delete-audio') onDeleteAudio();
+    else if (action === 'delete-recording') onDeleteRecording();
+    else if (action === 'regenerate') onRegenerate();
+  }
 
   return (
     <Pressable onPress={onPress} style={({ pressed }) => pressed && styles.pressed}>
       <Card style={styles.row}>
         {/* Heading: the recording title (or a muted fallback for a NULL
             title — a legacy row, or one where generation returned nothing),
-            with the favorite star sharing the line. */}
+            with the favorite star and the 3-dot actions menu sharing the
+            line. */}
         <View style={styles.titleRow}>
           <ThemedText
             type="smallBold"
@@ -111,6 +116,13 @@ function RecordingListItem({
             {recording.title ?? 'Untitled recording'}
           </ThemedText>
           <FavoriteStar favorite={recording.favorite} onToggle={onToggleFavorite} disabled={favoritePending} size={20} />
+          <RecordingActionsMenu
+            canDownload={!recording.audio_deleted && !!recording.audio_path}
+            canDeleteAudio={!recording.audio_deleted}
+            canRegenerate={recording.status === 'failed'}
+            busy={downloadingAudio || deletingAudio || deletingRecording || regenerating}
+            onSelect={handleMenuAction}
+          />
         </View>
 
         {/* Phase 4 Step 5 exit-checkpoint review: the question/topic (real as
@@ -136,44 +148,29 @@ function RecordingListItem({
           </ThemedText>
         </View>
 
-        {/* Per-row audio actions — download (Step 6) and delete (Step 5).
-            Nothing renders once audio_deleted is true — there's no audio
-            left to act on, for either action. Behaviour unchanged in Part 3;
-            these fold into a 3-dot menu in Part 4. */}
-        {!recording.audio_deleted && (
-          <View style={styles.audioActionsRow}>
-            {recording.audio_path && (
-              <DownloadAudioButton onDownload={onDownloadAudio} pending={downloadingAudio} size={18} />
-            )}
-            <DeleteAudioButton onDelete={onDeleteAudio} pending={deletingAudio} size={18} />
-          </View>
-        )}
+        {/* Per-row action outcomes. The actions themselves (download / delete
+            audio / delete recording / regenerate) live in the 3-dot
+            `RecordingActionsMenu` on the heading line as of Part 4; only
+            their error messages surface down here. */}
         {downloadAudioError && (
-          <ThemedText type="small" style={{ color: '#e5484d' }}>
+          <ThemedText type="small" style={styles.actionError}>
             {downloadAudioError}
           </ThemedText>
         )}
         {deleteAudioError && (
-          <ThemedText type="small" style={{ color: '#e5484d' }}>
+          <ThemedText type="small" style={styles.actionError}>
             {deleteAudioError}
           </ThemedText>
         )}
-
-        {recording.status === 'failed' && (
-          <View style={styles.regenerateRow}>
-            <Pressable onPress={onRegenerate} disabled={regenerating} hitSlop={8}>
-              {regenerating ? (
-                <ActivityIndicator size="small" color={theme.textSecondary} />
-              ) : (
-                <ThemedText type="link">Regenerate report</ThemedText>
-              )}
-            </Pressable>
-            {regenerateError && (
-              <ThemedText type="small" style={{ color: '#e5484d' }}>
-                {regenerateError}
-              </ThemedText>
-            )}
-          </View>
+        {deleteRecordingError && (
+          <ThemedText type="small" style={styles.actionError}>
+            {deleteRecordingError}
+          </ThemedText>
+        )}
+        {regenerateError && (
+          <ThemedText type="small" style={styles.actionError}>
+            {regenerateError}
+          </ThemedText>
         )}
       </Card>
     </Pressable>
@@ -211,6 +208,11 @@ export default function HistoryScreen() {
   // shape as delete/regenerate above (independent per row, keyed by id).
   const [downloadingAudioIds, setDownloadingAudioIds] = useState<Set<string>>(new Set());
   const [downloadAudioErrors, setDownloadAudioErrors] = useState<Record<string, string>>({});
+
+  // v2 Epic D Part 4 — per-row "delete recording" (whole row + audio)
+  // in-flight/error state, same shape as the audio-delete state above.
+  const [deletingRecordingIds, setDeletingRecordingIds] = useState<Set<string>>(new Set());
+  const [deleteRecordingErrors, setDeleteRecordingErrors] = useState<Record<string, string>>({});
 
   // Step 7: monotonically-increasing id for each `load()` call, so a
   // response can tell whether a *newer* request has been issued since it
@@ -420,6 +422,39 @@ export default function HistoryScreen() {
     }
   }
 
+  // v2 Epic D Part 4 — permanently delete a whole recording (row + audio).
+  // Gated behind a confirmation dialog in `RecordingActionsMenu` before it
+  // reaches here. Not optimistic, matching `handleDeleteAudio`: the row is
+  // only dropped from local state once the backend confirms the delete
+  // landed (see `deleteRecording` in src/lib/api.ts / `delete_recording` in
+  // the backend router). The list refetches on focus anyway, so a slot
+  // freed under `MAX_RECORDINGS_PER_USER` reflects on the next Record-tab
+  // visit — the deleted row simply no longer exists to be counted.
+  async function handleDeleteRecording(id: string) {
+    setDeletingRecordingIds((prev) => new Set(prev).add(id));
+    setDeleteRecordingErrors((prev) => {
+      if (!(id in prev)) return prev;
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
+    try {
+      await deleteRecording(id);
+      setRecordings((prev) => prev?.filter((row) => row.id !== id) ?? prev);
+    } catch (err) {
+      setDeleteRecordingErrors((prev) => ({
+        ...prev,
+        [id]: err instanceof Error ? err.message : 'Could not delete recording — try again.',
+      }));
+    } finally {
+      setDeletingRecordingIds((prev) => {
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
+    }
+  }
+
   const showInitialLoading = loading && recordings === null;
   const showEmpty = !loading && !error && recordings?.length === 0;
 
@@ -468,6 +503,9 @@ export default function HistoryScreen() {
                 onDeleteAudio={() => handleDeleteAudio(item.id)}
                 deletingAudio={deletingAudioIds.has(item.id)}
                 deleteAudioError={deleteAudioErrors[item.id]}
+                onDeleteRecording={() => handleDeleteRecording(item.id)}
+                deletingRecording={deletingRecordingIds.has(item.id)}
+                deleteRecordingError={deleteRecordingErrors[item.id]}
                 onDownloadAudio={() => handleDownloadAudio(item.id, item.audio_path)}
                 downloadingAudio={downloadingAudioIds.has(item.id)}
                 downloadAudioError={downloadAudioErrors[item.id]}
@@ -563,17 +601,8 @@ const styles = StyleSheet.create({
     flexShrink: 1,
     textAlign: 'right',
   },
-  audioActionsRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'flex-end',
-    gap: Spacing.three,
-  },
-  regenerateRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: Spacing.two,
-    marginTop: Spacing.half,
+  actionError: {
+    color: '#e5484d',
   },
   errorCard: {
     gap: Spacing.two,

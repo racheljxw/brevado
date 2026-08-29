@@ -52,10 +52,20 @@ for the full summary. Progress so far:
     directly). The existing inline download/delete/regenerate actions are **unchanged in
     behaviour** — only their icon tint was neutralised to theme tokens. See
     [History](#history)'s "List card restyle (Epic D Part 3)" bullet.
-  - **Part 4 (next):** the per-row **3-dot menu** consolidation — folding
-    download/delete/regenerate into a menu and adding the new "Delete recording" action
-    (removes row + audio together). Then Part 5+: the search bar, the calendar/list toggle,
-    and the detail-screen restyle.
+  - **Part 4 (done):** the per-row **3-dot menu** consolidation. A shared
+    `RecordingActionsMenu` (`src/components/recording-actions-menu.tsx` — a themed bottom
+    sheet, not `ActionSheetIOS`) replaces the old inline icon row (`DownloadAudioButton` /
+    `DeleteAudioButton`, both **deleted**) and the inline "Regenerate report" text action,
+    on both the History **list** card (heading line, next to the always-visible favorite
+    star) and the **detail** screen (header row). Actions: **Download audio**, **Delete
+    audio** (unchanged Phase 3 Step 5 behaviour — row kept, audio cleared), **Delete
+    recording** (NEW — removes the whole row + its audio via a new backend endpoint), and
+    **Regenerate report** (shown only when `status === 'failed'`). "Delete recording" is the
+    one action gated behind an `Alert.alert` confirmation; "Delete audio" keeps its explicit
+    no-confirmation behaviour. See [History](#history)'s "3-dot actions menu (Epic D Part 4)"
+    bullet and [Delete recording](#delete-recording).
+  - **Part 5 (next):** the search bar, the calendar/list toggle, and the detail-screen
+    visual restyle.
 
 Sections below that predate a given Epic still describe the v1 implementation where that Epic
 hasn't rewritten them — History especially is still all-v1 until Epic D.
@@ -145,16 +155,22 @@ changes as a new numbered migration file rather than editing an applied one.
   only existed to compute the old
   7-day window. Retention is now a per-user cap, `MAX_RECORDINGS_PER_USER = 30` (counting rows
   where `audio_deleted = false`) — as of Phase 3 Step 3 this is enforced, not just defined; see
-  [Recording cap](#recording-cap) for where and how. Deletion is manual only (bin icon per history
-  row — built in Phase 3 Step 5, see [Audio delete](#audio-delete)), and only ever clears
-  `audio_path`/sets `audio_deleted = true`; it never removes the row.
+  [Recording cap](#recording-cap) for where and how. **Audio** deletion is manual (the 3-dot
+  menu's "Delete audio" per history row — built in Phase 3 Step 5, see
+  [Audio delete](#audio-delete)) and only ever clears `audio_path`/sets `audio_deleted = true`;
+  it never removes the row. As of v2 Epic D Part 4 the menu also has a **"Delete recording"**
+  action that *does* remove the whole row (+ its audio) — see [Delete recording](#delete-recording).
+  That runs through a backend endpoint on the service-role client, so it needs no `recordings`
+  DELETE RLS policy (none was added).
 - `questions` — stub only (`id`, `mode`, `prompt_text`, `created_at`), reserved shape for the
   Phase 4 hardcoded pool and Phase 6 (v3) dynamic pool / re-practice. Not queried anywhere yet.
 
 RLS is **on** for both tables and scoped to `user_id = auth.uid()` on `recordings` (select/insert/
-update only — no delete policy yet, add one deliberately if a "delete recording" feature shows
-up). `questions` is open-read (no user-specific data); writes to it go through the service-role
-key only, bypassing RLS. Storage (`recordings-audio` bucket, private) mirrors this: objects must
+update only — **still no DELETE policy, deliberately**: the v2 Epic D Part 4 "Delete recording"
+feature deletes rows through a backend endpoint using the service-role client, which bypasses RLS,
+so no client-facing DELETE policy was opened up — 0001's "add one deliberately if a delete feature
+shows up" note is satisfied by routing deletion server-side instead). `questions` is open-read (no
+user-specific data); writes to it go through the service-role key only, bypassing RLS. Storage (`recordings-audio` bucket, private) mirrors this: objects must
 live under a `{user_id}/...` path prefix, enforced by storage RLS policies in
 `0002_storage_bucket.sql`.
 
@@ -592,16 +608,16 @@ literal in the Record flow). Epic D Part 1 collapsed both into **one token,
   `QuestionArea` *does* use `Theme.colors.recordRed` — reconcile the `'record'` screen's when it's
   rebuilt in Part 4.
 - **Status badge colours** (`recording-status.ts`) still hardcode red/green — no warm-palette
-  tokens for error/success yet. (The History list card's other icons were neutralised to theme
-  tokens in Epic D Part 3, but the status badge was deliberately left alone pending these
-  tokens.)
+  tokens for error/success yet. Same for the inline **error text** on the History screens and in
+  `RecordingActionsMenu` (`#e5484d` literal). ("Delete recording" in the menu *does* use the
+  warm `Theme.colors.recordRed` token.)
 - **The one link blue** (`Theme.colors.link`, `#4B75DF`) is a deliberate warm-palette
   exception, not a mismatch to fix — see "Link colour consolidation" above. The auth
   submit-button now reuses it too.
 - ~~**`favorite-star.tsx`** uses `#f5a623`, not `Theme.colors.favoriteGold` (`#F3BF16`).~~
   Fixed in Epic D Part 3 — the active star now uses `Theme.colors.favoriteGold`; inactive stays
-  the muted `theme.textSecondary` outline. (Also `delete-audio-button.tsx`'s trash icon: was a
-  hardcoded `#e5484d`, now `theme.textSecondary` — see the Part 3 note in [History](#history).)
+  the muted `theme.textSecondary` outline. (`delete-audio-button.tsx` / `download-audio-button.tsx`
+  were **deleted** in Epic D Part 4 — those actions are now items in `RecordingActionsMenu`.)
 - **Splash screen** (`animated-icon.tsx` + `app.json` splash `#208AEF`) is still the Expo-template
   blue + Expo logo — needs a Brevado brand asset + cream bg.
 - **Nav bar ❌ items** above (stroke, drop shadow, iOS active pill) — need a custom tab bar.
@@ -967,15 +983,15 @@ this logic was rebuilt in v2 Epic C Part 3 (`QuestionArea`) — see below and
     (`formatRecordedAt`, `textSecondary`) **right-aligned opposite it**. **No status badge** —
     it was dropped from the list card in this pass; only the detail screen still shows one
     (`getStatusPresentation`).
-  - **Audio actions row:** the existing `DownloadAudioButton` / `DeleteAudioButton`, right-
-    aligned, **behaviourally unchanged**. Only the trash icon's tint changed (hardcoded
-    `#e5484d` → `Theme.colors.textSecondary`) so it doesn't jar against the card; the
-    destructive-red treatment moves onto the "Delete recording" item when these consolidate
-    into a **3-dot menu in Part 4**. `FavoriteStar`'s active tint also moved `#f5a623` →
-    `Theme.colors.favoriteGold` (a shared-component change, so the detail screen picks it up
-    too).
-  - Error text (`downloadAudioError` / `deleteAudioError` / `regenerateError`) and the failed-row
-    "Regenerate report" inline action are unchanged from earlier phases.
+  - **Heading-line actions (as of Epic D Part 4):** the `FavoriteStar` (active tint
+    `Theme.colors.favoriteGold`) and, to its right, the **`RecordingActionsMenu`** 3-dot
+    button. The old separate "audio actions row" (`DownloadAudioButton` / `DeleteAudioButton`)
+    is **gone** — those two components were deleted and their actions moved into the menu. See
+    the "3-dot actions menu" bullet below.
+  - Error text for a menu action that failed (`downloadAudioError` / `deleteAudioError` /
+    `deleteRecordingError` / `regenerateError`) renders as a small red line at the bottom of
+    the card. Same per-row keyed-by-id in-flight/error state as before, now with
+    `deletingRecordingIds` / `deleteRecordingErrors` added.
 - **What it shows** (layout restyled in Epic D Part 3 — see the "List card restyle" bullet just
   above for the current arrangement): the recording title, the question/prompt line (or "No
   prompt"), a colour-coded mode pill, and the date/time — no status badge (dropped from the list
@@ -999,20 +1015,33 @@ this logic was rebuilt in v2 Epic C Part 3 (`QuestionArea`) — see below and
   `fetchRecordings()`'s `select()` widened to include `question` (see above) — it wasn't in the
   list's original four columns since every recording had `question: null` when that query was
   first written, pre-Phase-4.
-- **"Regenerate report" per row (Phase 3 Step 2, done):** a `failed` row also renders an inline
-  "Regenerate report" text action directly in `RecordingListItem` — the plan's spec calls for a
-  3-dot menu, but a plain inline action was judged to read just as clearly at this app's scale
-  without a new menu component, so that's what's built. It's nested inside the row's outer
-  `Pressable` (which navigates to the detail view on tap elsewhere in the row); React Native's
-  touch responder system gives the inner `Pressable` exclusive claim on its own taps, so pressing
-  it doesn't also navigate. Calls the same `regenerateReport()` (`src/lib/api.ts`) as the detail
-  screen's button — see that screen's own "Regenerate report" bullet above and
-  [Background processing](#background-processing)'s bullet for the backend side — with per-row
-  in-flight/error state (`regeneratingIds`/`regenerateErrors`, keyed by recording id, in
-  `HistoryScreen`) so regenerating one failed row doesn't affect any other. On success, the row is
-  optimistically flipped to `processing` in local state, which the existing Step 7 polling below
-  already picks up on its very next tick — nothing about that polling needed to change to support
-  this.
+- **3-dot actions menu (v2 Epic D Part 4, done):** `RecordingActionsMenu`
+  (`src/components/recording-actions-menu.tsx`) — one shared component on both the list card
+  (heading line, right of the favorite star) and the detail screen (header row). It's a themed
+  **bottom sheet** (`Modal` + dimmed warm-tinted backdrop + a rounded `Theme.colors.card` panel
+  of rows), deliberately **not** `ActionSheetIOS` — the system sheet can't take `Theme` tokens,
+  and this app is a designed warm palette. The ellipsis trigger is a nested `Pressable`, so
+  tapping it doesn't fire the row's navigate-to-detail `onPress` (RN responder system). Items,
+  in order, each shown conditionally:
+  - **Download audio** — `canDownload` = `!audio_deleted && audio_path` set. Calls the existing
+    `shareRecordingAudio()` (see [Audio download](#audio-download)).
+  - **Delete audio** — `canDeleteAudio` = `!audio_deleted`. The existing Phase 3 Step 5
+    `deleteRecordingAudio()` endpoint, **unchanged** (row kept, `audio_path`/`audio_deleted`
+    cleared, still **no confirmation** — see [Audio delete](#audio-delete)).
+  - **Delete recording** — always shown, rendered in `Theme.colors.recordRed`. NEW — the whole
+    row + its audio, via the new `deleteRecording()` endpoint. **This one is gated behind an
+    `Alert.alert` confirmation** (the only menu action that is). See
+    [Delete recording](#delete-recording).
+  - **Regenerate report** — `canRegenerate` = `status === 'failed'`. The existing
+    `regenerateReport()` (see [Background processing](#background-processing)); the list has no
+    room for a dedicated button so the menu is its only entry point here. (The detail screen
+    *also* keeps its prominent `ReportSection` "Regenerate report" button — the menu item there
+    is redundant but kept for list/detail menu parity.)
+  The menu's `busy` prop (any of that row's actions in flight) swaps the ellipsis for a spinner
+  and blocks re-opening. Per-row keyed in-flight/error state is unchanged in shape from Phase 3;
+  Part 4 adds `deletingRecordingIds` / `deleteRecordingErrors`. On a successful "Delete
+  recording" the row is filtered out of local list state (not optimistic — only after the
+  backend confirms); on the detail screen a successful delete does `router.back()`.
 - **Favorite toggle (Phase 3 Step 4, done):** each row also renders a star icon
   (`FavoriteStar`, `src/components/favorite-star.tsx` — shared with the detail screen below,
   filled `star.fill` vs. outline `star` via `expo-symbols`, same SF Symbols pattern already used by
@@ -1028,27 +1057,13 @@ this logic was rebuilt in v2 Epic C Part 3 (`QuestionArea`) — see below and
   itself fails — no waiting on a refetch/poll tick to see the new state. **Purely a personal
   marker** — favoriting a recording has no effect on the cap, retention, or delete behavior (Step
   5); favorite and delete are fully independent, by design (see [Database](#database)).
-- **Delete audio (Phase 3 Step 5, done):** each row also renders a bin icon (`DeleteAudioButton`,
-  `src/components/delete-audio-button.tsx` — shared with the detail screen below), placed in its
-  own row under the mode text rather than next to the status badge/star — that cluster is
-  identity/status markers, this is a per-row *audio* action, and the Step 6 download icon sits
-  right alongside this one in the same row. Nested inside the row's outer `Pressable` the same way
-  the "Regenerate report" action is (above), so tapping it doesn't also navigate into the detail
-  screen. Hidden entirely once `audio_deleted` is `true` — there's nothing left to act on. See
-  [Audio delete](#audio-delete) for the full detail (endpoint, ordering, why it's a backend call).
-- **Download audio (Phase 3 Step 6, done):** each row also renders a download icon
-  (`DownloadAudioButton`, `src/components/download-audio-button.tsx` — shared with the detail
-  screen below) in the same `audioActionsRow` as the bin icon, download first — reads as "export,
-  then optionally delete." Nested inside the row's outer `Pressable` the same way the bin icon is,
-  so tapping it doesn't navigate into the detail screen. Calls `shareRecordingAudio()`
-  (`src/lib/recordings.ts`) with per-row in-flight/error state (`downloadingAudioIds`/
-  `downloadAudioErrors`, keyed by id, same shape as delete's). **Hidden entirely whenever
-  `audio_deleted` is `true` — same condition as the bin icon** — there's no file left to export,
-  so the icon isn't shown disabled, it's simply absent; also defensively hidden if `audio_path`
-  itself is falsy even though `audio_deleted` is false (shouldn't happen given upload-then-insert
-  ordering, but avoids offering a button that would just error if a row ever showed up in that
-  state). See [Audio download](#audio-download) for the full detail (why this one, unlike delete,
-  needed no backend endpoint, and how a cancelled share sheet is distinguished from a real failure).
+- **Delete audio / Download audio** — as of Epic D Part 4 these are **menu items**, not
+  standalone row icons (the `DeleteAudioButton` / `DownloadAudioButton` components were
+  deleted). Behaviour is unchanged: Delete audio calls the Phase 3 Step 5 backend endpoint
+  (see [Audio delete](#audio-delete)), no confirmation, not optimistic; Download audio calls
+  `shareRecordingAudio()` (see [Audio download](#audio-download)). Both menu items are simply
+  absent when `audio_deleted` is `true` (Download also absent if `audio_path` is somehow
+  falsy). See the "3-dot actions menu" bullet above.
 - Refresh: the list refetches on every focus (`useFocusEffect`, not a mount-only effect) so
   landing here from a fresh upload — or tabbing back after a second recording — always shows
   current data, since tab screens stay mounted in the background rather than remounting on
@@ -1161,25 +1176,21 @@ this logic was rebuilt in v2 Epic C Part 3 (`QuestionArea`) — see below and
     gets a fetchable URI at all) rather than a local file, but `useAudioPlayer(uri)` doesn't care
     which kind of URI it's given, so no extra branching was needed in the shared component itself.
   - **`audio_deleted` is checked and shows a clear "audio deleted" message in place of playback
-    controls** — built in Step 1 before anything set that flag `true`, and as of Phase 3 Step 5
-    that's exactly what this screen's own "Delete audio" action (right below playback, see
-    [Audio delete](#audio-delete)) now does, with no revisiting of this conditional needed. A
-    missing `audio_path` on an otherwise-real row (shouldn't happen, given upload-then-insert — see
-    [Upload](#upload)) is handled the same defensive way rather than crashing.
-  - **Download audio (Phase 3 Step 6, done):** see [Audio download](#audio-download) for the full
-    detail — a `DownloadAudioButton` + "Download audio" row renders directly above the delete row
-    (same rationale as the list: export reads naturally before delete), in all of playback's
-    loading/ready/error states, calling the same `shareRecordingAudio()`
-    (`src/lib/recordings.ts`) as the list. Rendered by the same `AudioSection` branches that already
-    gate the delete row on `audio_deleted`/`audio_path` — no separate conditional needed, since both
-    rows return before either is reached whenever there's no audio to act on.
-  - **Delete audio (Phase 3 Step 5, done):** see [Audio delete](#audio-delete) for the full detail
-    — a `DeleteAudioButton` + "Delete audio" row renders directly below playback (in all of its
-    loading/ready/error states, since audio exists in each of those) whenever the recording still
-    has audio, calling the same `deleteRecordingAudio()` (`src/lib/api.ts`) as the list. No
-    confirmation dialog. On success, `recording.audio_deleted` flips to `true` locally (not
-    optimistically — only once the backend confirms the delete completed), which the `AudioSection`
-    conditional above already renders correctly with no further wiring needed.
+    controls** — built in Step 1 before anything set that flag `true`; the menu's "Delete audio"
+    action (see [Audio delete](#audio-delete)) is what sets it, with no revisiting of this
+    conditional needed. A missing `audio_path` on an otherwise-real row (shouldn't happen, given
+    upload-then-insert — see [Upload](#upload)) is handled the same defensive way rather than
+    crashing.
+  - **3-dot actions menu (v2 Epic D Part 4, done):** the same `RecordingActionsMenu` as the
+    list card, in this screen's header row after the `FavoriteStar`. Carries **Download audio**,
+    **Delete audio**, **Delete recording**, and (when failed) **Regenerate report** — same
+    conditional visibility, same underlying calls (`shareRecordingAudio()`,
+    `deleteRecordingAudio()`, the new `deleteRecording()`, `regenerateReport()`). `AudioSection`
+    is now **playback only** — the old inline "Download audio" / "Delete audio" rows below the
+    player are gone (as are the `DownloadAudioButton` / `DeleteAudioButton` components). Menu-
+    action errors render as a small red block just under the mode line. On a successful "Delete
+    recording", `router.back()` returns to the list. See [History](#history)'s "3-dot actions
+    menu" bullet and [Delete recording](#delete-recording).
 
 ## Audio delete
 
@@ -1223,10 +1234,10 @@ on this at all.
   on deleting an already-missing Storage object itself being a no-op rather than an error (standard
   idempotent-delete semantics), which is what makes it safe for two near-simultaneous requests to
   both reach the Storage call before either has updated the row.
-- **Frontend:** `deleteRecordingAudio()` (`src/lib/api.ts`, same request shape as
-  `startProcessing()`/`regenerateReport()` but `DELETE` against `/audio`) is called from both the
-  History list (`RecordingListItem`'s bin icon) and the detail screen (`AudioSection`'s "Delete
-  audio" row) — see [History](#history)'s "Delete audio" bullets under both. Both call sites are
+- **Frontend:** `deleteRecordingAudio()` (`src/lib/api.ts`, a `DELETE` against `/audio` via the
+  shared `authorizedRecordingRequest` helper) is called from the **"Delete audio" item in the
+  `RecordingActionsMenu`** (v2 Epic D Part 4) on both the History list and the detail screen —
+  previously a standalone bin icon in each. Both call sites are
   **deliberately not optimistic**, unlike the favorite toggle: local state only flips to
   `audio_deleted: true` once the backend confirms the delete actually completed, rather than
   flipping immediately and risking a brief "audio deleted" flash for audio that's still there (or
@@ -1242,6 +1253,70 @@ on this at all.
   [Recording cap](#recording-cap)'s "How this was tested" bullet for the equivalent Step 3 pass to
   follow the same shape of.
 
+## Delete recording
+
+v2 Epic D Part 4 — the **new**, stronger sibling of [Audio delete](#audio-delete). "Delete
+audio" keeps the row (and its transcript / feedback / metrics), clearing only the audio file;
+"Delete recording" removes **the whole `recordings` row and its audio file together**,
+irreversibly. It's the third item in the `RecordingActionsMenu` (see [History](#history)'s
+"3-dot actions menu" bullet), rendered in `Theme.colors.recordRed`, on both the list card and
+the detail screen.
+
+- **Endpoint:** `DELETE /recordings/{recording_id}` (`delete_recording` in
+  `backend/app/routers/recordings.py`), bearer-token auth, ownership-checked. A backend
+  endpoint for the **same reason as `/audio`**: a Storage delete + a DB write both have to
+  happen and must not disagree, and the `recordings-audio` bucket has no client-side delete RLS
+  policy. The row delete uses the **service-role client, which bypasses RLS**, so **no
+  `recordings` DELETE RLS policy was added** — 0001's "add one deliberately if a delete feature
+  shows up" note is satisfied by keeping deletion server-side. **No new migration** — nothing
+  about the schema changed.
+- **The operation:** fetch + ownership-check the row; if it still has audio (`audio_deleted`
+  false and `audio_path` set) remove the Storage object first (502 on Storage failure, so the
+  row survives for a retry — same storage-first ordering as `/audio`); then
+  `client.table("recordings").delete().eq("id", …)`.
+- **Recording-cap interaction — none needed, and this is the answer to "does deleting the row
+  handle the cap itself?": yes, entirely.** Both the frontend pre-check
+  (`getActiveRecordingCount`, `src/lib/recordings.ts`) and the Postgres backstop trigger
+  (`enforce_recording_cap()`, `0004_recording_cap_enforcement.sql`) count `recordings` rows
+  where `audio_deleted = false`. A row that no longer exists simply isn't in that count — so
+  deleting a recording frees a cap slot for free, exactly the way clearing `audio_deleted`
+  does, with no decrement or bookkeeping anywhere. (Contrast: if the cap were ever stored as a
+  counter column, this would need an explicit decrement — it isn't, so it doesn't.)
+- **Idempotent (the double-tap case, same spirit as `/audio`'s early-return):** once the row is
+  gone, a repeat call returns `{"deleted": true}` rather than a 403/404 — the endpoint does its
+  own row fetch (not via the shared `_fetch_authorized_recording` helper, which 403s an absent
+  row) and treats "row not found" / a malformed id as already-done success. A row that exists
+  but belongs to **someone else** still returns 403. In practice the UI also prevents a
+  double-fire (the menu's `busy` prop disables the trigger while a delete is in flight, and on
+  success the row is removed from the list / the detail screen navigates away).
+- **Confirmation dialog — YES for this action, deliberately, even though "Delete audio" has
+  none.** This was a considered UX/safety tradeoff: "Delete audio" is a smaller, softer loss
+  (the report — the actually-valuable output — stays; the audio was already exportable), so its
+  no-confirmation immediacy (an explicit Phase 3 Step 5 product decision) still holds.
+  "Delete recording" permanently destroys the transcript, feedback, metrics **and** the row —
+  there's no undo and nothing left afterward — and it's a menu item, which is exactly the kind
+  of thing a stray tap hits. So `RecordingActionsMenu` fires an `Alert.alert("Delete
+  recording?", …, [Cancel, {Delete, destructive}])` and only calls through on confirm. The
+  confirmation lives **in the menu component**, so both the list and the detail screen get it
+  automatically and identically.
+- **Frontend:** `deleteRecording()` (`src/lib/api.ts`) — a `DELETE /recordings/{id}` via the
+  shared `authorizedRecordingRequest` helper (Part 4 refactored `postRecordingAction` /
+  `deleteRecordingAudio` / this to all go through one helper). Not optimistic (matches
+  `deleteRecordingAudio`): the list row is filtered out of state / the detail screen calls
+  `router.back()` only **after** the backend confirms. Per-row keyed in-flight/error state on
+  the list (`deletingRecordingIds` / `deleteRecordingErrors`), a pair of `useState`s on the
+  detail screen (`deletingRecording` / `deleteRecordingError`). A failed delete shows an inline
+  red error and leaves everything in place.
+- **Verification status:** backend `pytest` suite still passes (42 tests — no new router tests
+  added, consistent with `/audio` and `/regenerate` having none either), `npx tsc --noEmit` and
+  `expo lint` both clean. **Not yet exercised on the physical test iPhone** — the manual pass
+  should: open the menu from a list row and confirm all 4 items appear (Regenerate only on a
+  `failed` row); run Download / Delete audio / Regenerate from their new menu location and
+  confirm unchanged behaviour; run "Delete recording" on a throwaway recording and confirm the
+  **entire row** disappears from History (not just its audio), the Storage object is gone from
+  the Supabase dashboard, and the active-recording count drops by one; repeat the menu check on
+  the detail screen and confirm `router.back()` lands on the list with the row gone.
+
 ## Audio download
 
 Phase 3 Step 6 — the last step of Phase 3. Per docs/PROJECT_PLAN.md's "manual Download button"
@@ -1249,10 +1324,10 @@ spec (Section 2, and Section 3's "save/download buttons"): exports a recording's
 user's device via `expo-file-system` + the native share sheet (`expo-sharing`), **not** a raw
 blob/data-URI download — that pattern is unreliable on iOS, the only platform this app runs on via
 Expo Go (see [Conventions](#conventions)). Pairs naturally with [Audio delete](#audio-delete) as an
-"export before delete" flow (download sits first in both the list's `audioActionsRow` and the
-detail screen's stacked rows), but the two are **fully independent actions with no forced
-ordering** — nothing about download touches `audio_deleted`/`audio_path`, and nothing requires a
-download before a delete.
+"export before delete" flow (as of v2 Epic D Part 4 both are items in the `RecordingActionsMenu`,
+Download listed first), but the two are **fully independent actions with no forced ordering** —
+nothing about download touches `audio_deleted`/`audio_path`, and nothing requires a download
+before a delete.
 
 - **No backend endpoint — unlike delete, this is a direct-Supabase-plus-on-device flow.** Playback
   already established the pattern this reuses: `getRecordingAudioUrl()` (`src/lib/recordings.ts`)
@@ -1283,20 +1358,15 @@ download before a delete.
   which is exactly the desired behavior. Only a genuine failure (no network fetching the signed URL,
   the URL rejecting the download, `isAvailableAsync()` returning `false`) throws and surfaces an
   inline error.
-- **`audio_deleted` handling:** the download icon isn't rendered at all — not present-but-disabled
-  — whenever `audio_deleted` is `true`, in both the list (`RecordingListItem`'s
-  `!recording.audio_deleted` guard, shared with the bin icon) and the detail screen
-  (`AudioSection`'s early-return branches for `audio_deleted`/missing `audio_path`, shared the same
-  way with the delete row). The list additionally guards on `recording.audio_path` being non-null
-  before rendering the icon — defensive, since `RecordingRow` now selects that column (Step 6 added
-  it to `fetchRecordings()`'s `select()`, which previously only needed it in `RecordingDetail`) —
-  matching the same "don't offer a button that would just fail" judgment already applied elsewhere
-  (e.g. `AudioSection`'s "shouldn't happen, but don't crash" handling of a missing `audio_path`).
-- **Frontend:** `shareRecordingAudio()` is called from both the History list
-  (`RecordingListItem`'s download icon, `handleDownloadAudio` in `HistoryScreen`) and the detail
-  screen (`AudioSection`'s "Download audio" row, `handleDownloadAudio` in
-  `RecordingDetailScreen`) — see [History](#history)'s "Download audio" bullets under both. Same
-  per-row/per-screen in-flight-and-error-state shape already used for delete/regenerate/favorite
+- **`audio_deleted` handling:** the "Download audio" menu item isn't shown at all whenever
+  `audio_deleted` is `true` (or, defensively, `audio_path` is falsy) — `RecordingActionsMenu`'s
+  `canDownload` prop is `!recording.audio_deleted && !!recording.audio_path`, computed the same
+  way on the list and the detail screen. Same "don't offer a button that would just fail"
+  judgment as before.
+- **Frontend:** `shareRecordingAudio()` is called from the **"Download audio" item in the
+  `RecordingActionsMenu`** (v2 Epic D Part 4) on both the list and the detail screen —
+  previously a standalone download icon in each. Same per-row/per-screen
+  in-flight-and-error-state shape already used for delete/regenerate/favorite
   (`downloadingAudioIds`/`downloadAudioErrors` in the list, a couple of `useState`s in the detail
   screen) — a failed download on one row doesn't disturb any other row or the rest of the screen.
 - **Dependencies:** `expo-file-system` was already a dependency (used since Phase 1's upload flow
@@ -1545,9 +1615,13 @@ would have covered on its own):
   the actual assigned URL). Confirm a deploy is alive the same way as local: hit that URL's
   `/health` and expect `{"status": "ok"}`. Free tier sleeps after inactivity, so the first hit
   after a while can take ~30s to wake up.
-- **What exists after Step 6:** the FastAPI app, `/health`, and `POST /recordings/{id}/process`
-  (bearer-token verification, ownership/status checks, and a `BackgroundTasks`-scheduled
-  `process_recording()`) — see [AI processing endpoint](#ai-processing-endpoint). Upload and
+- **Endpoints (all in `app/routers/recordings.py`):** `POST /recordings/{id}/process` and
+  `POST /recordings/{id}/regenerate` (both schedule `process_recording()` via `BackgroundTasks`;
+  see [AI processing endpoint](#ai-processing-endpoint)), `DELETE /recordings/{id}/audio` (see
+  [Audio delete](#audio-delete)), and `DELETE /recordings/{id}` (the whole row + audio; v2 Epic
+  D Part 4, see [Delete recording](#delete-recording)). All four bearer-token-verified and
+  ownership-checked; the two `/process`-family ones also gate on `status`.
+- **What `process_recording()` does:** the FastAPI app, `/health`, and the processing pipeline. Upload and
   row-creation still happen entirely on the frontend against Supabase directly
   (`src/lib/recordings.ts`); this backend is only involved from the moment a row already exists.
   **`process_recording()`'s transcript, metrics, and feedback steps are all real** (downloads the
@@ -1949,10 +2023,11 @@ naturally on new recordings. The History **detail-screen** visual restyle is sti
     one nuance: if a regenerate run itself fails again at the feedback stage, whatever `transcript`/
     `metrics` that run just (re)computed stay on the row — same "don't discard good partial work"
     principle as the original run, just re-applied on a second pass.
-  - **Frontend:** `regenerateReport()` (`src/lib/api.ts`, sharing a private `postRecordingAction`
-    helper with `startProcessing()` — same request shape, different path) is called from both the
-    History **list** (`RecordingListItem`, per failed row) and the **detail screen**
-    (`ReportSection`'s failed-state button) — see [History](#history)'s "Regenerate report" bullets
+  - **Frontend:** `regenerateReport()` (`src/lib/api.ts` — every `recordings` backend call in
+    that module now goes through one private `authorizedRecordingRequest` helper, refactored in
+    v2 Epic D Part 4) is called from both the History **list** (the `RecordingActionsMenu`'s
+    "Regenerate report" item, failed rows only) and the **detail screen**
+    (`ReportSection`'s failed-state button, *and* the menu) — see [History](#history)'s "3-dot actions menu" bullet
     under both the list and the detail screen for exactly how each is wired, including why the
     detail screen needed its own small polling effect that the list's Step 7 polling doesn't
     already cover.
