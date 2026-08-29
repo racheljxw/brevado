@@ -35,6 +35,7 @@ export const Palette = {
   pillBlue: '#CDE3F8', // miscellaneous mode pill, unselected (approximate)
   navIconActive: '#B63700', // active bottom-nav tab icon (Figma-authoritative)
   shadow: '#BEA398', // drop-shadow tint for cards + the nav capsule (Figma-authoritative; RN can only approximate spread/blur)
+  link: '#4B75DF', // the ONE blue for links / interactive text, app-wide (see Theme.colors.link)
 } as const;
 
 export const Colors = {
@@ -188,6 +189,18 @@ export const Theme = {
     navIconActive: Palette.navIconActive,
     /** Drop-shadow tint — cards and the nav capsule (#BEA398). */
     shadow: Palette.shadow,
+
+    /**
+     * Links and interactive text — "See more details", "Regenerate report",
+     * the QuestionArea links, the auth-screen links/submit button, etc. This
+     * is the SINGLE source of truth for that blue: it replaced two older,
+     * conflicting values (`#3c87f7`, previously the `linkPrimary` token in
+     * `themed-text.tsx`, and the `#4B75DF` literal in the Record flow). A
+     * deliberate exception to the warm palette — a warm link would be
+     * `#56453D`, indistinguishable from body text. Never hardcode a link
+     * colour anywhere else; reference this token.
+     */
+    link: Palette.link,
   },
 
   /**

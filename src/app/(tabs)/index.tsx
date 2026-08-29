@@ -1226,7 +1226,7 @@ export default function RecordScreen() {
                       </ThemedText>
                       {!canAskAgain && Platform.OS !== 'web' && (
                         <Pressable onPress={() => Linking.openSettings()}>
-                          <ThemedText type="linkPrimary">Open Settings</ThemedText>
+                          <ThemedText type="link">Open Settings</ThemedText>
                         </Pressable>
                       )}
                     </Card>
@@ -1424,15 +1424,15 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   // The interactive links ("Ask my own question instead" / "‹ Use prompt
-  // instead" / "Try again"). Colour `#4B75DF` — the blue the user picked
-  // for this control specifically. It's not a palette token: it's the one
-  // deliberate exception to the warm palette (a warm-palette link would be
-  // `#56453D`, identical to body text). No underline — the blue carries it.
+  // instead" / "Try again"). `Theme.colors.link` — the one app-wide link
+  // blue and a deliberate exception to the warm palette (a warm link would
+  // be `#56453D`, identical to body text). No underline — the blue carries
+  // it. Single source of truth: `Theme.colors.link` in constants/theme.ts.
   questionLink: {
     fontFamily: Theme.typography.fontFamily.medium,
     fontSize: Theme.typography.variants.label.fontSize,
     lineHeight: Theme.typography.variants.label.lineHeight,
-    color: '#4B75DF',
+    color: Theme.colors.link,
   },
   backLink: {
     alignSelf: 'flex-start',

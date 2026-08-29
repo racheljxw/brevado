@@ -37,7 +37,7 @@ export default function SettingsScreen() {
     <ThemedView style={styles.container}>
       <SafeAreaView style={styles.safeArea} edges={['top', 'left', 'right', 'bottom']}>
         <Pressable onPress={() => router.back()} hitSlop={8}>
-          <ThemedText type="linkPrimary">‹ Back</ThemedText>
+          <ThemedText type="link">‹ Back</ThemedText>
         </Pressable>
 
         <ThemedText type="subtitle" style={styles.title}>

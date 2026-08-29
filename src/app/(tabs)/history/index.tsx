@@ -124,7 +124,7 @@ function RecordingListItem({
               {regenerating ? (
                 <ActivityIndicator size="small" color={theme.textSecondary} />
               ) : (
-                <ThemedText type="linkPrimary">Regenerate report</ThemedText>
+                <ThemedText type="link">Regenerate report</ThemedText>
               )}
             </Pressable>
             {regenerateError && (
@@ -396,7 +396,7 @@ export default function HistoryScreen() {
           <Card style={styles.errorCard}>
             <ThemedText type="small">{error}</ThemedText>
             <Pressable onPress={load}>
-              <ThemedText type="linkPrimary">Retry</ThemedText>
+              <ThemedText type="link">Retry</ThemedText>
             </Pressable>
           </Card>
         )}

@@ -6,6 +6,18 @@ prompt and asks Gemini for free-text coaching feedback (structured/criteria-base
 is explicitly Phase 5, not this step — see docs/CLAUDE.md's "Metrics" section and
 docs/PROJECT_PLAN.md Section 3).
 
+v2 Epic D Part 1: the same single Gemini call now *also* returns a short 2-4 word
+recording `title` ("Challenging Coworker", "Day Recap") — folded into this one call, not a
+separate request, to avoid extra cost/latency. Reliability of extracting both fields comes
+from Gemini's structured-output mode: the call passes `response_mime_type="application/json"`
+plus an explicit two-key `response_schema` ({feedback, title}), so the response is
+constrained to valid JSON we can `json.loads` — not a fragile delimiter we'd have to split
+on. A JSON-parse failure or an empty `feedback` field is treated as a feedback failure
+(raises `FeedbackGenerationError`, so `_run_with_one_retry` retries once); an empty/missing
+`title` alone is NOT a failure — `generate_feedback` returns `title=None`, logs it, and the
+recording still completes normally (same lenient degradation as metrics — see
+`processing.py` and docs/CLAUDE.md's "Metrics" section).
+
 Kept as its own module rather than folded into `processing.py`, mirroring the choice
 already made for `metrics.py`: `build_feedback_prompt` is pure string-building logic with
 no Supabase/Gemini/network calls of its own, so it's easy to unit-test in isolation (see
@@ -20,14 +32,47 @@ story (see docs/CLAUDE.md's "AI processing endpoint" section) covers this call t
 than needing to track two model ids independently.
 """
 
+import json
 import logging
+from dataclasses import dataclass
 
+from google.genai import types
 from google.genai.errors import APIError
 
 from app.config import settings
 from app.gemini_client import get_gemini_client
 
 logger = logging.getLogger(__name__)
+
+# Structured-output schema for the single feedback call (v2 Epic D Part 1). Constraining
+# the response to this two-key object is what makes extracting both the feedback prose and
+# the short title from one call reliable — no delimiter parsing, no "the model wrapped it
+# in prose" failure mode.
+_FEEDBACK_RESPONSE_SCHEMA = types.Schema(
+    type=types.Type.OBJECT,
+    properties={
+        "feedback": types.Schema(type=types.Type.STRING),
+        "title": types.Schema(type=types.Type.STRING),
+    },
+    required=["feedback", "title"],
+)
+
+# A title longer than this is the model ignoring "2-4 words" — kept anyway (Part 2 lets the
+# user edit it) but logged so it's visible.
+_MAX_REASONABLE_TITLE_LEN = 120
+
+
+@dataclass
+class GeneratedFeedback:
+    """Result of the single Gemini feedback+title call.
+
+    `feedback` is always non-empty (an empty one raises `FeedbackGenerationError` instead).
+    `title` is `None` when the model returned nothing usable for it — a tolerated outcome,
+    not a failure: the recording still completes with feedback and a null title.
+    """
+
+    feedback: str
+    title: str | None
 
 # Mode-specific evaluation criteria, per docs/PROJECT_PLAN.md Section 3: interview answers
 # are judged on directness/structure, stories on narrative arc/pacing, miscellaneous on
@@ -136,6 +181,21 @@ def build_feedback_prompt(mode: str, question: str | None, transcript: str, metr
 
     metrics_grounding = _format_metrics_grounding(metrics)
 
+    # Title guidance keys off whether there's a question at all, not the mode name:
+    # miscellaneous always has question=None, and an interview/story recording with a null
+    # question (a lookup edge case) correctly falls through to the transcript-only branch
+    # too — there's nothing else to summarise in that case.
+    if question:
+        title_guidance = (
+            "You may draw on the prompt and how the speaker responded to it for context, "
+            "but do not just restate the prompt."
+        )
+    else:
+        title_guidance = (
+            "There is no prompt for this recording, so derive the title entirely from what "
+            "the speaker actually talks about in the transcript."
+        )
+
     return (
         "You are a public speaking coach giving feedback on a short practice recording, "
         "based only on its transcript below.\n\n"
@@ -144,28 +204,37 @@ def build_feedback_prompt(mode: str, question: str | None, transcript: str, metr
         f"{metrics_grounding}\n\n"
         "Transcript:\n"
         f'"""\n{transcript}\n"""\n\n'
-        "Write 2-4 short paragraphs of specific, actionable feedback in plain prose — no "
-        "headers, bullet points, or numeric scores (structured scoring is a separate, "
+        "Respond with a single JSON object with exactly two keys:\n\n"
+        '"feedback": 2-4 short paragraphs of specific, actionable feedback in plain prose — '
+        "no headers, bullet points, or numeric scores (structured scoring is a separate, "
         "later feature). Reference concrete things the speaker actually said; do not give "
         "generic advice that could apply to any recording. Weave in the automatically "
         "measured stats above where relevant (e.g. if filler words or repetition are "
         "notably high, or the pace is notably fast or slow) rather than ignoring them, but "
         "don't just restate the numbers verbatim — connect them to what actually happened "
         "in the speech. Be encouraging but honest: call out real weaknesses as well as "
-        "strengths."
+        "strengths.\n\n"
+        '"title": a short 2-4 word label for this recording, written like a note or '
+        'journal-entry title in title case — e.g. "Challenging Coworker", "Unplanned Trip", '
+        f'"Day Recap". Not a sentence, no trailing punctuation. {title_guidance}'
     )
 
 
-def generate_feedback(transcript: str, metrics: dict | None, mode: str, question: str | None) -> str:
-    """Sends a mode-aware feedback prompt to Gemini and returns free-text feedback.
+def generate_feedback(
+    transcript: str, metrics: dict | None, mode: str, question: str | None
+) -> GeneratedFeedback:
+    """Sends a mode-aware feedback prompt to Gemini and returns free-text feedback plus a
+    short recording title, extracted from one structured-JSON response.
 
-    Raises `FeedbackGenerationError` on any failure — never returns an empty or
-    placeholder string.
+    Raises `FeedbackGenerationError` if the call fails, the response isn't valid JSON, or
+    the `feedback` field is empty/missing — never returns an empty or placeholder feedback
+    string. A missing/empty `title` is NOT an error: `GeneratedFeedback.title` comes back
+    `None` and the caller stores the recording as `done` with a null title anyway.
     """
     prompt = build_feedback_prompt(mode=mode, question=question, transcript=transcript, metrics=metrics)
 
     logger.info(
-        "feedback: requesting feedback from Gemini model %s (mode=%s, has_question=%s)",
+        "feedback: requesting feedback+title from Gemini model %s (mode=%s, has_question=%s)",
         settings.gemini_model,
         mode,
         question is not None,
@@ -175,6 +244,10 @@ def generate_feedback(transcript: str, metrics: dict | None, mode: str, question
         response = get_gemini_client().models.generate_content(
             model=settings.gemini_model,
             contents=prompt,
+            config=types.GenerateContentConfig(
+                response_mime_type="application/json",
+                response_schema=_FEEDBACK_RESPONSE_SCHEMA,
+            ),
         )
     except APIError as exc:
         logger.error("feedback: Gemini feedback call failed: %s", exc)
@@ -183,10 +256,40 @@ def generate_feedback(transcript: str, metrics: dict | None, mode: str, question
         logger.error("feedback: unexpected error calling Gemini: %s", exc)
         raise FeedbackGenerationError(f"Unexpected error calling Gemini: {exc}") from exc
 
-    feedback = (response.text or "").strip()
-    if not feedback:
-        logger.error("feedback: Gemini returned an empty feedback response")
-        raise FeedbackGenerationError("Gemini returned an empty feedback response.")
+    # With a response_schema set, the SDK already deserializes the reply into
+    # `response.parsed` (a dict here, since the schema isn't a Pydantic model). Prefer that;
+    # fall back to hand-parsing `response.text` if it's somehow absent.
+    parsed = getattr(response, "parsed", None)
+    if not isinstance(parsed, dict):
+        raw = (response.text or "").strip()
+        try:
+            parsed = json.loads(raw)
+        except ValueError as exc:
+            # ValueError covers json.JSONDecodeError. With response_mime_type=application/json
+            # + a schema this should not happen, but if it does it's a real, new failure
+            # mode — treat it as a feedback failure so `_run_with_one_retry` gets a shot.
+            logger.error("feedback: could not parse Gemini JSON response (%s); raw prefix=%r", exc, raw[:200])
+            raise FeedbackGenerationError(f"Gemini feedback response was not valid JSON: {exc}") from exc
 
-    logger.info("feedback: generation succeeded (%d characters)", len(feedback))
-    return feedback
+    if not isinstance(parsed, dict):
+        logger.error("feedback: Gemini response was not a JSON object; got %r", type(parsed).__name__)
+        raise FeedbackGenerationError("Gemini feedback response JSON was not an object.")
+
+    feedback = str(parsed.get("feedback") or "").strip()
+    if not feedback:
+        logger.error("feedback: Gemini returned an empty feedback field")
+        raise FeedbackGenerationError("Gemini returned an empty feedback field.")
+
+    # Lenient: a bad/empty title never fails the recording — mirrors metrics handling.
+    title: str | None = " ".join(str(parsed.get("title") or "").split()).strip(" .")
+    if not title:
+        logger.warning(
+            "feedback: generation succeeded but no usable title was returned — "
+            "storing feedback with title=None (recording is NOT failed over this)"
+        )
+        title = None
+    elif len(title) > _MAX_REASONABLE_TITLE_LEN:
+        logger.warning("feedback: title looks unexpectedly long (%d chars): %r", len(title), title)
+
+    logger.info("feedback: generation succeeded (%d chars feedback, title=%r)", len(feedback), title)
+    return GeneratedFeedback(feedback=feedback, title=title)

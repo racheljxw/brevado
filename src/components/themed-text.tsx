@@ -1,10 +1,10 @@
 import { Platform, StyleSheet, Text, type TextProps } from 'react-native';
 
-import { Fonts, NotoSans, ThemeColor } from '@/constants/theme';
+import { Fonts, NotoSans, Theme, ThemeColor } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 
 export type ThemedTextProps = TextProps & {
-  type?: 'default' | 'title' | 'small' | 'smallBold' | 'subtitle' | 'link' | 'linkPrimary' | 'code';
+  type?: 'default' | 'title' | 'small' | 'smallBold' | 'subtitle' | 'link' | 'code';
   themeColor?: ThemeColor;
 };
 
@@ -21,7 +21,6 @@ export function ThemedText({ style, type = 'default', themeColor, ...rest }: The
         type === 'smallBold' && styles.smallBold,
         type === 'subtitle' && styles.subtitle,
         type === 'link' && styles.link,
-        type === 'linkPrimary' && styles.linkPrimary,
         type === 'code' && styles.code,
         style,
       ]}
@@ -66,15 +65,10 @@ const styles = StyleSheet.create({
     lineHeight: 30,
     fontSize: 14,
     fontFamily: NotoSans.regular,
-  },
-  linkPrimary: {
-    lineHeight: 30,
-    fontSize: 14,
-    fontFamily: NotoSans.regular,
-    // Not white/black, so out of scope for the Epic B Part 2 colour sweep —
-    // this link accent gets a warm-palette value when auth/detail screens
-    // are rebuilt in Epic C/D.
-    color: '#3c87f7',
+    // The one app-wide link blue. Single source of truth — see
+    // `Theme.colors.link` in src/constants/theme.ts. (Replaced the old
+    // `linkPrimary` type and its hardcoded `#3c87f7`.)
+    color: Theme.colors.link,
   },
   code: {
     fontFamily: Fonts.mono,

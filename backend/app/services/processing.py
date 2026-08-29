@@ -8,10 +8,13 @@ once, sends it to Gemini (native audio input) for a real transcript, then
 computes deterministic metrics (filler-word rate, words per minute,
 repetition — see `app/services/metrics.py`) from that transcript and the
 same audio bytes, then sends the transcript, metrics, mode, and question to
-Gemini again for real mode-aware feedback (see `app/services/feedback.py`)
-— no second download involved anywhere in this. Each stage's result is
-written to the row as soon as it succeeds (transcript, then metrics), so a
-later stage failing can never lose earlier, already-successful work.
+Gemini again for real mode-aware feedback *and* a short 2-4 word recording
+title (one structured-JSON call — see `app/services/feedback.py`) — no
+second download involved anywhere in this. Each stage's result is written
+to the row as soon as it succeeds (transcript, then metrics), so a later
+stage failing can never lose earlier, already-successful work. A missing
+title alone never fails the recording — it's stored as NULL and logged,
+same lenient degradation as a metrics-computation failure.
 
 **Retry policy (Step 6, docs/PROJECT_PLAN.md Section 3 "Retry behavior"):**
 each of the two Gemini-calling stages — transcription (download + the
@@ -42,7 +45,7 @@ from google.genai.errors import APIError
 
 from app.config import RECORDINGS_BUCKET, settings
 from app.gemini_client import get_gemini_client
-from app.services.feedback import FeedbackGenerationError, generate_feedback
+from app.services.feedback import FeedbackGenerationError, GeneratedFeedback, generate_feedback
 from app.services.metrics import compute_metrics
 from app.supabase_client import get_service_client
 
@@ -255,16 +258,20 @@ def process_recording(recording_id: str) -> None:
         # docs/CLAUDE.md's "AI processing endpoint" section).
         client.table("recordings").update({"metrics": metrics}).eq("id", recording_id).execute()
 
-        feedback = _run_with_one_retry(
+        generated: GeneratedFeedback = _run_with_one_retry(
             "feedback generation",
             recording_id,
             lambda: generate_feedback(transcript=transcript, metrics=metrics, mode=mode, question=question),
         )
 
+        # `generated.title` is None if the model returned nothing usable for it — that's
+        # deliberately tolerated (logged in `generate_feedback`), never a reason to fail
+        # the recording, same lenient degradation as metrics above. It writes as SQL NULL.
         client.table("recordings").update(
             {
                 "status": "done",
-                "feedback": feedback,
+                "feedback": generated.feedback,
+                "title": generated.title,
             }
         ).eq("id", recording_id).execute()
     except TranscriptionError as exc:

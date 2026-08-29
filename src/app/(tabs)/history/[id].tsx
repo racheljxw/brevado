@@ -47,7 +47,7 @@ function BackLink() {
   const router = useRouter();
   return (
     <Pressable onPress={() => router.back()} hitSlop={8}>
-      <ThemedText type="linkPrimary">‹ Back to History</ThemedText>
+      <ThemedText type="link">‹ Back to History</ThemedText>
     </Pressable>
   );
 }
@@ -183,7 +183,7 @@ function AudioSection({
         <Card style={styles.card}>
           <ThemedText type="small">{audioError ?? 'Could not load audio.'}</ThemedText>
           <Pressable onPress={loadAudioUrl}>
-            <ThemedText type="linkPrimary">Retry</ThemedText>
+            <ThemedText type="link">Retry</ThemedText>
           </Pressable>
         </Card>
         {downloadRow}
@@ -506,7 +506,7 @@ export default function RecordingDetailScreen() {
               {loadError ?? 'Could not load this recording.'}
             </ThemedText>
             <Pressable onPress={load}>
-              <ThemedText type="linkPrimary">Retry</ThemedText>
+              <ThemedText type="link">Retry</ThemedText>
             </Pressable>
           </View>
         )}

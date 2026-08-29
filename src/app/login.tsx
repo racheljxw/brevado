@@ -12,7 +12,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
-import { MaxContentWidth, Palette, Spacing } from '@/constants/theme';
+import { MaxContentWidth, Palette, Spacing, Theme } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import { useAuth } from '@/lib/auth-context';
 import { validateEmail } from '@/lib/auth-validation';
@@ -102,7 +102,7 @@ export default function LoginScreen() {
           <Link href="/signup" asChild>
             <Pressable style={styles.switchLink}>
               <ThemedText type="small" themeColor="textSecondary">
-                Don&apos;t have an account? <ThemedText type="linkPrimary">Sign up</ThemedText>
+                Don&apos;t have an account? <ThemedText type="link">Sign up</ThemedText>
               </ThemedText>
             </Pressable>
           </Link>
@@ -146,7 +146,8 @@ const styles = StyleSheet.create({
     color: '#e5484d',
   },
   button: {
-    backgroundColor: '#3c87f7',
+    // The one app-wide link/interactive blue — see Theme.colors.link.
+    backgroundColor: Theme.colors.link,
     borderRadius: Spacing.two,
     paddingVertical: Spacing.three,
     alignItems: 'center',

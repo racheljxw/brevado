@@ -10,7 +10,11 @@ Run from `backend/` with the dev deps installed:
     pytest
 """
 
-from app.services.feedback import _format_metrics_grounding, build_feedback_prompt
+from app.services.feedback import (
+    _FEEDBACK_RESPONSE_SCHEMA,
+    _format_metrics_grounding,
+    build_feedback_prompt,
+)
 
 SAMPLE_METRICS = {
     "filler_word_rate": 0.08,
@@ -127,6 +131,43 @@ def test_prompt_handles_missing_metrics_gracefully():
     assert "could not be computed" in prompt
 
 
-def test_prompt_requests_prose_not_structured_output():
+def test_prompt_requests_prose_feedback_no_numeric_scores():
     prompt = build_feedback_prompt(mode="miscellaneous", question=None, transcript="Some text.", metrics=SAMPLE_METRICS)
     assert "numeric scores" in prompt
+
+
+# --- prompt construction: title (v2 Epic D Part 1) --------------------------------
+
+
+def test_prompt_asks_for_a_json_object_with_feedback_and_title():
+    prompt = build_feedback_prompt(
+        mode="interview", question="Why this role?", transcript="Some answer.", metrics=SAMPLE_METRICS,
+    )
+    assert "JSON object" in prompt
+    assert '"feedback"' in prompt
+    assert '"title"' in prompt
+    assert "2-4 word label" in prompt
+
+
+def test_title_guidance_uses_question_context_when_a_question_is_present():
+    prompt = build_feedback_prompt(
+        mode="interview", question="Tell me about a conflict with a coworker.",
+        transcript="My coworker and I disagreed.", metrics=SAMPLE_METRICS,
+    )
+    assert "draw on the prompt" in prompt
+    assert "no prompt for this recording" not in prompt
+
+
+def test_title_guidance_falls_back_to_transcript_when_no_question():
+    prompt = build_feedback_prompt(
+        mode="miscellaneous", question=None, transcript="Today I want to talk about my trip.",
+        metrics=SAMPLE_METRICS,
+    )
+    assert "no prompt for this recording" in prompt
+    assert "derive the title entirely from what" in prompt
+
+
+def test_feedback_response_schema_requires_both_keys():
+    props = _FEEDBACK_RESPONSE_SCHEMA.properties
+    assert set(props) == {"feedback", "title"}
+    assert set(_FEEDBACK_RESPONSE_SCHEMA.required) == {"feedback", "title"}

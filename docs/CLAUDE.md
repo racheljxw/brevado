@@ -34,9 +34,14 @@ for the full summary. Progress so far:
   the `QuestionArea` (pool / custom question), the record disc, and the **post-recording
   behaviour change** (stay on Record + live status + "See more details", replacing the
   auto-navigate-to-History). See [Epic C](#epic-c--record-flow-restyle-parts-14-all-done--epic-c-is-complete).
-- **Epic D (next):** the History redesign — search bar, calendar/list toggle, 3-dot per-row menu,
-  new "Delete recording" action, restyled list/detail.
-- Still v2 but not started: auto-generated editable recording titles.
+- **Epic D (in progress):** the History redesign + recording titles.
+  - **Part 1 (done):** a colour consolidation (all link blues → one `Theme.colors.link`
+    token — see [Design system](#design-system)'s "Link colour consolidation"), plus the
+    `title` column + its AI generation, backend/data only. See
+    [Recording titles](#recording-titles).
+  - **Part 2+ (not started):** title editing UI, then the History list/detail redesign —
+    search bar, calendar/list toggle, 3-dot per-row menu, new "Delete recording" action,
+    restyled list/detail, titles shown in the UI.
 
 Sections below that predate a given Epic still describe the v1 implementation where that Epic
 hasn't rewritten them — History especially is still all-v1 until Epic D.
@@ -111,7 +116,9 @@ source of truth; don't assume a table shape without checking there first, and ad
 changes as a new numbered migration file rather than editing an applied one.
 
 - `recordings` — one row per practice session: mode, question/topic, `audio_path`, `status`
-  (`pending`/`processing`/`done`/`failed`), `transcript`, `feedback`, `metrics` (jsonb, Phase 2
+  (`pending`/`processing`/`done`/`failed`), `transcript`, `feedback`, `title` (nullable text,
+  v2 Epic D Part 1, migration `0005_recording_title.sql` — a short 2-4 word auto-generated
+  label; see [Recording titles](#recording-titles)), `metrics` (jsonb, Phase 2
   Step 4 — see [Metrics](#metrics) for the exact shape stored),
   `favorite`/`audio_deleted` flags. `favorite` is a personal star marker (renamed from `saved`,
   which used to mean "exempt from the old 7-day auto-delete") — it's no longer tied to any
@@ -265,6 +272,7 @@ Part 1 covered only the mode-select screen's look.
 | `navStroke` | `#FFFEFE` | the 2px stroke around the nav capsule (Figma-authoritative) |
 | `navIconActive` | `#B63700` | active bottom-nav tab icon (Figma-authoritative) |
 | `shadow` | `#BEA398` | drop-shadow tint — **cards and** the nav capsule (Figma-authoritative; RN approximates spread/blur) |
+| `link` | `#4B75DF` | **all** link / interactive text, app-wide — the single source of truth (Epic D Part 1). A deliberate warm-palette exception; see "Link colour consolidation" |
 
 Old `navActive` / `navActiveIcon` (`#FF8040` / `#FF9966`, pixel-sampled in Part 1) are **removed** —
 the Figma nav spec superseded them (capsule is `background`, active pill is `border`, active icon
@@ -313,8 +321,10 @@ sets a background; don't add `overflow: hidden` to one that should cast a shadow
   load **error** is logged and the app proceeds on the system sans-serif fallback rather than
   wedging.
 - `src/components/themed-text.tsx` now sets `fontFamily` (not `fontWeight`) per `type`:
-  `default`/`small` → medium, `smallBold` → bold, `title`/`subtitle` → semiBold, `link`/`linkPrimary`
+  `default`/`small` → medium, `smallBold` → bold, `title`/`subtitle` → semiBold, `link`
   → regular, `code` → unchanged (`Fonts.mono`). Sizes/line-heights unchanged from the v1 scale.
+  (The old `linkPrimary` `type` was folded into `link` in the Epic D Part 1 colour
+  consolidation — see [Design system](#design-system)'s "Link colour" note.)
 - The `Theme.typography.variants` are still the eventual target; `ThemedText`'s `type` prop and the
   `variants` get reconciled into one system in Epic C/D.
 
@@ -386,10 +396,12 @@ Every hardcoded pure white/black in `src/` was found and replaced. Full list of 
 `Palette.nearWhite`/`Palette.tanGray`) as part of the same repoint, though those weren't pure
 white/black. Non-white/black accent literals left **as-is** for Epic C/D (explicitly out of scope
 for this pass): `#e5484d` (error/delete red — `settings.tsx`, `index.tsx` record button,
-`delete-audio-button.tsx`, `history/*`, `recording-status.ts`), `#3c87f7` (link blue —
-`themed-text.tsx` `linkPrimary`, `login`/`signup` button bg), `#30a46c` (status "done" green,
+`delete-audio-button.tsx`, `history/*`, `recording-status.ts`), `#30a46c` (status "done" green,
 `recording-status.ts`), `#f5a623` (favorite star, `favorite-star.tsx`), and the Expo-template
-splash blues in `animated-icon.tsx` (`#208AEF`, `#3C9FFE`/`#0274DF`).
+splash blues in `animated-icon.tsx` (`#208AEF`, `#3C9FFE`/`#0274DF`). The link blues
+(`#3c87f7` in `themed-text.tsx` `linkPrimary` + `login`/`signup` button bg, and the
+`#4B75DF` literal in the Record flow) were consolidated to one `Theme.colors.link` token
+in Epic D Part 1 — see [Design system](#design-system)'s "Link colour" note.
 
 ### Epic C — Record-flow restyle (Parts 1–4 all done — Epic C is complete)
 
@@ -515,12 +527,13 @@ new "Delete recording" action, restyled list/detail. See [Scope](#scope).
   - **Miscellaneous skips all of this** — `startModeSelection('miscellaneous')` sets
     `flowScreen = 'record'` immediately (no pill animation, no question slot), matching the
     pre-Part-2 "straight to record" behaviour.
-  - **Link colour = `#4B75DF`** (a literal, `styles.questionLink`, no underline). The user picked
-    this blue for this control specifically; it is **the one deliberate exception** to the warm
-    palette (a warm-palette link would be `#56453D`, identical to body text — invisible as a link).
-    It is **not** a `Palette` token — kept as an inline literal so it stays clearly the exception.
-    Applied to all three QuestionArea links ("Ask my own question instead", "‹ Use prompt instead",
-    "Try again") for coherence.
+  - **Link colour = `#4B75DF`.** The user picked this blue for interactive text specifically;
+    it is **the one deliberate exception** to the warm palette (a warm-palette link would be
+    `#56453D`, identical to body text — invisible as a link). As of **Epic D Part 1** this is
+    a real token — `Palette.link` / **`Theme.colors.link`** — and the *single* place the
+    colour is defined anywhere in the app (see the "Link colour consolidation" note below).
+    `styles.questionLink` (the three QuestionArea links + the Record screen's "See more
+    details" / "Regenerate report" / "Try again") reads `Theme.colors.link`.
   - **Naming unified:** `"Storytelling"` everywhere user-facing. `MODE_LABELS` moved to
     `src/lib/modes.ts` (`Record<RecordingMode, string>`), plus a `formatMode(string)` helper the
     History screens use (`recording.mode` is typed `string` there). `mode: 'story'` in the
@@ -533,19 +546,41 @@ new "Delete recording" action, restyled list/detail. See [Scope](#scope).
   (`questionQuote` 20 / `recordHint` 14 / disc 62·76 / input `borderRadius: 30`) and the
   vertical placement of the question block against the design screenshots.
 
+### Link colour consolidation (Epic D Part 1)
+
+Before Epic D there were **two conflicting blues** for the same job: `#3c87f7` (the
+`linkPrimary` `ThemedText` type in `themed-text.tsx`, also the `login`/`signup` submit-button
+background and signup's "check your email" notice) and `#4B75DF` (the `styles.questionLink`
+literal in the Record flow). Epic D Part 1 collapsed both into **one token,
+`Theme.colors.link` (`= Palette.link = '#4B75DF'`)**, defined in exactly one place
+(`src/constants/theme.ts`). What changed:
+
+- **`themed-text.tsx`:** the `linkPrimary` `type` is **gone** — folded into `link`, whose
+  style now carries `color: Theme.colors.link`. All 9 `<ThemedText type="linkPrimary">`
+  call-sites (`login`, `signup`, `settings` back link, `index.tsx` "Open Settings",
+  `history/index.tsx` + `history/[id].tsx` Retry / Regenerate / Back links) became
+  `type="link"`. `link` previously had no colour (inherited `theme.text`) and was unused, so
+  nothing regressed.
+- **`index.tsx` `styles.questionLink`:** `color: '#4B75DF'` → `Theme.colors.link`.
+- **`login.tsx` / `signup.tsx`:** submit-button `backgroundColor` and signup's `notice`
+  colour → `Theme.colors.link` (a very slight hue shift from `#3c87f7`, accepted as the cost
+  of one blue).
+- **Not touched:** the Expo-template splash blues in `animated-icon.tsx` (`#3C9FFE` /
+  `#0274DF` / `#208AEF`) — those are the placeholder splash-logo gradient, not links, and
+  are already separately flagged for a Brevado brand asset. They are the only raw hex blue
+  left in `src/` outside the token definition.
+
 ### Still flagged for Epic C/D
 
-- **`#4B75DF` link literal** (`styles.questionLink`, Epic C Part 3) is the one sanctioned
-  warm-palette exception (user's explicit pick for that control); it's not a `Palette` token by
-  design. If more blue links appear later, reconsider whether it earns a token then.
 - **`recordRed` mismatch:** the record button on the `'record'` screen (`index.tsx`) still uses
   `#e5484d`, not `Theme.colors.recordRed` (`#C53030`). The **Part 3 interim record disc** in
   `QuestionArea` *does* use `Theme.colors.recordRed` — reconcile the `'record'` screen's when it's
   rebuilt in Part 4.
 - **Status badge colours** (`recording-status.ts`) still hardcode red/green — no warm-palette
   tokens for error/success yet.
-- **`linkPrimary` blue** (`#3c87f7`) and the **auth submit-button blue** don't fit the warm palette
-  — get warm values when auth/detail screens are rebuilt.
+- **The one link blue** (`Theme.colors.link`, `#4B75DF`) is a deliberate warm-palette
+  exception, not a mismatch to fix — see "Link colour consolidation" above. The auth
+  submit-button now reuses it too.
 - **`favorite-star.tsx`** uses `#f5a623`, not `Theme.colors.favoriteGold` (`#F3BF16`).
 - **Splash screen** (`animated-icon.tsx` + `app.json` splash `#208AEF`) is still the Expo-template
   blue + Expo logo — needs a Brevado brand asset + cream bg.
@@ -1503,8 +1538,11 @@ would have covered on its own):
   those too, then sends the transcript, metrics, mode, and question to Gemini a second time for
   mode-aware free-text feedback (`app/services/feedback.py` — interview -> directness/structure,
   story -> narrative arc/pacing, miscellaneous -> general clarity/conciseness, per
-  docs/PROJECT_PLAN.md Section 3), and only then sets `status: done` with that real feedback
-  attached. `status: done` now means the full pipeline actually ran, transcript through feedback.
+  docs/PROJECT_PLAN.md Section 3) **plus a short recording `title`** (v2 Epic D Part 1 — same
+  call, structured JSON; see [Recording titles](#recording-titles)), and only then sets
+  `status: done` with the real feedback and title attached (`title` may be `NULL` if
+  generation returned nothing usable for it — that alone never fails the recording).
+  `status: done` now means the full pipeline actually ran, transcript through feedback.
   Each stage's result is written to the row as soon as it succeeds (transcript, then metrics), so
   a later stage failing can never lose or overwrite earlier, already-successful work — the same
   "don't discard good partial work" principle applies to a feedback failure as it already did to a
@@ -1643,27 +1681,83 @@ pure string-building with no network call of its own, so it's easy to unit-test 
   though every real recording at that time was `mode='miscellaneous'` (Phase 1's placeholder
   recording flow — Phase 4 hadn't built real mode selection yet), which is exactly why Phase 4
   didn't need this rebuilt when it landed.
-- **Output:** free-text prose feedback only (2-4 short paragraphs, no headers/bullets/numeric
-  scores) — structured, criteria-based scoring is explicitly Phase 6/v3 of the project plan, not
-  this step.
+- **Output:** free-text prose feedback (2-4 short paragraphs, no headers/bullets/numeric
+  scores — structured criteria-based scoring is Phase 6/v3, not this step) **plus a short 2-4
+  word recording `title`** (v2 Epic D Part 1). Both come back from the **same single Gemini
+  call** — folded together, not a second request, to avoid extra cost/latency. `generate_feedback`
+  now returns a `GeneratedFeedback` dataclass (`feedback: str`, `title: str | None`) instead of
+  a bare string. See [Recording titles](#recording-titles) for the title prompt/format detail.
+- **Response format (Epic D Part 1):** the call passes
+  `response_mime_type="application/json"` + an explicit two-key `response_schema`
+  (`_FEEDBACK_RESPONSE_SCHEMA` — `{feedback, title}`, both required), so Gemini's
+  structured-output mode constrains the reply to valid JSON that `json.loads` parses
+  reliably — **not** a delimiter we'd `split()` on (which was the alternative considered and
+  rejected: a delimiter is exactly the kind of thing a model quietly wraps in prose or
+  duplicates). A JSON-parse failure, a non-object response, or an empty `feedback` field all
+  raise `FeedbackGenerationError` (a genuinely new failure mode vs. pre-Epic-D, but a rare
+  one, and `_run_with_one_retry` gets a shot at it). An empty/missing `title` alone does
+  **not** raise — see the lenient-title bullet under [Recording titles](#recording-titles).
 - **Model:** reuses the same shared Gemini client and `settings.gemini_model` as transcription (see
   [AI processing endpoint](#ai-processing-endpoint)) — a single text-in/text-out call has no reason
   to use a different model from transcription.
 - **Failure handling:** `FeedbackGenerationError` (mirroring `TranscriptionError` in
-  `processing.py`) is raised for a failed Gemini call or an empty/unusable response. Critically,
+  `processing.py`) is raised for a failed Gemini call, an unparseable/non-JSON response, or an
+  empty/unusable `feedback` field. Critically,
   `process_recording` stores the transcript and metrics to the row *before* attempting feedback
   generation, so a `FeedbackGenerationError` never loses or overwrites that already-successful
   work — only `status` moves to `failed`. Same "don't discard good partial work" principle as a
   transcription failure, applied one stage later. As of Step 6, a `FeedbackGenerationError` gets
   one immediate inline retry of just the feedback call (reusing the transcript/metrics already in
   hand, no re-transcription) before the recording is marked `failed` — see
-  [Background processing](#background-processing).
+  [Background processing](#background-processing). A bad **title** is deliberately *not* in this
+  bucket — see [Recording titles](#recording-titles).
 - **Tests:** `backend/tests/test_feedback.py` (pytest) checks `build_feedback_prompt` and
-  `_format_metrics_grounding` directly — that the built prompt string contains the right
-  mode-specific criteria, handles a `null` question vs. a real one, includes the transcript
-  verbatim, and reflects the metrics grounding correctly (including `None` metrics and a `None`
-  `words_per_minute`) — for all three modes. Does **not** call the live Gemini API; run with
-  `pytest` from `backend/` alongside the metrics tests.
+  `_format_metrics_grounding` directly — the right mode-specific criteria, `null` vs. real
+  question, transcript verbatim, metrics grounding (incl. `None` metrics / `None`
+  `words_per_minute`), and (Epic D Part 1) that the prompt asks for a `{feedback, title}` JSON
+  object, that title guidance switches on question-presence, and that `_FEEDBACK_RESPONSE_SCHEMA`
+  requires both keys. Does **not** call the live Gemini API; run with `pytest` from `backend/`.
+
+## Recording titles
+
+v2 Epic D Part 1 — a short, human-readable label per recording ("Challenging Coworker",
+"Unplanned Trip", "Day Recap" — matching the tone of the design screenshots). **Part 1 is
+backend/data only**: real titles get generated and stored, but nothing displays them yet
+(that's Part 3+) and there's no editing UI yet (Part 2). Existing recordings keep
+`title = null` — **no backfill**; they only get a title if regenerated, and new recordings
+get one naturally.
+
+- **Schema:** `title` nullable `text` on `recordings`, migration
+  `supabase/migrations/0005_recording_title.sql` (`alter table public.recordings add column
+  title text;`) — a new numbered migration per the project convention, run manually in the
+  Supabase SQL editor like `0001`–`0004`.
+- **Generation — folded into the existing feedback call, no separate request.**
+  `app/services/feedback.py`'s `build_feedback_prompt` now also asks for a `title`, and
+  `generate_feedback` returns `GeneratedFeedback(feedback, title)` extracted from one
+  structured-JSON Gemini response (`response_mime_type="application/json"` +
+  `_FEEDBACK_RESPONSE_SCHEMA`). See [Feedback generation](#feedback-generation)'s "Response
+  format" bullet for why JSON/schema over a delimiter.
+- **Mode-specific approach:** the title prompt guidance keys off **whether there's a
+  `question`**, not the mode name — `if question:` "you may draw on the prompt and how the
+  speaker responded for context, don't just restate it"; `else:` "there is no prompt, derive
+  the title entirely from the transcript content". Miscellaneous always hits the `else`
+  branch (it has no question); an interview/story recording with a null question (a lookup
+  edge case) correctly falls through to transcript-only too. The prompt also asks for
+  title-case, 2-4 words, no trailing punctuation, "like a note/journal-entry title, not a
+  sentence".
+- **Lenient failure (same philosophy as Phase 2 Step 4's metrics handling):** if the JSON
+  parses and `feedback` is fine but `title` is empty/missing, `generate_feedback` returns
+  `title=None`, logs a `warning` ("no usable title was returned … recording is NOT failed
+  over this"), and `process_recording` writes the row `done` with `title` = SQL `NULL`. A bad
+  title never raises `FeedbackGenerationError` and never fails or retries the recording — only
+  a bad *feedback* field does. `generate_feedback` also whitespace-collapses / strips trailing
+  `.` from the title and logs (but keeps) a title over 120 chars (a model ignoring "2-4
+  words"; Part 2's editing UI is the fix for a junk title).
+- **Storage:** `process_recording` (`app/services/processing.py`) writes `title:
+  generated.title` alongside `feedback` and `status: 'done'` in the same final update — no
+  separate write, no new pipeline stage.
+- **Not in Part 1:** `title` isn't added to any frontend query/type/UI yet
+  (`fetchRecordings` / `fetchRecordingById` / the History screens are untouched) — Part 3+.
 
 ## Background processing
 
@@ -1734,8 +1828,9 @@ pure string-building with no network call of its own, so it's easy to unit-test 
     not assumed — it already starts every run by flipping `status` straight to `processing` (not
     `pending`; there's no intermediate `pending` state on a regenerate, unlike a fresh upload) as
     its very first write, then overwrites `transcript` unconditionally the moment transcription
-    succeeds, `metrics` unconditionally right after, and `feedback` only alongside the final
-    `status: done` write. There's no separate failure-reason column or other failure-related state
+    succeeds, `metrics` unconditionally right after, and `feedback` + `title` only alongside the
+    final `status: done` write (so a regenerate also refreshes the title, and can move it from
+    `NULL` to a real value or vice versa). There's no separate failure-reason column or other failure-related state
     on the `recordings` row (see `supabase/migrations/0001_initial_schema.sql`) to clear first. The
     one nuance: if a regenerate run itself fails again at the feedback stage, whatever `transcript`/
     `metrics` that run just (re)computed stay on the row — same "don't discard good partial work"
