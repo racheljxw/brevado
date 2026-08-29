@@ -512,6 +512,7 @@ export default function HistoryScreen() {
               />
             )}
             contentContainerStyle={styles.listContent}
+            showsVerticalScrollIndicator={false}
             refreshControl={
               <RefreshControl refreshing={refreshing} onRefresh={handleRefresh} tintColor={theme.textSecondary} />
             }
@@ -534,12 +535,19 @@ const styles = StyleSheet.create({
     flex: 1,
     width: '100%',
     maxWidth: MaxContentWidth,
-    paddingHorizontal: Spacing.four,
+    // NB: the horizontal gutter lives on the individual sections below
+    // (`headerRow`, `centerFill`, `errorCard`, and the FlatList's
+    // `listContent`), NOT here — a ScrollView/FlatList clips its content to
+    // its own frame, so if this container were padded the card drop shadows
+    // would be sliced off at the list's left/right edges. Keeping the list
+    // full-bleed and insetting only its contentContainer lets the shadow
+    // bleed into the gutter.
   },
   headerRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
+    paddingHorizontal: Spacing.four,
   },
   title: {
     paddingTop: Spacing.three,
@@ -549,13 +557,18 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
+    paddingHorizontal: Spacing.four,
   },
   emptyText: {
     textAlign: 'center',
   },
   listContent: {
-    gap: Spacing.two,
-    paddingBottom: BottomTabInset + Spacing.three,
+    // generous vertical padding so the first/last card's drop shadow has
+    // room to blur instead of being clipped at the scroll frame edge
+    gap: Spacing.three,
+    paddingHorizontal: Spacing.four,
+    paddingTop: Spacing.three,
+    paddingBottom: BottomTabInset + Spacing.four,
   },
   row: {
     // Card supplies the fill (Theme.colors.card), inset border, radius
@@ -566,11 +579,12 @@ const styles = StyleSheet.create({
   titleRow: {
     flexDirection: 'row',
     alignItems: 'flex-start',
-    justifyContent: 'space-between',
     gap: Spacing.two,
   },
   titleFlex: {
-    flexShrink: 1,
+    // grow to fill the row so the star + 3-dot menu are pinned to the right
+    // edge as a fixed cluster, regardless of how short the title is
+    flex: 1,
   },
   cardTitle: {
     // "smallBold" (Noto Sans bold) bumped up to a list-card heading size —
@@ -608,6 +622,8 @@ const styles = StyleSheet.create({
     gap: Spacing.two,
     padding: Spacing.three,
     borderRadius: Spacing.three,
+    marginHorizontal: Spacing.four,
+    marginTop: Spacing.two,
     marginBottom: Spacing.two,
   },
   pressed: {

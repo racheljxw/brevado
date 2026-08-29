@@ -53,8 +53,9 @@ for the full summary. Progress so far:
     behaviour** — only their icon tint was neutralised to theme tokens. See
     [History](#history)'s "List card restyle (Epic D Part 3)" bullet.
   - **Part 4 (done):** the per-row **3-dot menu** consolidation. A shared
-    `RecordingActionsMenu` (`src/components/recording-actions-menu.tsx` — a themed bottom
-    sheet, not `ActionSheetIOS`) replaces the old inline icon row (`DownloadAudioButton` /
+    `RecordingActionsMenu` (`src/components/recording-actions-menu.tsx` — a small `<Card>`
+    popover that hovers by the trigger; vertical-dots icon; not `ActionSheetIOS`) replaces
+    the old inline icon row (`DownloadAudioButton` /
     `DeleteAudioButton`, both **deleted**) and the inline "Regenerate report" text action,
     on both the History **list** card (heading line, next to the always-visible favorite
     star) and the **detail** screen (header row). Actions: **Download audio**, **Delete
@@ -963,6 +964,15 @@ this logic was rebuilt in v2 Epic C Part 3 (`QuestionArea`) — see below and
   v2 Epic D Part 3 (the restyled card's heading). The list still doesn't need
   transcript/feedback/metrics; the detail screen (below) widens to the full row with its own
   separate query, `fetchRecordingById()`, rather than this one growing a `select('*')`.
+- **Screen layout / card drop shadow (Epic D Part 4 tweak):** the horizontal gutter is on the
+  `FlatList`'s `contentContainerStyle` (and on `headerRow` / `centerFill` / `errorCard`
+  individually), **not** on the `safeArea` container — a `FlatList`/`ScrollView` clips its
+  content to its own frame, so a padded container would slice the `<Card>` drop shadows off at
+  the list's left/right edges. Full-bleed list + padded contentContainer lets the shadow blur
+  into the gutter. `listContent` also carries generous `paddingTop` / `gap` / `paddingBottom`
+  (all `Spacing.three`+) for the same reason vertically. The vertical scroll indicator is
+  hidden (`showsVerticalScrollIndicator={false}`). The detail screen's `ScrollView` got the
+  identical treatment.
 - **List card restyle (v2 Epic D Part 3, done):** each row is a `<Card>` (so the fill is
   `Theme.colors.card`, plus the shared inset border, `Theme.radius.card`, and card shadow — the
   card border is left as `<Card>`'s own `cardBorder`, not overridden to `Theme.colors.border`,
@@ -983,11 +993,12 @@ this logic was rebuilt in v2 Epic C Part 3 (`QuestionArea`) — see below and
     (`formatRecordedAt`, `textSecondary`) **right-aligned opposite it**. **No status badge** —
     it was dropped from the list card in this pass; only the detail screen still shows one
     (`getStatusPresentation`).
-  - **Heading-line actions (as of Epic D Part 4):** the `FavoriteStar` (active tint
-    `Theme.colors.favoriteGold`) and, to its right, the **`RecordingActionsMenu`** 3-dot
-    button. The old separate "audio actions row" (`DownloadAudioButton` / `DeleteAudioButton`)
-    is **gone** — those two components were deleted and their actions moved into the menu. See
-    the "3-dot actions menu" bullet below.
+  - **Heading-line actions (as of Epic D Part 4):** the title has `flex: 1` so the
+    `FavoriteStar` (active tint `Theme.colors.favoriteGold`) and the **`RecordingActionsMenu`**
+    vertical-3-dot button sit as a fixed cluster pinned to the card's right edge regardless of
+    title length. The old separate "audio actions row" (`DownloadAudioButton` /
+    `DeleteAudioButton`) is **gone** — those two components were deleted and their actions moved
+    into the menu. See the "3-dot actions menu" bullet below.
   - Error text for a menu action that failed (`downloadAudioError` / `deleteAudioError` /
     `deleteRecordingError` / `regenerateError`) renders as a small red line at the bottom of
     the card. Same per-row keyed-by-id in-flight/error state as before, now with
@@ -1017,12 +1028,17 @@ this logic was rebuilt in v2 Epic C Part 3 (`QuestionArea`) — see below and
   first written, pre-Phase-4.
 - **3-dot actions menu (v2 Epic D Part 4, done):** `RecordingActionsMenu`
   (`src/components/recording-actions-menu.tsx`) — one shared component on both the list card
-  (heading line, right of the favorite star) and the detail screen (header row). It's a themed
-  **bottom sheet** (`Modal` + dimmed warm-tinted backdrop + a rounded `Theme.colors.card` panel
-  of rows), deliberately **not** `ActionSheetIOS` — the system sheet can't take `Theme` tokens,
-  and this app is a designed warm palette. The ellipsis trigger is a nested `Pressable`, so
-  tapping it doesn't fire the row's navigate-to-detail `onPress` (RN responder system). Items,
-  in order, each shown conditionally:
+  (heading line, right of the favorite star) and the detail screen (header row). Presentation is
+  a small **popover card that hovers over the row** — a transparent-backdrop `Modal` with an
+  absolutely-positioned `<Card>` (same shared fill / inset border / drop shadow as every other
+  card) placed from the trigger's `measureInWindow` coords: right edge aligned to the trigger,
+  opening downward (flips above if near the screen bottom). Deliberately **not** a full-width
+  bottom sheet and **not** `ActionSheetIOS` (the system sheet can't take `Theme` tokens). The
+  trigger is **three vertical dots** — the `sf-symbols-typescript` set bundled with this Expo SDK
+  has no `ellipsis.vertical`, so it's the horizontal `ellipsis` glyph rotated 90° inside a fixed
+  22×22 box (so it lines up with the 20px favorite star beside it). The trigger is a nested
+  `Pressable`, so tapping it doesn't fire the row's navigate-to-detail `onPress` (RN responder
+  system). Items, in order, each shown conditionally:
   - **Download audio** — `canDownload` = `!audio_deleted && audio_path` set. Calls the existing
     `shareRecordingAudio()` (see [Audio download](#audio-download)).
   - **Delete audio** — `canDeleteAudio` = `!audio_deleted`. The existing Phase 3 Step 5

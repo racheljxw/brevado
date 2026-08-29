@@ -644,7 +644,7 @@ export default function RecordingDetailScreen() {
         )}
 
         {screenState === 'loaded' && recording && status && (
-          <ScrollView contentContainerStyle={styles.scrollContent}>
+          <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
             <TitleSection
               title={recording.title}
               onSave={handleSaveTitle}
@@ -745,16 +745,20 @@ const styles = StyleSheet.create({
     flex: 1,
     width: '100%',
     maxWidth: MaxContentWidth,
-    paddingHorizontal: Spacing.four,
+    // Gutter lives on the sections below, not here — a padded ScrollView
+    // frame would clip the card drop shadows at its left/right edges. See
+    // the matching note in `history/index.tsx`.
   },
   backRow: {
     paddingTop: Spacing.three,
+    paddingHorizontal: Spacing.four,
   },
   centerFill: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
     gap: Spacing.two,
+    paddingHorizontal: Spacing.four,
   },
   centerRow: {
     alignItems: 'center',
@@ -773,6 +777,7 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     gap: Spacing.three,
+    paddingHorizontal: Spacing.four,
     paddingTop: Spacing.three,
     paddingBottom: BottomTabInset + Spacing.four,
   },

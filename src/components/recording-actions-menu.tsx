@@ -1,10 +1,10 @@
 import { SymbolView, type SymbolViewProps } from 'expo-symbols';
-import { useState } from 'react';
-import { ActivityIndicator, Alert, Modal, Pressable, StyleSheet, View } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useRef, useState } from 'react';
+import { ActivityIndicator, Alert, Modal, Pressable, StyleSheet, View, useWindowDimensions } from 'react-native';
 
-import { Spacing, Theme } from '@/constants/theme';
+import { Card } from '@/components/card';
 import { ThemedText } from '@/components/themed-text';
+import { Spacing, Theme } from '@/constants/theme';
 
 // v2 Epic D Part 4 — the per-recording "3-dot" actions menu, shared by the
 // History list card (`history/index.tsx`) and the detail screen
@@ -13,18 +13,18 @@ import { ThemedText } from '@/components/themed-text';
 // report" text action), folding them into one menu and adding the new,
 // stronger "Delete recording" action.
 //
-// Presentation: a tap on the ellipsis opens a themed bottom sheet (a plain
-// `Modal` + a dimmed backdrop + a rounded card of rows) rather than the
-// system `ActionSheetIOS` — the sheet is fully styleable with `Theme` tokens,
-// which the system sheet is not, and this app is a deliberately-designed warm
-// palette (see docs/CLAUDE.md's "Design system" section).
+// Presentation: a tap on the vertical ellipsis opens a small popover card
+// that hovers over the row, right-aligned to the trigger — NOT a full-width
+// bottom sheet and NOT the system `ActionSheetIOS` (which can't take `Theme`
+// tokens). The popover reuses the shared `<Card>` treatment (near-white fill,
+// inset border, soft drop shadow), positioned absolutely from the trigger's
+// measured on-screen location.
 //
 // "Delete recording" is the one action gated behind a confirmation
 // (`Alert.alert`) — it's irreversible and destroys the transcript / feedback
 // / metrics, not just the re-exportable audio file. "Delete audio" keeps its
 // existing no-confirmation behaviour (an explicit product decision, Phase 3
-// Step 5) — losing just the audio while keeping the report is a smaller,
-// recoverable-in-spirit loss.
+// Step 5).
 
 export type RecordingMenuAction = 'download' | 'delete-audio' | 'delete-recording' | 'regenerate';
 
@@ -34,6 +34,14 @@ type MenuItem = {
   icon: SymbolViewProps['name'];
   destructive?: boolean;
 };
+
+type Anchor = { x: number; y: number; width: number; height: number };
+
+const MENU_WIDTH = 220;
+// Rough per-row height (icon + `small` text + vertical padding) — only used
+// to decide whether the popover should open downward or flip above the
+// trigger when it's near the bottom of the screen.
+const ROW_HEIGHT_ESTIMATE = 44;
 
 export function RecordingActionsMenu({
   canDownload,
@@ -55,7 +63,9 @@ export function RecordingActionsMenu({
   iconSize?: number;
 }) {
   const [open, setOpen] = useState(false);
-  const insets = useSafeAreaInsets();
+  const [anchor, setAnchor] = useState<Anchor | null>(null);
+  const triggerRef = useRef<View | null>(null);
+  const { width: screenW, height: screenH } = useWindowDimensions();
 
   const items: MenuItem[] = [
     canDownload && { action: 'download', label: 'Download audio', icon: 'square.and.arrow.down' },
@@ -63,6 +73,16 @@ export function RecordingActionsMenu({
     { action: 'delete-recording', label: 'Delete recording', icon: 'trash.fill', destructive: true },
     canRegenerate && { action: 'regenerate', label: 'Regenerate report', icon: 'arrow.clockwise' },
   ].filter(Boolean) as MenuItem[];
+
+  function openMenu() {
+    // Measure the trigger in window coords so the popover can be placed right
+    // next to it. The Modal below is full-screen at the window origin, so
+    // these coords map straight through.
+    triggerRef.current?.measureInWindow((x, y, width, height) => {
+      setAnchor({ x, y, width, height });
+      setOpen(true);
+    });
+  }
 
   function choose(action: RecordingMenuAction) {
     setOpen(false);
@@ -80,47 +100,72 @@ export function RecordingActionsMenu({
     onSelect(action);
   }
 
+  let popoverStyle: { left: number; top: number; width: number } | null = null;
+  if (anchor) {
+    const estHeight = items.length * ROW_HEIGHT_ESTIMATE + Spacing.two * 2;
+    const left = Math.max(
+      Spacing.two,
+      Math.min(anchor.x + anchor.width - MENU_WIDTH, screenW - MENU_WIDTH - Spacing.two)
+    );
+    let top = anchor.y + anchor.height + Spacing.one;
+    if (top + estHeight > screenH - Spacing.four) {
+      top = Math.max(Spacing.four, anchor.y - estHeight - Spacing.one);
+    }
+    popoverStyle = { left, top, width: MENU_WIDTH };
+  }
+
   return (
     <>
       <Pressable
-        onPress={() => setOpen(true)}
+        ref={triggerRef}
+        onPress={openMenu}
         disabled={busy}
         hitSlop={8}
-        style={({ pressed }) => pressed && styles.triggerPressed}
+        style={({ pressed }) => [styles.trigger, pressed && styles.triggerPressed]}
         accessibilityRole="button"
         accessibilityLabel="Recording actions">
         {busy ? (
           <ActivityIndicator size="small" color={Theme.colors.textSecondary} />
         ) : (
-          <SymbolView name="ellipsis" size={iconSize} tintColor={Theme.colors.textSecondary} />
+          // Three *vertical* dots. The `sf-symbols-typescript` set bundled
+          // with this Expo SDK has no `ellipsis.vertical`, so rotate the
+          // horizontal `ellipsis` glyph 90°.
+          <SymbolView
+            name="ellipsis"
+            size={iconSize}
+            tintColor={Theme.colors.textSecondary}
+            style={styles.verticalDots}
+          />
         )}
       </Pressable>
 
-      <Modal visible={open} transparent animationType="slide" onRequestClose={() => setOpen(false)}>
+      <Modal visible={open} transparent animationType="fade" onRequestClose={() => setOpen(false)}>
+        {/* Transparent backdrop — the popover "hovers" over the row, so no
+            dimming; tapping anywhere outside closes it. */}
         <Pressable style={styles.backdrop} onPress={() => setOpen(false)}>
-          {/* Inner Pressable swallows taps so pressing the sheet itself
-              doesn't close it — only the backdrop does. */}
-          <Pressable style={[styles.sheet, { paddingBottom: insets.bottom + Spacing.three }]} onPress={() => {}}>
-            {items.map((item, index) => (
-              <View key={item.action}>
-                {index > 0 && <View style={styles.divider} />}
-                <Pressable
-                  onPress={() => choose(item.action)}
-                  style={({ pressed }) => [styles.item, pressed && styles.itemPressed]}
-                  accessibilityRole="button"
-                  accessibilityLabel={item.label}>
-                  <SymbolView
-                    name={item.icon}
-                    size={20}
-                    tintColor={item.destructive ? Theme.colors.recordRed : Theme.colors.textPrimary}
-                  />
-                  <ThemedText type="default" style={item.destructive ? styles.destructiveLabel : undefined}>
-                    {item.label}
-                  </ThemedText>
-                </Pressable>
-              </View>
-            ))}
-          </Pressable>
+          {popoverStyle && (
+            <Card style={[styles.popover, popoverStyle]}>
+              {items.map((item, index) => (
+                <View key={item.action}>
+                  {index > 0 && <View style={styles.divider} />}
+                  <Pressable
+                    onPress={() => choose(item.action)}
+                    style={({ pressed }) => [styles.item, pressed && styles.itemPressed]}
+                    accessibilityRole="button"
+                    accessibilityLabel={item.label}>
+                    <SymbolView
+                      name={item.icon}
+                      size={17}
+                      tintColor={item.destructive ? Theme.colors.recordRed : Theme.colors.textPrimary}
+                    />
+                    <ThemedText type="small" style={item.destructive ? styles.destructiveLabel : undefined}>
+                      {item.label}
+                    </ThemedText>
+                  </Pressable>
+                </View>
+              ))}
+            </Card>
+          )}
         </Pressable>
       </Modal>
     </>
@@ -128,31 +173,34 @@ export function RecordingActionsMenu({
 }
 
 const styles = StyleSheet.create({
+  // Fixed square box so the trigger lines up with the favorite star beside
+  // it (a rotated glyph keeps its original wide/short layout box otherwise).
+  trigger: {
+    width: 22,
+    height: 22,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   triggerPressed: {
     opacity: 0.6,
   },
+  verticalDots: {
+    transform: [{ rotate: '90deg' }],
+  },
   backdrop: {
     flex: 1,
-    // Warm-tinted scrim rather than pure black (see the app-wide
-    // "never pure #000000" rule in docs/CLAUDE.md's "Design system").
-    backgroundColor: 'rgba(45, 19, 6, 0.4)',
-    justifyContent: 'flex-end',
   },
-  sheet: {
-    backgroundColor: Theme.colors.card,
-    borderTopLeftRadius: Theme.radius.lg,
-    borderTopRightRadius: Theme.radius.lg,
-    borderWidth: 0.25,
-    borderColor: Theme.colors.cardBorder,
-    paddingTop: Spacing.two,
+  popover: {
+    position: 'absolute',
+    paddingVertical: Spacing.two,
     paddingHorizontal: Spacing.two,
   },
   item: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: Spacing.three,
-    paddingVertical: Spacing.three,
-    paddingHorizontal: Spacing.three,
+    gap: Spacing.two,
+    paddingVertical: Spacing.two,
+    paddingHorizontal: Spacing.two,
     borderRadius: Theme.radius.sm,
   },
   itemPressed: {
@@ -164,6 +212,7 @@ const styles = StyleSheet.create({
   divider: {
     height: StyleSheet.hairlineWidth,
     backgroundColor: Theme.colors.border,
-    marginHorizontal: Spacing.three,
+    marginVertical: Spacing.half,
+    marginHorizontal: Spacing.two,
   },
 });
