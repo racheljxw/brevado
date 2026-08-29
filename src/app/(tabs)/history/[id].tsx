@@ -12,6 +12,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { HeaderBackLink } from '@/components/app-header';
 import { AudioPlaybackControls } from '@/components/audio-playback-controls';
 import { Card } from '@/components/card';
 import { FavoriteStar } from '@/components/favorite-star';
@@ -24,7 +25,7 @@ import { useTheme } from '@/hooks/use-theme';
 import { deleteRecording, deleteRecordingAudio, regenerateReport } from '@/lib/api';
 import { formatRecordedAt } from '@/lib/format-time';
 import { formatMode, modePillColors } from '@/lib/modes';
-import { getStatusPresentation, TERMINAL_STATUSES } from '@/lib/recording-status';
+import { TERMINAL_STATUSES } from '@/lib/recording-status';
 import {
   fetchRecordingById,
   getRecordingAudioUrl,
@@ -50,15 +51,6 @@ function formatMetrics(metrics: RecordingMetrics | null) {
     wordsPerMinute: metrics.words_per_minute != null ? `${metrics.words_per_minute}` : '—',
     repetitionCount: metrics.repetition_count != null ? `${metrics.repetition_count}` : '—',
   };
-}
-
-function BackLink() {
-  const router = useRouter();
-  return (
-    <Pressable onPress={() => router.back()} hitSlop={8}>
-      <ThemedText type="link">‹ Back to History</ThemedText>
-    </Pressable>
-  );
 }
 
 // v2 Epic D Part 2 — inline title editing. Mirrors the custom-question
@@ -645,15 +637,12 @@ export default function RecordingDetailScreen() {
     [recording]
   );
 
-  const status = recording ? getStatusPresentation(recording.status, theme) : null;
   const modePill = recording ? modePillColors(recording.mode) : null;
 
   return (
     <ThemedView style={styles.container}>
       <SafeAreaView style={styles.safeArea} edges={['top', 'left', 'right']}>
-        <View style={styles.backRow}>
-          <BackLink />
-        </View>
+        <HeaderBackLink label="Back to History" onPress={() => router.back()} />
 
         {screenState === 'loading' && (
           <View style={styles.centerFill}>
@@ -680,7 +669,7 @@ export default function RecordingDetailScreen() {
           </View>
         )}
 
-        {screenState === 'loaded' && recording && status && modePill && (
+        {screenState === 'loaded' && recording && modePill && (
           <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
             {/* Header: the editable title (Part 2) sharing its line with the
                 favorite star + 3-dot menu, mirroring the List card's heading
@@ -714,20 +703,17 @@ export default function RecordingDetailScreen() {
               </View>
             </View>
 
-            {/* Meta row: the colour-coded mode pill (Part 3 styling) + the
-                status badge on the left, the date/time right-aligned. */}
+            {/* Meta row: the colour-coded mode pill (Part 3 styling) on the
+                left, the date/time right-aligned. No status badge — removed
+                as redundant: `ReportSection` below already shows an explicit
+                "still processing" / "Processing failed" notice for anything
+                that isn't done, so a second status label up here duplicated
+                that same information. */}
             <View style={styles.metaRow}>
-              <View style={styles.metaLeft}>
-                <View style={[styles.modePillBox, { backgroundColor: modePill.backgroundColor }]}>
-                  <ThemedText type="small" style={[styles.modePillText, { color: modePill.color }]}>
-                    {formatMode(recording.mode)}
-                  </ThemedText>
-                </View>
-                <View style={[styles.statusBadge, { backgroundColor: status.backgroundColor }]}>
-                  <ThemedText type="small" style={{ color: status.textColor }}>
-                    {status.label}
-                  </ThemedText>
-                </View>
+              <View style={[styles.modePillBox, { backgroundColor: modePill.backgroundColor }]}>
+                <ThemedText type="small" style={[styles.modePillText, { color: modePill.color }]}>
+                  {formatMode(recording.mode)}
+                </ThemedText>
               </View>
               <ThemedText type="small" themeColor="textSecondary">
                 {formatRecordedAt(recording.created_at)}
@@ -800,10 +786,6 @@ const styles = StyleSheet.create({
     // Gutter lives on the sections below, not here — a padded ScrollView
     // frame would clip the card drop shadows at its left/right edges. See
     // the matching note in `history/index.tsx`.
-  },
-  backRow: {
-    paddingTop: Spacing.three,
-    paddingHorizontal: Spacing.four,
   },
   centerFill: {
     flex: 1,
@@ -895,17 +877,13 @@ const styles = StyleSheet.create({
   titleSubmit: {
     paddingVertical: Theme.spacing.xs,
   },
-  // Meta row: mode pill + status badge on the left, date right-aligned —
-  // matching the List card's `metaRow` layout (Part 3).
+  // Meta row: mode pill on the left, date right-aligned — matching the List
+  // card's `metaRow` layout (Part 3). No status badge (see the JSX comment
+  // above where this renders).
   metaRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    gap: Spacing.two,
-  },
-  metaLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
     gap: Spacing.two,
   },
   modePillBox: {
@@ -916,11 +894,6 @@ const styles = StyleSheet.create({
   modePillText: {
     fontSize: 12,
     lineHeight: 16,
-  },
-  statusBadge: {
-    paddingHorizontal: Spacing.two,
-    paddingVertical: Spacing.half,
-    borderRadius: Theme.radius.pill,
   },
   section: {
     gap: Spacing.two,

@@ -3,6 +3,7 @@ import { useState } from 'react';
 import { Platform, Pressable, StyleSheet, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { HeaderBackLink } from '@/components/app-header';
 import { Card } from '@/components/card';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
@@ -36,38 +37,38 @@ export default function SettingsScreen() {
   return (
     <ThemedView style={styles.container}>
       <SafeAreaView style={styles.safeArea} edges={['top', 'left', 'right', 'bottom']}>
-        <Pressable onPress={() => router.back()} hitSlop={8}>
-          <ThemedText type="link">‹ Back</ThemedText>
-        </Pressable>
+        <HeaderBackLink label="Back" onPress={() => router.back()} />
 
-        <ThemedText type="subtitle" style={styles.title}>
-          Settings
-        </ThemedText>
-
-        <Card style={styles.card}>
-          <ThemedText type="small" themeColor="textSecondary">
-            Signed in as
+        <View style={styles.content}>
+          <ThemedText type="subtitle" style={styles.title}>
+            Settings
           </ThemedText>
-          <ThemedText type="smallBold">{user?.email ?? '—'}</ThemedText>
-        </Card>
 
-        <View style={styles.spacer} />
+          <Card style={styles.card}>
+            <ThemedText type="small" themeColor="textSecondary">
+              Signed in as
+            </ThemedText>
+            <ThemedText type="smallBold">{user?.email ?? '—'}</ThemedText>
+          </Card>
 
-        {error && (
-          <ThemedText type="small" themeColor="textSecondary" style={styles.error}>
-            {error}
-          </ThemedText>
-        )}
+          <View style={styles.spacer} />
 
-        <Pressable
-          onPress={handleSignOut}
-          disabled={signingOut}
-          style={({ pressed }) => [
-            styles.signOutButton,
-            (pressed || signingOut) && styles.pressed,
-          ]}>
-          <ThemedText type="smallBold">{signingOut ? 'Signing out…' : 'Sign Out'}</ThemedText>
-        </Pressable>
+          {error && (
+            <ThemedText type="small" themeColor="textSecondary" style={styles.error}>
+              {error}
+            </ThemedText>
+          )}
+
+          <Pressable
+            onPress={handleSignOut}
+            disabled={signingOut}
+            style={({ pressed }) => [
+              styles.signOutButton,
+              (pressed || signingOut) && styles.pressed,
+            ]}>
+            <ThemedText type="smallBold">{signingOut ? 'Signing out…' : 'Sign Out'}</ThemedText>
+          </Pressable>
+        </View>
 
         {Platform.OS === 'web' && <WebBadge />}
       </SafeAreaView>
@@ -85,11 +86,17 @@ const styles = StyleSheet.create({
     flex: 1,
     width: '100%',
     maxWidth: MaxContentWidth,
+    // NB: horizontal gutter/gap live on `content` below, not here —
+    // `HeaderBackLink` owns its own padding, so a shared one here would double
+    // up on its row. See the matching note in `history/index.tsx`.
+  },
+  content: {
+    flex: 1,
     paddingHorizontal: Spacing.four,
     gap: Spacing.three,
   },
   title: {
-    paddingTop: Spacing.two,
+    paddingTop: Spacing.one,
   },
   card: {
     padding: Spacing.three,

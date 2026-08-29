@@ -28,9 +28,9 @@ import Reanimated, {
 } from 'react-native-reanimated';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { AppHeader, BackLink, HeaderBackLink } from '@/components/app-header';
 import { AudioPlaybackControls } from '@/components/audio-playback-controls';
 import { Card } from '@/components/card';
-import { ProfileButton } from '@/components/profile-button';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { WebBadge } from '@/components/web-badge';
@@ -42,7 +42,7 @@ import { formatDuration } from '@/lib/format-time';
 import { MODE_LABELS } from '@/lib/modes';
 import { pickQuestionForMode } from '@/lib/question-selection';
 import type { Question } from '@/lib/questions';
-import { getStatusPresentation, TERMINAL_STATUSES } from '@/lib/recording-status';
+import { TERMINAL_STATUSES } from '@/lib/recording-status';
 import {
   buildAudioPath,
   fetchRecordingById,
@@ -78,12 +78,17 @@ type UploadErrorInfo = { message: string; stage: RecordingUploadStage };
 // History. It reuses the SAME polling shape History already has (see the
 // note in `pollStatus` below), just fetching this one recording.
 //
-//   pending / processing → a status badge (History's `getStatusPresentation`)
-//                          + spinner
-//   done                 → badge + "See more details ›" → this recording's
-//                          History detail screen
-//   failed               → badge + "Regenerate report" (the Phase 3 Step 2
-//                          endpoint/flow, same as History's) inline
+//   pending / processing → a spinner, nothing else (the spinner alone says
+//                          "still working" — no separate status label)
+//   done                 → "See more details ›" → this recording's History
+//                          detail screen
+//   failed               → an explanation + "Regenerate report" (the Phase 3
+//                          Step 2 endpoint/flow, same as History's) inline
+//
+// A status-word badge/pill used to sit above these (`getStatusPresentation`,
+// the same one History used) — removed as redundant: the spinner/link/
+// explanation below it already say everything the badge said, just more
+// specifically. See docs/CLAUDE.md for the removal note.
 function ProcessingStatus({
   recordingId,
   kickoffError,
@@ -163,19 +168,11 @@ function ProcessingStatus({
     }
   }
 
-  const presentation = getStatusPresentation(status, theme);
   const nonTerminal = !TERMINAL_STATUSES.has(status);
 
   return (
     <View style={styles.processingStatus}>
-      <View style={styles.processingBadgeRow}>
-        {nonTerminal && <ActivityIndicator size="small" color={theme.textSecondary} />}
-        <View style={[styles.statusBadge, { backgroundColor: presentation.backgroundColor }]}>
-          <ThemedText type="smallBold" style={{ color: presentation.textColor }}>
-            {presentation.label}
-          </ThemedText>
-        </View>
-      </View>
+      {nonTerminal && <ActivityIndicator size="small" color={theme.textSecondary} />}
 
       {status === 'done' && (
         <Pressable onPress={onSeeDetails} hitSlop={8} style={({ pressed }) => pressed && styles.pressed}>
@@ -319,13 +316,7 @@ function RecordingPlayback({
               Record another
             </ThemedText>
           </Pressable>
-          <Pressable
-            style={({ pressed }) => [styles.discardButton, pressed && styles.pressed]}
-            onPress={onChangeMode}>
-            <ThemedText type="smallBold" themeColor="textSecondary">
-              ‹ Change mode
-            </ThemedText>
-          </Pressable>
+          <BackLink label="Change mode" onPress={onChangeMode} style={styles.discardButton} />
         </>
       )}
     </Card>
@@ -717,14 +708,7 @@ function QuestionArea({
     onClearCustom();
   }
 
-  const backLink = (
-    <Pressable
-      onPress={usePromptInstead}
-      hitSlop={8}
-      style={({ pressed }) => [styles.backLink, pressed && styles.pressed]}>
-      <ThemedText style={styles.questionLink}>‹ Use prompt instead</ThemedText>
-    </Pressable>
-  );
+  const backLink = <BackLink label="Use prompt instead" onPress={usePromptInstead} style={styles.backLink} />;
 
   // The record affordance: a big red disc (#C53030, 200) sitting on a
   // larger off-white disc (#FFFEFE, 245, 1px #56453D border), with a hint
@@ -1132,27 +1116,23 @@ export default function RecordScreen() {
   return (
     <ThemedView style={styles.container}>
       <SafeAreaView style={styles.safeArea}>
-        <View style={styles.header}>
-          {/* v2 Epic C Part 2: once a mode is picked, the mode-select screen
-              reads as a detail view — its back affordance ("‹ Change mode")
-              moves up here, top-left, sharing the header row with the
-              profile icon. */}
-          {flowScreen === 'mode-select' && selectedMode ? (
-            <Reanimated.View entering={FadeIn.duration(200)} exiting={FadeOut.duration(150)}>
-              <Pressable
-                onPress={handleBackToModeSelect}
-                hitSlop={8}
-                style={({ pressed }) => pressed && styles.pressed}>
-                <ThemedText type="smallBold" themeColor="textSecondary">
-                  ‹ Change mode
-                </ThemedText>
-              </Pressable>
-            </Reanimated.View>
-          ) : (
-            <View />
-          )}
-          <ProfileButton />
-        </View>
+        {/* v2: once a mode is picked, this screen's header swaps from
+            "brevado. + profile icon" (`AppHeader`) to a header-row back
+            link reading "Change mode" (`HeaderBackLink`) — the same swap
+            History's detail screen and Settings do with their own back
+            links, just triggered by `selectedMode` instead of a different
+            route. Both render through the exact same row shape, so nothing
+            about the header's position ever shifts, only its content. */}
+        {flowScreen === 'mode-select' && selectedMode ? (
+          <Reanimated.View
+            style={styles.headerFade}
+            entering={FadeIn.duration(200)}
+            exiting={FadeOut.duration(150)}>
+            <HeaderBackLink label="Change mode" onPress={handleBackToModeSelect} />
+          </Reanimated.View>
+        ) : (
+          <AppHeader />
+        )}
         <ThemedView style={styles.heroSection}>
           {flowScreen === 'mode-select' &&
             (blockedByCap ? (
@@ -1233,13 +1213,7 @@ export default function RecordScreen() {
                   )}
 
                   {!recorderState.isRecording && (
-                    <Pressable
-                      style={({ pressed }) => [styles.discardButton, pressed && styles.pressed]}
-                      onPress={handleBackToModeSelect}>
-                      <ThemedText type="smallBold" themeColor="textSecondary">
-                        ‹ Change mode
-                      </ThemedText>
-                    </Pressable>
+                    <BackLink label="Change mode" onPress={handleBackToModeSelect} style={styles.discardButton} />
                   )}
                 </View>
               )}
@@ -1279,25 +1253,38 @@ const styles = StyleSheet.create({
   },
   safeArea: {
     flex: 1,
-    paddingHorizontal: Spacing.three,
+    // No horizontal padding here — `AppHeader`/`HeaderBackLink` own their
+    // own (so the gutter matches History/Streaks exactly), and `heroSection`
+    // below carries its own for the rest of this screen's content. See the
+    // matching note on `heroSection`.
     alignItems: 'center',
     gap: Spacing.three,
     paddingBottom: BottomTabInset + Spacing.three,
     maxWidth: MaxContentWidth,
+  },
+  // Wraps the `HeaderBackLink` shown once a mode is selected, purely so its
+  // `alignSelf: 'stretch'` row (see `app-header.tsx`) actually gets to
+  // stretch full width — `Reanimated.View` has no layout opinion of its
+  // own, and `safeArea` below centres (shrink-wraps) its children rather
+  // than stretching them by default.
+  headerFade: {
+    alignSelf: 'stretch',
   },
   heroSection: {
     // `alignSelf: 'stretch'` is load-bearing: `safeArea` centres its
     // children, so without this `heroSection` shrinks to hug its widest
     // child (the tagline) and the mode-select row can never get wider than
     // that line. With it, `heroSection` fills `safeArea`'s content width and
-    // the row spans the screen (minus `safeArea`'s 16pt gutter).
-    // No horizontal padding here — `safeArea` already provides the gutter;
-    // it used to be doubled.
+    // the row spans the screen.
+    // This is also this screen's one horizontal-gutter source below the
+    // header (moved here from `safeArea` so `AppHeader`'s own gutter isn't
+    // doubled).
     alignSelf: 'stretch',
     alignItems: 'center',
     justifyContent: 'center',
     flex: 1,
     gap: Spacing.four,
+    paddingHorizontal: Spacing.three,
   },
   // v2 Epic C Part 1/2 — mode-select screen. `modeFlow` is the full-height
   // stage; `modeFlowInner` (pill row + the floating intro) sits at the top
@@ -1605,18 +1592,6 @@ const styles = StyleSheet.create({
     gap: Theme.spacing.sm,
     marginTop: Theme.spacing.xs,
   },
-  processingBadgeRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: Theme.spacing.sm,
-  },
-  // Same status-badge visual language as History (`getStatusPresentation`
-  // supplies the colours) — restyled to a v2 pill.
-  statusBadge: {
-    paddingHorizontal: Theme.spacing.md,
-    paddingVertical: Theme.spacing.xs,
-    borderRadius: Theme.radius.pill,
-  },
   errorText: {
     color: '#e5484d',
     textAlign: 'center',
@@ -1637,13 +1612,6 @@ const styles = StyleSheet.create({
   discardButton: {
     marginTop: Spacing.two,
     paddingVertical: Spacing.two,
-  },
-  header: {
-    alignSelf: 'stretch',
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    minHeight: 24,
   },
   pressed: {
     opacity: 0.7,

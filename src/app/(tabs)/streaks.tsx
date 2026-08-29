@@ -1,7 +1,7 @@
 import { Platform, StyleSheet, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { ProfileButton } from '@/components/profile-button';
+import { AppHeader } from '@/components/app-header';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { WebBadge } from '@/components/web-badge';
@@ -16,12 +16,7 @@ export default function StreaksScreen() {
   return (
     <ThemedView style={styles.container}>
       <SafeAreaView style={styles.safeArea} edges={['top', 'left', 'right']}>
-        <View style={styles.headerRow}>
-          <ThemedText type="subtitle" style={styles.title}>
-            Streaks
-          </ThemedText>
-          <ProfileButton />
-        </View>
+        <AppHeader />
 
         <View style={styles.centerFill}>
           <ThemedText type="small" themeColor="textSecondary" style={styles.comingSoon}>
@@ -45,21 +40,15 @@ const styles = StyleSheet.create({
     flex: 1,
     width: '100%',
     maxWidth: MaxContentWidth,
-    paddingHorizontal: Spacing.four,
-  },
-  headerRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  title: {
-    paddingTop: Spacing.three,
-    paddingBottom: Spacing.two,
+    // NB: horizontal gutter lives on `title`/`centerFill` below, NOT here —
+    // `AppHeader` supplies its own padding, so a shared one here would
+    // double up on its row. See the matching note in `history/index.tsx`.
   },
   centerFill: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
+    paddingHorizontal: Spacing.four,
   },
   comingSoon: {
     textAlign: 'center',

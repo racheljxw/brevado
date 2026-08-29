@@ -13,9 +13,9 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { AppHeader } from '@/components/app-header';
 import { Card } from '@/components/card';
 import { FavoriteStar } from '@/components/favorite-star';
-import { ProfileButton } from '@/components/profile-button';
 import { RecordingActionsMenu, type RecordingMenuAction } from '@/components/recording-actions-menu';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
@@ -258,7 +258,12 @@ function SearchBar({ value, onChangeText }: { value: string; onChangeText: (next
         value={value}
         onChangeText={onChangeText}
         placeholder="Search by title or prompt"
-        placeholderTextColor={theme.textSecondary}
+        // `#56453D80` = `Theme.colors.textSecondary` at 50% opacity — the
+        // one placeholder-text treatment used app-wide (matches the custom-
+        // question input in `index.tsx` and the title editor in
+        // `history/[id].tsx`), rather than the full-opacity secondary text
+        // colour this used to read.
+        placeholderTextColor="#56453D80"
         autoCorrect={false}
         autoCapitalize="none"
         returnKeyType="search"
@@ -293,7 +298,10 @@ function ViewToggle({ view, onChange }: { view: HistoryView; onChange: (next: Hi
             style={[styles.toggleTab, active && styles.toggleTabActive]}
             accessibilityRole="tab"
             accessibilityState={{ selected: active }}>
-            <ThemedText type={active ? 'smallBold' : 'small'} themeColor={active ? 'text' : 'textSecondary'}>
+            <ThemedText
+              type={active ? 'smallBold' : 'small'}
+              themeColor={active ? 'text' : 'textSecondary'}
+              style={styles.toggleLabel}>
               {tab.label}
             </ThemedText>
           </Pressable>
@@ -345,7 +353,7 @@ function MonthCalendar({
           hitSlop={12}
           accessibilityRole="button"
           accessibilityLabel="Previous month">
-          <SymbolView name="chevron.left" size={16} tintColor={theme.text} />
+          <SymbolView name="chevron.left" size={20} tintColor={theme.text} />
         </Pressable>
         <ThemedText type="smallBold">{monthLabel}</ThemedText>
         <Pressable
@@ -356,7 +364,7 @@ function MonthCalendar({
           accessibilityLabel="Next month">
           <SymbolView
             name="chevron.right"
-            size={16}
+            size={20}
             tintColor={canGoNext ? theme.text : Theme.colors.border}
           />
         </Pressable>
@@ -389,13 +397,31 @@ function MonthCalendar({
               accessibilityLabel={`${formatDayLabel(key)}, ${
                 count > 0 ? `${count} recording${count === 1 ? '' : 's'}` : 'no recordings'
               }`}>
-              <View style={[styles.dayInner, isToday && styles.dayToday, isSelected && styles.daySelected]}>
-                <ThemedText
-                  type={count > 0 ? 'smallBold' : 'small'}
-                  themeColor={count > 0 ? 'text' : 'textSecondary'}
-                  style={isSelected ? styles.daySelectedText : undefined}>
-                  {day}
-                </ThemedText>
+              {/* `dayInner` is a fixed-size box (constant regardless of
+                  today/selected) purely so `dotSlot` below always sits the
+                  same distance from the top of the cell — the "today" circle
+                  is smaller than the default/selected one, but that sizing
+                  lives on the *nested* `dayCircle`, not on this outer box,
+                  so it can never shift the dot's vertical position (a bug
+                  the previous version had: shrinking `dayInner` itself for
+                  "today" pushed its `dotSlot` up relative to every other
+                  day's). */}
+              <View style={styles.dayInner}>
+                <View
+                  style={[
+                    styles.dayCircle,
+                    isToday && !isSelected && styles.dayTodayCircle,
+                    isSelected && styles.daySelectedCircle,
+                  ]}>
+                  <ThemedText
+                    type={count > 0 ? 'smallBold' : 'small'}
+                    themeColor={count > 0 ? 'text' : 'textSecondary'}
+                    style={
+                      isSelected ? styles.daySelectedText : isToday ? styles.dayTodayText : undefined
+                    }>
+                    {day}
+                  </ThemedText>
+                </View>
               </View>
               <View style={styles.dotSlot}>{count > 0 && <View style={styles.dot} />}</View>
             </Pressable>
@@ -790,12 +816,7 @@ export default function HistoryScreen() {
   return (
     <ThemedView style={styles.container}>
       <SafeAreaView style={styles.safeArea} edges={['top', 'left', 'right']}>
-        <View style={styles.headerRow}>
-          <ThemedText type="subtitle" style={styles.title}>
-            History
-          </ThemedText>
-          <ProfileButton />
-        </View>
+        <AppHeader />
 
         {error && (
           <Card style={styles.errorCard}>
@@ -924,16 +945,10 @@ const styles = StyleSheet.create({
     // full-bleed and insetting only its contentContainer lets the shadow
     // bleed into the gutter.
   },
-  headerRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: Spacing.four,
-  },
-  title: {
-    paddingTop: Spacing.three,
-    paddingBottom: Spacing.two,
-  },
+  // `AppHeader` (brevado logo + profile icon) owns its own padding — see
+  // src/components/app-header.tsx. This screen's own "History" heading
+  // renders as its own line right below it, not sharing that row, so the
+  // header row itself is identical across Record/History/Streaks.
   centerFill: {
     flex: 1,
     alignItems: 'center',
@@ -957,7 +972,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.three,
     paddingVertical: Platform.OS === 'ios' ? Spacing.two : Spacing.one,
     marginHorizontal: Spacing.four,
-    marginTop: Spacing.one,
+    marginTop: Spacing.two,
   },
   searchInput: {
     flex: 1,
@@ -980,12 +995,16 @@ const styles = StyleSheet.create({
   },
   toggleTab: {
     paddingVertical: Spacing.two,
-    borderBottomWidth: 2,
+    borderBottomWidth: 3,
     borderBottomColor: 'transparent',
     marginBottom: -StyleSheet.hairlineWidth,
   },
   toggleTabActive: {
     borderBottomColor: Theme.colors.textPrimary,
+  },
+  toggleLabel: {
+    fontSize: 16,
+    lineHeight: 22,
   },
   list: {
     // fill the space left under the header / search bar / toggle so the
@@ -1023,18 +1042,38 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingVertical: Spacing.one,
   },
+  // Fixed-size box — constant regardless of today/selected — so `dotSlot`
+  // below always sits the same distance from the cell's top. See the JSX
+  // comment at the call site for the bug this fixes.
   dayInner: {
+    width: 34,
+    height: 34,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  // The actual visible circle, nested inside `dayInner` — its size is what
+  // varies (today vs. selected vs. neither), never `dayInner`'s.
+  dayCircle: {
     width: 34,
     height: 34,
     borderRadius: Theme.radius.pill,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  dayToday: {
-    borderWidth: 1,
-    borderColor: Theme.colors.border,
+  // Today's cell: a smaller, filled circle (brown bg + off-white number) so
+  // it stands out at a glance without competing with a selected day's own
+  // (larger) accent fill — `isSelected` takes precedence when a day is both
+  // today and selected (see the `isToday && !isSelected` check at the call
+  // site).
+  dayTodayCircle: {
+    width: 26,
+    height: 26,
+    backgroundColor: Theme.colors.accent,
   },
-  daySelected: {
+  dayTodayText: {
+    color: Theme.colors.onAccent,
+  },
+  daySelectedCircle: {
     backgroundColor: Theme.colors.accent,
   },
   daySelectedText: {
