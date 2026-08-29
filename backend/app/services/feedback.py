@@ -6,17 +6,25 @@ prompt and asks Gemini for free-text coaching feedback (structured/criteria-base
 is explicitly Phase 5, not this step — see docs/CLAUDE.md's "Metrics" section and
 docs/PROJECT_PLAN.md Section 3).
 
-v2 Epic D Part 1: the same single Gemini call now *also* returns a short 2-4 word
-recording `title` ("Challenging Coworker", "Day Recap") — folded into this one call, not a
-separate request, to avoid extra cost/latency. Reliability of extracting both fields comes
-from Gemini's structured-output mode: the call passes `response_mime_type="application/json"`
-plus an explicit two-key `response_schema` ({feedback, title}), so the response is
-constrained to valid JSON we can `json.loads` — not a fragile delimiter we'd have to split
-on. A JSON-parse failure or an empty `feedback` field is treated as a feedback failure
-(raises `FeedbackGenerationError`, so `_run_with_one_retry` retries once); an empty/missing
-`title` alone is NOT a failure — `generate_feedback` returns `title=None`, logs it, and the
-recording still completes normally (same lenient degradation as metrics — see
-`processing.py` and docs/CLAUDE.md's "Metrics" section).
+v2 Epic D Part 1 / v3 Epic F Step 1: the same single Gemini call now *also* returns a short
+2-4 word recording `title` ("Challenging Coworker", "Day Recap") AND three 0-100 scores —
+`impact_score`, `clarity_score`, `structure_score` — plus a `grammar_issue_count` (a
+Clarity grounding input, not a displayed score). All folded into this one call, not extra
+requests, to avoid cost/latency. Reliability of extracting every field comes from Gemini's
+structured-output mode: the call passes `response_mime_type="application/json"` plus an
+explicit `response_schema`, so the response is constrained to valid JSON we can `json.loads`
+— not a fragile delimiter we'd have to split on. A JSON-parse failure or an empty `feedback`
+field is treated as a feedback failure (raises `FeedbackGenerationError`, so
+`_run_with_one_retry` retries once); an empty/missing `title`, or any missing/out-of-range
+score, is NOT a failure — `generate_feedback` returns that field as `None`, logs it, and the
+recording still completes normally (same lenient degradation as metrics — see `processing.py`
+and docs/CLAUDE.md's "v3 scope" / "Metrics" sections).
+
+Score prompt design (docs/CLAUDE.md's "v3 scope"): `impact_score` and `structure_score` use
+genuinely mode-specific guidance (`MODE_IMPACT_GUIDANCE` / `MODE_STRUCTURE_GUIDANCE`);
+`clarity_score` is one holistic judgment (`_CLARITY_GUIDANCE`) grounded by — not averaged
+from — the deterministic filler/repetition rates already in the metrics grounding plus the
+model's own grammar assessment (`grammar_issue_count`).
 
 Kept as its own module rather than folded into `processing.py`, mirroring the choice
 already made for `metrics.py`: `build_feedback_prompt` is pure string-building logic with
@@ -44,35 +52,66 @@ from app.gemini_client import get_gemini_client
 
 logger = logging.getLogger(__name__)
 
-# Structured-output schema for the single feedback call (v2 Epic D Part 1). Constraining
-# the response to this two-key object is what makes extracting both the feedback prose and
-# the short title from one call reliable — no delimiter parsing, no "the model wrapped it
-# in prose" failure mode.
+# Structured-output schema for the single feedback call (v2 Epic D Part 1; extended in v3
+# Epic F Step 1). Constraining the response to this object is what makes extracting every
+# field from one call reliable — no delimiter parsing, no "the model wrapped it in prose"
+# failure mode.
+#
+# v3 adds `impact_score` / `clarity_score` / `structure_score` (each an integer 0-100 —
+# see docs/CLAUDE.md's "v3 scope") and `grammar_issue_count` (a non-negative integer the
+# model assesses itself, a Clarity grounding input — not a displayed score). All four are
+# in `required` for the same reason `title` is: structured output is most reliable when the
+# model must produce every key. `generate_feedback` still validates each leniently — a
+# missing/out-of-range score becomes `None` and never fails the recording (only a bad
+# `feedback` field does).
 _FEEDBACK_RESPONSE_SCHEMA = types.Schema(
     type=types.Type.OBJECT,
     properties={
         "feedback": types.Schema(type=types.Type.STRING),
         "title": types.Schema(type=types.Type.STRING),
+        "impact_score": types.Schema(type=types.Type.INTEGER),
+        "clarity_score": types.Schema(type=types.Type.INTEGER),
+        "structure_score": types.Schema(type=types.Type.INTEGER),
+        "grammar_issue_count": types.Schema(type=types.Type.INTEGER),
     },
-    required=["feedback", "title"],
+    required=[
+        "feedback",
+        "title",
+        "impact_score",
+        "clarity_score",
+        "structure_score",
+        "grammar_issue_count",
+    ],
 )
 
 # A title longer than this is the model ignoring "2-4 words" — kept anyway (Part 2 lets the
 # user edit it) but logged so it's visible.
 _MAX_REASONABLE_TITLE_LEN = 120
 
+# Scores are integers on this inclusive scale. A value outside it (or a non-integer) is
+# treated as a generation miss for that one score — stored NULL, logged, never a failure.
+_SCORE_MIN = 0
+_SCORE_MAX = 100
+
 
 @dataclass
 class GeneratedFeedback:
-    """Result of the single Gemini feedback+title call.
+    """Result of the single Gemini feedback call (feedback + title + v3 scores).
 
     `feedback` is always non-empty (an empty one raises `FeedbackGenerationError` instead).
-    `title` is `None` when the model returned nothing usable for it — a tolerated outcome,
-    not a failure: the recording still completes with feedback and a null title.
+    Every other field is `None` when the model returned nothing usable for it — a tolerated
+    outcome, not a failure: the recording still completes with feedback and whatever else
+    did parse. `impact_score` / `clarity_score` / `structure_score` are integers 0-100 when
+    present; `grammar_issue_count` is a non-negative integer (a Clarity grounding input, not
+    a displayed score — see docs/CLAUDE.md's "v3 scope").
     """
 
     feedback: str
     title: str | None
+    impact_score: int | None = None
+    clarity_score: int | None = None
+    structure_score: int | None = None
+    grammar_issue_count: int | None = None
 
 # Mode-specific evaluation criteria, per docs/PROJECT_PLAN.md Section 3: interview answers
 # are judged on directness/structure, stories on narrative arc/pacing, miscellaneous on
@@ -99,6 +138,73 @@ MODE_CRITERIA: dict[str, str] = {
         "response well organized, and is it free of unnecessary padding or tangents?"
     ),
 }
+
+# v3 Epic F Step 1: mode-specific guidance for the `impact_score`. Deliberately worded to
+# be a genuinely different judgment per mode, not one instruction with the mode name swapped
+# in — interview impact is about whether the answer landed as a response, story impact is
+# about engagement/cohesion, miscellaneous impact is about substance.
+MODE_IMPACT_GUIDANCE: dict[str, str] = {
+    "interview": (
+        "Impact here is whether the answer actually landed as a response to the question: "
+        "did it address what was asked directly (not a near-miss or a dodge), give a "
+        "concrete and substantive answer rather than a vague or generic one, and leave a "
+        "listener with a clear takeaway about the speaker?"
+    ),
+    "story": (
+        "Impact here is how cohesive and engaging the story was as a whole: did it hold "
+        "together as one narrative with a point, build and pay off interest or tension, and "
+        "make a listener actually want to keep listening rather than tune out?"
+    ),
+    "miscellaneous": (
+        "Impact here is the substance and coherence of the take: did the speaker say "
+        "something genuinely worth hearing — a real idea, opinion, or observation developed "
+        "with some depth — rather than filling time, and did the take hold together as a "
+        "coherent whole?"
+    ),
+}
+
+# v3 Epic F Step 1: mode-specific guidance for the `structure_score` — a mode-aware
+# organization/coherence judgment, consistent with how MODE_CRITERIA already frames
+# structure for the prose feedback.
+MODE_STRUCTURE_GUIDANCE: dict[str, str] = {
+    "interview": (
+        "Structure here is organization: a clear point stated up front, logically ordered "
+        "support, and a clean close — versus rambling, backtracking, or burying the answer."
+    ),
+    "story": (
+        "Structure here is narrative shape: a clear beginning, middle, and end, with setup, "
+        "development, and resolution in a sensible order and proportion — not all setup, not "
+        "a rushed payoff."
+    ),
+    "miscellaneous": (
+        "Structure here is organization: moving through the points in a sensible order with "
+        "clear connections between them, versus jumping around and losing the thread."
+    ),
+}
+
+# v3 Epic F Step 1: guidance for the `clarity_score` and `grammar_issue_count`. Not
+# mode-specific. The key instruction is that clarity is ONE holistic judgment, not a
+# mechanical average of the sub-metrics — the deterministic filler/repetition rates (in the
+# metrics grounding above) and the model's own grammar assessment are inputs to that
+# impression, not terms to average.
+_CLARITY_GUIDANCE = (
+    "Give one holistic judgment of how clear and easy to follow the speech was overall — "
+    "how readily a listener could grasp the point and track the reasoning. This is your own "
+    "overall impression, NOT a mechanical average of any numbers. Weigh conciseness (tight "
+    "vs. padded), word choice, sentence construction, and the automatically measured "
+    "filler-word and repetition rates above as inputs to that impression. Separately, assess "
+    "the speaker's grammar yourself from the transcript and return grammar_issue_count as "
+    "the count of notable grammatical errors you notice (subject-verb agreement, tense, "
+    "malformed sentences, and the like) — do not count transcription artifacts or the normal "
+    "informality of spoken language. More grammar issues should pull the clarity score down, "
+    "but they are one factor among several, not the whole score."
+)
+
+_SCORE_SCALE = (
+    "Use the full 0-100 range for the three scores: 0 = very poor, 50 = mediocre, 75 = "
+    "solid, 90+ = genuinely excellent. Judge honestly against a high bar — don't cluster "
+    "everything in the 70s-80s, and don't default to round multiples of 5 or 10."
+)
 
 
 class FeedbackGenerationError(Exception):
@@ -170,6 +276,8 @@ def build_feedback_prompt(mode: str, question: str | None, transcript: str, metr
     see docs/CLAUDE.md's "Database" section on why `question` is nullable regardless of mode.
     """
     criteria = MODE_CRITERIA.get(mode, MODE_CRITERIA["miscellaneous"])
+    impact_guidance = MODE_IMPACT_GUIDANCE.get(mode, MODE_IMPACT_GUIDANCE["miscellaneous"])
+    structure_guidance = MODE_STRUCTURE_GUIDANCE.get(mode, MODE_STRUCTURE_GUIDANCE["miscellaneous"])
 
     if question:
         prompt_context = f'The speaker was responding to this prompt: "{question}"'
@@ -204,11 +312,11 @@ def build_feedback_prompt(mode: str, question: str | None, transcript: str, metr
         f"{metrics_grounding}\n\n"
         "Transcript:\n"
         f'"""\n{transcript}\n"""\n\n'
-        "Respond with a single JSON object with exactly two keys:\n\n"
+        "Respond with a single JSON object with exactly these keys:\n\n"
         '"feedback": 2-4 short paragraphs of specific, actionable feedback in plain prose — '
-        "no headers, bullet points, or numeric scores (structured scoring is a separate, "
-        "later feature). Reference concrete things the speaker actually said; do not give "
-        "generic advice that could apply to any recording. Weave in the automatically "
+        "no headers, bullet points, or numeric scores in the prose itself (the scores are "
+        "separate keys below). Reference concrete things the speaker actually said; do not "
+        "give generic advice that could apply to any recording. Weave in the automatically "
         "measured stats above where relevant (e.g. if filler words or repetition are "
         "notably high, or the pace is notably fast or slow) rather than ignoring them, but "
         "don't just restate the numbers verbatim — connect them to what actually happened "
@@ -216,8 +324,53 @@ def build_feedback_prompt(mode: str, question: str | None, transcript: str, metr
         "strengths.\n\n"
         '"title": a short 2-4 word label for this recording, written like a note or '
         'journal-entry title in title case — e.g. "Challenging Coworker", "Unplanned Trip", '
-        f'"Day Recap". Not a sentence, no trailing punctuation. {title_guidance}'
+        f'"Day Recap". Not a sentence, no trailing punctuation. {title_guidance}\n\n'
+        f'"impact_score": an integer 0-100. {impact_guidance}\n\n'
+        f'"clarity_score": an integer 0-100. {_CLARITY_GUIDANCE}\n\n'
+        f'"structure_score": an integer 0-100. {structure_guidance}\n\n'
+        '"grammar_issue_count": a non-negative integer — the count of notable grammatical '
+        "errors described in the clarity guidance above (0 if none).\n\n"
+        f"{_SCORE_SCALE}"
     )
+
+
+def _coerce_score(raw: object, field_name: str) -> int | None:
+    """Validates one 0-100 score from the Gemini JSON response.
+
+    Returns `None` (and logs) for anything missing, non-integer, or out of range — a
+    per-score generation miss is tolerated exactly like a missing `title`, never a reason to
+    fail or retry the recording. Only a bad `feedback` field does that.
+    """
+    if raw is None:
+        logger.warning("feedback: %s missing from response — storing NULL", field_name)
+        return None
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        logger.warning("feedback: %s was not an integer (%r) — storing NULL", field_name, raw)
+        return None
+    if not (_SCORE_MIN <= value <= _SCORE_MAX):
+        logger.warning("feedback: %s out of range 0-100 (%r) — storing NULL", field_name, value)
+        return None
+    return value
+
+
+def _coerce_issue_count(raw: object) -> int | None:
+    """Like `_coerce_score`, but for `grammar_issue_count` — a non-negative integer with no
+    upper bound. `None` (logged) for missing / non-integer / negative.
+    """
+    if raw is None:
+        logger.warning("feedback: grammar_issue_count missing from response — storing NULL")
+        return None
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        logger.warning("feedback: grammar_issue_count was not an integer (%r) — storing NULL", raw)
+        return None
+    if value < 0:
+        logger.warning("feedback: grammar_issue_count was negative (%r) — storing NULL", value)
+        return None
+    return value
 
 
 def generate_feedback(
@@ -291,5 +444,28 @@ def generate_feedback(
     elif len(title) > _MAX_REASONABLE_TITLE_LEN:
         logger.warning("feedback: title looks unexpectedly long (%d chars): %r", len(title), title)
 
-    logger.info("feedback: generation succeeded (%d chars feedback, title=%r)", len(feedback), title)
-    return GeneratedFeedback(feedback=feedback, title=title)
+    # v3 Epic F Step 1: three 0-100 scores + a grammar-issue count from the same response.
+    # Each validated leniently — a missing/garbage one is stored NULL, never a failure.
+    impact_score = _coerce_score(parsed.get("impact_score"), "impact_score")
+    clarity_score = _coerce_score(parsed.get("clarity_score"), "clarity_score")
+    structure_score = _coerce_score(parsed.get("structure_score"), "structure_score")
+    grammar_issue_count = _coerce_issue_count(parsed.get("grammar_issue_count"))
+
+    logger.info(
+        "feedback: generation succeeded (%d chars feedback, title=%r, impact=%s, "
+        "clarity=%s, structure=%s, grammar_issues=%s)",
+        len(feedback),
+        title,
+        impact_score,
+        clarity_score,
+        structure_score,
+        grammar_issue_count,
+    )
+    return GeneratedFeedback(
+        feedback=feedback,
+        title=title,
+        impact_score=impact_score,
+        clarity_score=clarity_score,
+        structure_score=structure_score,
+        grammar_issue_count=grammar_issue_count,
+    )

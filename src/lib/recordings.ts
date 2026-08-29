@@ -176,6 +176,14 @@ export async function getActiveRecordingCount(userId: string): Promise<number> {
 // Shape stored in `recordings.metrics` (Phase 2 Step 4) — see
 // docs/CLAUDE.md's "Metrics" section for what each field means and why
 // `words_per_minute` in particular can come back null.
+//
+// v3 Epic F Step 1: the recording DETAIL screen no longer displays these
+// (the raw filler/WPM/repetition numbers were replaced by the three score
+// badges — see `RecordingDetail` below), so `fetchRecordingById` stopped
+// selecting `metrics`. The metrics still compute and store on every
+// recording; this type stays for v3 Epic G, where Streaks → Clarity's
+// detail screen surfaces them again as supporting badges (over the list
+// query, which will widen for scores + metrics there).
 export type RecordingMetrics = {
   filler_word_rate: number | null;
   words_per_minute: number | null;
@@ -198,7 +206,17 @@ export type RecordingDetail = {
   title: string | null;
   transcript: string | null;
   feedback: string | null;
-  metrics: RecordingMetrics | null;
+  // v3 Epic F Step 1: three 0-100 scores from the same Gemini feedback call,
+  // shown as badges on the detail screen (Impact / Clarity / Structure, that
+  // order). Null for a pre-v3 recording, or where generation returned nothing
+  // usable for that one score (lenient — never fails the recording). Streaks
+  // aggregation (Epic G) excludes any recording with a null score.
+  impact_score: number | null;
+  clarity_score: number | null;
+  structure_score: number | null;
+  // Not a displayed score — a Clarity grounding input the model assesses
+  // itself. Selected here so Epic G's Clarity detail screen can show it.
+  grammar_issue_count: number | null;
   audio_path: string | null;
   audio_deleted: boolean;
   favorite: boolean;
@@ -217,7 +235,7 @@ export async function fetchRecordingById(id: string): Promise<RecordingDetail | 
   const { data, error } = await supabase
     .from('recordings')
     .select(
-      'id, mode, question, status, created_at, title, transcript, feedback, metrics, audio_path, audio_deleted, favorite'
+      'id, mode, question, status, created_at, title, transcript, feedback, impact_score, clarity_score, structure_score, grammar_issue_count, audio_path, audio_deleted, favorite'
     )
     .eq('id', id)
     .maybeSingle();

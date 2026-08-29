@@ -12,6 +12,8 @@ Run from `backend/` with the dev deps installed:
 
 from app.services.feedback import (
     _FEEDBACK_RESPONSE_SCHEMA,
+    _coerce_issue_count,
+    _coerce_score,
     _format_metrics_grounding,
     build_feedback_prompt,
 )
@@ -167,7 +169,90 @@ def test_title_guidance_falls_back_to_transcript_when_no_question():
     assert "derive the title entirely from what" in prompt
 
 
-def test_feedback_response_schema_requires_both_keys():
+def test_feedback_response_schema_requires_all_keys():
+    expected = {
+        "feedback",
+        "title",
+        "impact_score",
+        "clarity_score",
+        "structure_score",
+        "grammar_issue_count",
+    }
     props = _FEEDBACK_RESPONSE_SCHEMA.properties
-    assert set(props) == {"feedback", "title"}
-    assert set(_FEEDBACK_RESPONSE_SCHEMA.required) == {"feedback", "title"}
+    assert set(props) == expected
+    assert set(_FEEDBACK_RESPONSE_SCHEMA.required) == expected
+
+
+# --- prompt construction: v3 scores (Epic F Step 1) -------------------------------
+
+
+def test_prompt_asks_for_the_three_scores_and_grammar_count():
+    prompt = build_feedback_prompt(
+        mode="interview", question="Why this role?", transcript="Some answer.", metrics=SAMPLE_METRICS,
+    )
+    assert '"impact_score"' in prompt
+    assert '"clarity_score"' in prompt
+    assert '"structure_score"' in prompt
+    assert '"grammar_issue_count"' in prompt
+    assert "0-100" in prompt
+
+
+def test_impact_guidance_is_mode_specific():
+    interview = build_feedback_prompt(
+        mode="interview", question="Q?", transcript="t", metrics=SAMPLE_METRICS,
+    )
+    story = build_feedback_prompt(
+        mode="story", question="Q?", transcript="t", metrics=SAMPLE_METRICS,
+    )
+    misc = build_feedback_prompt(
+        mode="miscellaneous", question=None, transcript="t", metrics=SAMPLE_METRICS,
+    )
+    # Each mode's impact guidance leads with a genuinely different judgment.
+    assert "landed as a response to the question" in interview
+    assert "cohesive and engaging the story" in story
+    assert "substance and coherence of the take" in misc
+    assert "landed as a response to the question" not in story
+
+
+def test_clarity_guidance_is_holistic_not_an_average():
+    prompt = build_feedback_prompt(
+        mode="miscellaneous", question=None, transcript="t", metrics=SAMPLE_METRICS,
+    )
+    assert "one holistic judgment" in prompt
+    assert "NOT a mechanical average" in prompt
+    assert "assess" in prompt and "grammar" in prompt
+
+
+def test_structure_guidance_is_mode_specific():
+    interview = build_feedback_prompt(mode="interview", question="Q?", transcript="t", metrics=None)
+    story = build_feedback_prompt(mode="story", question="Q?", transcript="t", metrics=None)
+    assert "point stated up front" in interview
+    assert "beginning, middle, and end" in story
+
+
+# --- score coercion (lenient parsing) --------------------------------------------
+
+
+def test_coerce_score_accepts_in_range_integers():
+    assert _coerce_score(0, "impact_score") == 0
+    assert _coerce_score(100, "impact_score") == 100
+    assert _coerce_score(73, "impact_score") == 73
+    assert _coerce_score(88.0, "impact_score") == 88  # a float whole number is fine
+
+
+def test_coerce_score_rejects_out_of_range_and_garbage():
+    assert _coerce_score(101, "impact_score") is None
+    assert _coerce_score(-1, "impact_score") is None
+    assert _coerce_score("high", "impact_score") is None
+    assert _coerce_score(None, "impact_score") is None
+
+
+def test_coerce_issue_count_accepts_non_negative_integers():
+    assert _coerce_issue_count(0) == 0
+    assert _coerce_issue_count(5) == 5
+
+
+def test_coerce_issue_count_rejects_negative_and_garbage():
+    assert _coerce_issue_count(-2) is None
+    assert _coerce_issue_count("lots") is None
+    assert _coerce_issue_count(None) is None

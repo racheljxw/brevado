@@ -33,25 +33,10 @@ import {
   shareRecordingAudio,
   updateRecordingTitle,
   type RecordingDetail,
-  type RecordingMetrics,
 } from '@/lib/recordings';
 
 type ScreenState = 'loading' | 'not-found' | 'error' | 'loaded';
 type AudioState = 'idle' | 'loading' | 'ready' | 'error';
-
-// Turns the stored metrics shape (see docs/CLAUDE.md's "Metrics" section)
-// into the display strings this screen shows — `filler_word_rate` is a
-// fraction (0.08) that needs converting to a percentage here, and any field
-// can individually be null (most commonly `words_per_minute`, when audio
-// duration couldn't be read — see the "Failure handling" bullet there).
-function formatMetrics(metrics: RecordingMetrics | null) {
-  if (!metrics) return null;
-  return {
-    fillerRate: metrics.filler_word_rate != null ? `${Math.round(metrics.filler_word_rate * 100)}%` : '—',
-    wordsPerMinute: metrics.words_per_minute != null ? `${metrics.words_per_minute}` : '—',
-    repetitionCount: metrics.repetition_count != null ? `${metrics.repetition_count}` : '—',
-  };
-}
 
 // v2 Epic D Part 2 — inline title editing. Mirrors the custom-question
 // pencil-edit in `src/app/(tabs)/index.tsx`'s `QuestionArea` (Epic C Part 3):
@@ -270,43 +255,48 @@ function AudioSection({ recording }: { recording: RecordingDetail }) {
   return <AudioPlaybackControls uri={audioUrl!} />;
 }
 
-// v2 Epic D Part 7 — compact metric stat blocks, replacing the old plain
-// label/value rows. Three equal stats in one Card, separated by hairline
-// dividers: a bold value on top, a muted label underneath — a small visual
-// treatment rather than a raw-number/JSON dump.
-function MetricsRow({ metrics }: { metrics: RecordingMetrics | null }) {
-  const formatted = formatMetrics(metrics);
-  if (!formatted) {
+// v3 Epic F Step 1 — the three per-recording scores (Impact / Clarity /
+// Structure, that display order), shown as compact badges in one Card,
+// separated by hairline dividers: a bold value on top, a muted label
+// underneath. This REPLACES the old raw-metrics stat blocks (filler rate /
+// WPM / repetition) — those numbers no longer appear anywhere on this
+// screen; they still compute and store internally and resurface only inside
+// Streaks → Clarity's detail screen (Epic G). Plain percentages, no trend
+// arrows — a single recording has no history to trend against.
+function ScoresRow({ recording }: { recording: RecordingDetail }) {
+  const scores = [
+    { label: 'Impact', value: recording.impact_score },
+    { label: 'Clarity', value: recording.clarity_score },
+    { label: 'Structure', value: recording.structure_score },
+  ];
+
+  // A pre-v3 recording (or one where every score missed generation) has all
+  // three null — show one plain line rather than a card of dashes.
+  if (scores.every((s) => s.value == null)) {
     return (
       <ThemedText type="small" themeColor="textSecondary">
-        Not available.
+        Scores aren&apos;t available for this recording.
       </ThemedText>
     );
   }
 
-  const stats = [
-    { label: 'Filler words', value: formatted.fillerRate },
-    { label: 'Pace (wpm)', value: formatted.wordsPerMinute },
-    { label: 'Repetitions', value: formatted.repetitionCount },
-  ];
-
   const nodes: ReactNode[] = [];
-  stats.forEach((stat, i) => {
-    if (i > 0) nodes.push(<View key={`divider-${stat.label}`} style={styles.metricDivider} />);
+  scores.forEach((score, i) => {
+    if (i > 0) nodes.push(<View key={`divider-${score.label}`} style={styles.scoreDivider} />);
     nodes.push(
-      <View key={stat.label} style={styles.metricStat}>
-        <ThemedText style={styles.metricValue}>{stat.value}</ThemedText>
+      <View key={score.label} style={styles.scoreStat}>
+        <ThemedText style={styles.scoreValue}>{score.value != null ? `${score.value}%` : '—'}</ThemedText>
         <ThemedText type="small" themeColor="textSecondary">
-          {stat.label}
+          {score.label}
         </ThemedText>
       </View>
     );
   });
 
-  return <Card style={styles.metricsCard}>{nodes}</Card>;
+  return <Card style={styles.scoresCard}>{nodes}</Card>;
 }
 
-// The transcript/metrics/feedback section — only meaningful once the
+// The scores/feedback/transcript section — only meaningful once the
 // pipeline has actually run (see docs/CLAUDE.md's "AI processing endpoint"
 // section). `failed` shows its own explanation instead (there's genuinely
 // nothing to show — a transcription failure marks the row failed with
@@ -314,12 +304,12 @@ function MetricsRow({ metrics }: { metrics: RecordingMetrics | null }) {
 // working" notice since a row can be tapped into straight from History
 // before the pipeline finishes.
 //
-// v2 Epic D Part 7 — reordered to Metrics → Feedback → Transcript (a quick
-// glance at the numbers, then the coaching prose, then the raw transcript
-// last as reference) and restyled: bold section headers, `Theme.typography`
-// body copy, generous inter-section spacing, and the failed/processing
-// notices moved out of ad hoc `<Card>` usage into one consistent look with
-// the rest of the screen.
+// v2 Epic D Part 7 — reordered to a quick glance first, then the coaching
+// prose, then the raw transcript last as reference; restyled with bold
+// section headers, `Theme.typography` body copy, generous spacing, and the
+// failed/processing notices in one consistent look.
+// v3 Epic F Step 1 — the leading section is now the three score badges
+// (Impact / Clarity / Structure), replacing the old raw-metrics stat blocks.
 function ReportSection({
   recording,
   onRegenerate,
@@ -338,7 +328,7 @@ function ReportSection({
           Processing failed
         </ThemedText>
         <ThemedText type="small" themeColor="textSecondary">
-          This recording has no transcript, metrics, or feedback — generating its report failed even after an
+          This recording has no transcript, scores, or feedback — generating its report failed even after an
           automatic retry.
         </ThemedText>
         {regenerateError && (
@@ -366,7 +356,7 @@ function ReportSection({
     return (
       <Card style={styles.noticeCard}>
         <ThemedText type="small" themeColor="textSecondary">
-          Still processing — transcript, metrics, and feedback will appear here once it&apos;s done.
+          Still processing — scores, feedback, and transcript will appear here once it&apos;s done.
         </ThemedText>
       </Card>
     );
@@ -376,9 +366,9 @@ function ReportSection({
     <>
       <View style={styles.section}>
         <ThemedText type="smallBold" style={styles.sectionHeading}>
-          Metrics
+          Scores
         </ThemedText>
-        <MetricsRow metrics={recording.metrics} />
+        <ScoresRow recording={recording} />
       </View>
 
       <View style={styles.section}>
@@ -921,23 +911,23 @@ const styles = StyleSheet.create({
   failedHeading: {
     color: Theme.colors.recordRed,
   },
-  metricsCard: {
+  scoresCard: {
     flexDirection: 'row',
     alignItems: 'center',
     padding: Spacing.three,
   },
-  metricStat: {
+  scoreStat: {
     flex: 1,
     alignItems: 'center',
     gap: Spacing.half,
   },
-  metricValue: {
+  scoreValue: {
     fontFamily: Theme.typography.fontFamily.bold,
     fontSize: 18,
     lineHeight: 22,
     color: Theme.colors.textPrimary,
   },
-  metricDivider: {
+  scoreDivider: {
     width: StyleSheet.hairlineWidth,
     alignSelf: 'stretch',
     backgroundColor: Theme.colors.border,

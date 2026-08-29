@@ -8,13 +8,15 @@ once, sends it to Gemini (native audio input) for a real transcript, then
 computes deterministic metrics (filler-word rate, words per minute,
 repetition — see `app/services/metrics.py`) from that transcript and the
 same audio bytes, then sends the transcript, metrics, mode, and question to
-Gemini again for real mode-aware feedback *and* a short 2-4 word recording
-title (one structured-JSON call — see `app/services/feedback.py`) — no
-second download involved anywhere in this. Each stage's result is written
-to the row as soon as it succeeds (transcript, then metrics), so a later
-stage failing can never lose earlier, already-successful work. A missing
-title alone never fails the recording — it's stored as NULL and logged,
-same lenient degradation as a metrics-computation failure.
+Gemini again for real mode-aware feedback, a short 2-4 word recording
+title, and the v3 scores — `impact_score` / `clarity_score` /
+`structure_score` (each 0-100) plus `grammar_issue_count` — all from one
+structured-JSON call (see `app/services/feedback.py`). No second download
+involved anywhere in this. Each stage's result is written to the row as
+soon as it succeeds (transcript, then metrics), so a later stage failing
+can never lose earlier, already-successful work. A missing title or any
+missing/out-of-range score never fails the recording — it's stored as NULL
+and logged, same lenient degradation as a metrics-computation failure.
 
 **v2 Epic D Part 7 bug fix: a hand-edited title is never overwritten.** If
 the row's `title_edited_by_user` flag is set (set only by
@@ -281,18 +283,30 @@ def process_recording(recording_id: str) -> None:
             lambda: generate_feedback(transcript=transcript, metrics=metrics, mode=mode, question=question),
         )
 
-        # `generated.title` is None if the model returned nothing usable for it — that's
-        # deliberately tolerated (logged in `generate_feedback`), never a reason to fail
-        # the recording, same lenient degradation as metrics above. It writes as SQL NULL.
+        # `generated.title` (and any of the v3 scores) is None if the model returned
+        # nothing usable for that field — deliberately tolerated (logged in
+        # `generate_feedback`), never a reason to fail the recording, same lenient
+        # degradation as metrics above. A None writes as SQL NULL.
+        #
+        # v3 Epic F Step 1: the three 0-100 scores + grammar_issue_count are always
+        # written (including on a "Regenerate report" run) — unlike `title`, they are
+        # NOT subject to the `title_edited_by_user` hand-edit guard, since nothing lets
+        # a user hand-edit a score. Streaks aggregation (Epic G) excludes any recording
+        # with a NULL score, so a regenerate that fills a previously-NULL score simply
+        # brings that recording into the aggregation.
         #
         # v2 Epic D Part 7 bug fix: if the user hand-edited this recording's title
         # (`title_edited_by_user`, read above), `title` is left out of this update
-        # entirely — feedback/transcript/metrics still refresh normally, but the
+        # entirely — feedback/transcript/metrics/scores still refresh normally, but the
         # user's own title is never overwritten by a freshly-generated one, on
         # either an initial run or a later "Regenerate report".
         update_payload: dict = {
             "status": "done",
             "feedback": generated.feedback,
+            "impact_score": generated.impact_score,
+            "clarity_score": generated.clarity_score,
+            "structure_score": generated.structure_score,
+            "grammar_issue_count": generated.grammar_issue_count,
         }
         if not title_edited_by_user:
             update_payload["title"] = generated.title
