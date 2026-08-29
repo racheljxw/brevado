@@ -16,6 +16,14 @@ stage failing can never lose earlier, already-successful work. A missing
 title alone never fails the recording — it's stored as NULL and logged,
 same lenient degradation as a metrics-computation failure.
 
+**v2 Epic D Part 7 bug fix: a hand-edited title is never overwritten.** If
+the row's `title_edited_by_user` flag is set (set only by
+`updateRecordingTitle` in src/lib/recordings.ts, the Part 2 title editor),
+the final `status: done` write omits `title` entirely, so a user's own
+title survives a fresh generation or a later "Regenerate report" untouched.
+Feedback/transcript/metrics are unaffected by this flag — only the title
+write is conditional. See migration `0006_title_edited_by_user.sql`.
+
 **Retry policy (Step 6, docs/PROJECT_PLAN.md Section 3 "Retry behavior"):**
 each of the two Gemini-calling stages — transcription (download + the
 transcribe call, via `_run_with_one_retry` in `process_recording`) and
@@ -212,7 +220,7 @@ def process_recording(recording_id: str) -> None:
 
         result = (
             client.table("recordings")
-            .select("audio_path, mode, question")
+            .select("audio_path, mode, question, title_edited_by_user")
             .eq("id", recording_id)
             .maybe_single()
             .execute()
@@ -223,6 +231,15 @@ def process_recording(recording_id: str) -> None:
             raise TranscriptionError(f"Recording {recording_id} has no audio_path to transcribe.")
         mode = row.get("mode") if row else None
         question = row.get("question") if row else None
+        # v2 Epic D Part 7 bug fix: if the user has hand-edited this
+        # recording's title (via the Part 2 editor — the only place that ever
+        # sets this flag, see `updateRecordingTitle` in src/lib/recordings.ts
+        # and migration 0006_title_edited_by_user.sql), a pipeline run (fresh
+        # generation or a "Regenerate report" retry) must never clobber it
+        # with a freshly-generated one. Read once here so both the retry
+        # branch below and the final write can use it without a second
+        # round-trip.
+        title_edited_by_user = bool(row.get("title_edited_by_user")) if row else False
 
         mime_type = _mime_type_for(audio_path)
 
@@ -267,13 +284,25 @@ def process_recording(recording_id: str) -> None:
         # `generated.title` is None if the model returned nothing usable for it — that's
         # deliberately tolerated (logged in `generate_feedback`), never a reason to fail
         # the recording, same lenient degradation as metrics above. It writes as SQL NULL.
-        client.table("recordings").update(
-            {
-                "status": "done",
-                "feedback": generated.feedback,
-                "title": generated.title,
-            }
-        ).eq("id", recording_id).execute()
+        #
+        # v2 Epic D Part 7 bug fix: if the user hand-edited this recording's title
+        # (`title_edited_by_user`, read above), `title` is left out of this update
+        # entirely — feedback/transcript/metrics still refresh normally, but the
+        # user's own title is never overwritten by a freshly-generated one, on
+        # either an initial run or a later "Regenerate report".
+        update_payload: dict = {
+            "status": "done",
+            "feedback": generated.feedback,
+        }
+        if not title_edited_by_user:
+            update_payload["title"] = generated.title
+        else:
+            logger.info(
+                "processing: recording %s: title was hand-edited by the user — not "
+                "overwriting it with the freshly generated title",
+                recording_id,
+            )
+        client.table("recordings").update(update_payload).eq("id", recording_id).execute()
     except TranscriptionError as exc:
         # Reached only after `_run_with_one_retry` already tried transcription twice
         # (see that function's own "retrying once immediately" / "failed again on

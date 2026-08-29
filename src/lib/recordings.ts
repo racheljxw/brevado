@@ -128,11 +128,23 @@ export async function setFavorite(id: string, favorite: boolean): Promise<void> 
  * Gemini or do a Storage+DB pair that must not disagree — none of which
  * applies here. So a backend round-trip would only add latency.
  *
+ * Also sets `title_edited_by_user: true` in the same write (v2 Epic D
+ * Part 7, migration `0006_title_edited_by_user.sql`) — this is the ONLY
+ * place a title is ever hand-set, so this is the one place that needs to
+ * flip the flag. `process_recording` (backend/app/services/processing.py)
+ * reads it and skips overwriting `title` on a later run (initial generation
+ * or "Regenerate report") once it's true, so a user's hand-picked title
+ * survives a regenerate instead of being silently replaced by a fresh
+ * AI-generated one.
+ *
  * The caller is responsible for trimming and rejecting an empty title before
  * calling this (see `history/[id].tsx`); this just writes what it's given.
  */
 export async function updateRecordingTitle(id: string, title: string): Promise<void> {
-  const { error } = await supabase.from('recordings').update({ title }).eq('id', id);
+  const { error } = await supabase
+    .from('recordings')
+    .update({ title, title_edited_by_user: true })
+    .eq('id', id);
   if (error) {
     throw error;
   }

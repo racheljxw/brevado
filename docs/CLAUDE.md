@@ -34,9 +34,10 @@ for the full summary. Progress so far:
   the `QuestionArea` (pool / custom question), the record disc, and the **post-recording
   behaviour change** (stay on Record + live status + "See more details", replacing the
   auto-navigate-to-History). See [Epic C](#epic-c--record-flow-restyle-parts-14-all-done--epic-c-is-complete).
-- **Epic D (done — all 6 parts):** the History redesign + recording titles — title generation,
-  title editing, list restyle, 3-dot menu, search + Calendar/List toggle, and the real Calendar
-  view. See the per-part breakdown below and the [Epic D wrap-up](#epic-d-wrap-up) assessment.
+- **Epic D (done — all 7 parts, Epic D is complete):** the History redesign + recording titles —
+  title generation, title editing, list restyle, 3-dot menu, search + Calendar/List toggle, the
+  real Calendar view, and the detail-screen visual restyle. See the per-part breakdown below and
+  the [Epic D wrap-up](#epic-d-wrap-up) assessment.
   - **Part 1 (done):** a colour consolidation (all link blues → one `Theme.colors.link`
     token — see [Design system](#design-system)'s "Link colour consolidation"), plus the
     `title` column + its AI generation, backend/data only. See
@@ -85,14 +86,22 @@ for the full summary. Progress so far:
     no-op beyond a subtle "No recordings on …" line. Search and the day filter are **mutually
     exclusive** — tapping a day clears any search term, typing a search clears any day filter.
     A "Showing {date}" chip above the filtered list is the explicit reset. **Not** in Part 6:
-    the History detail-screen visual restyle — deferred (see [Recording titles](#recording-titles)
-    and the [Epic D wrap-up](#epic-d-wrap-up)). See [History](#history)'s "Calendar view (Epic D
-    Part 6)" bullet.
+    the History detail-screen visual restyle — deferred to Part 7 (see [Recording
+    titles](#recording-titles) and the [Epic D wrap-up](#epic-d-wrap-up)). See
+    [History](#history)'s "Calendar view (Epic D Part 6)" bullet.
+  - **Part 7 (done — closes out Epic D):** the History **detail-screen** visual restyle, deferred
+    out of Part 6 — see [History](#history)'s "Detail screen (Phase 3 Step 1, done)" bullet for
+    the full new layout (editable title as the large bold heading, mode pill + status badge +
+    date meta row, an always-shown Question/"No prompt" block, a restyled pill-shaped audio
+    player, compact metric stat blocks, and bold Feedback/Transcript section headers). Also
+    fixed in this part, flagged in the Part 6 wrap-up: **a pipeline run (initial generation or
+    "Regenerate report") used to silently overwrite a user's hand-edited title** — see
+    [Recording titles](#recording-titles)'s "Editing (Part 2)" subsection for the fix (a new
+    `title_edited_by_user` column, migration `0006_title_edited_by_user.sql`).
 
 Sections below that predate a given Epic still describe the v1 implementation where that Epic
-hasn't rewritten them. History's list/search/calendar are now fully v2 (Epic D); its **detail
-screen** is still on the pre-redesign layout (the visual restyle was deferred out of Epic D —
-see [Epic D wrap-up](#epic-d-wrap-up)).
+hasn't rewritten them. All of History — list, search, calendar, and now the detail screen — is
+fully v2 (Epic D, all 7 parts).
 
 **Terminology note:** docs/PROJECT_PLAN.md's old "v2" scope (criteria-based scoring, progress
 charts, streak calendar, re-practice mode, dynamic question pool, additional modes) has been
@@ -166,7 +175,11 @@ changes as a new numbered migration file rather than editing an applied one.
 - `recordings` — one row per practice session: mode, question/topic, `audio_path`, `status`
   (`pending`/`processing`/`done`/`failed`), `transcript`, `feedback`, `title` (nullable text,
   v2 Epic D Part 1, migration `0005_recording_title.sql` — a short 2-4 word auto-generated
-  label; see [Recording titles](#recording-titles)), `metrics` (jsonb, Phase 2
+  label; see [Recording titles](#recording-titles)), `title_edited_by_user` (boolean, not null,
+  default `false` — v2 Epic D Part 7, migration `0006_title_edited_by_user.sql`; set `true` only
+  by `updateRecordingTitle()`'s hand-edit save, read by `process_recording()` to skip
+  overwriting a hand-set title on a later run — see [Recording titles](#recording-titles)'s "Not
+  overwriting a hand-edited title (Part 7)" subsection), `metrics` (jsonb, Phase 2
   Step 4 — see [Metrics](#metrics) for the exact shape stored),
   `favorite`/`audio_deleted` flags. `favorite` is a personal star marker (renamed from `saved`,
   which used to mean "exempt from the old 7-day auto-delete") — it's no longer tied to any
@@ -1212,43 +1225,80 @@ this logic was rebuilt in v2 Epic C Part 3 (`QuestionArea`) — see below and
   screen** and shows live processing status inline (`ProcessingStatus` component), with a "See
   more details" link to *this* recording's detail screen once done. See
   [Mode selection](#mode-selection)'s "Post-recording flow" bullet for the full behaviour.
-- **Detail screen (Phase 3 Step 1, done):** tapping a row pushes `src/app/(tabs)/history/[id].tsx`
-  (`router.push({ pathname: '/history/[id]', params: { id } })` from `RecordingListItem`), a
-  dynamic Expo Router route sitting alongside `index.tsx` in the same `history/` directory —
-  `history/_layout.tsx` wraps both in a headerless `Stack` (matching every other screen's
-  no-native-header convention) rather than letting the default nested-stack header appear only
-  here. It fetches the full row with a new `fetchRecordingById()` (`src/lib/recordings.ts`;
-  relies on the existing `recordings` select RLS policy to make a bad id or another user's id come
-  back as `null` instead of a 403 the frontend has to special-case) and shows date/time, mode, a
-  status badge (`getStatusPresentation`, pulled out of the list into `src/lib/recording-status.ts`
-  so both screens render status identically), an **editable `title`** at the top (v2 Epic D
-  Part 2 — see below), the full `question` text (when non-null — see below),
-  audio playback, transcript, feedback, and metrics (filler-word rate shown as a rounded percentage,
-  words-per-minute, and repetition count — plain text/numbers, no charts or scoring visuals, which
-  is Phase 6/v3). Loading and not-found/error states (bad id, RLS-blocked id, or a genuine fetch
-  failure) are all handled explicitly, the last two with a Retry action.
-  - **Title editing (v2 Epic D Part 2, done):** `TitleSection` at the top of the screen —
-    the title text + a pencil, tapping which opens a pre-filled input box (confirm saves via
-    `updateRecordingTitle`, a direct Supabase update; "Cancel" reverts). Handles a `NULL`
-    title (starts empty, shows a muted "Untitled recording"). Full detail — interaction,
-    the endpoint-vs-direct call, the not-optimistic save, the date-line demotion — is in
-    [Recording titles](#recording-titles)'s "Editing (Part 2)" subsection.
-  - **Question display (Phase 4 Step 5 exit-checkpoint review, done):** `fetchRecordingById()` had
-    already selected `question` since Phase 3 Step 1 (`RecordingDetail` always included it), but
-    nothing actually rendered it — a gap left over from when every recording had `question: null`
-    pre-Phase-4, only caught during the Phase 4 exit checkpoint's full-app review (see
-    [Phase 4 exit checkpoint](#phase-4-exit-checkpoint)). Now a "Question" label + the full text
-    renders right under the mode line, above audio playback, whenever `recording.question` is
-    non-null — so the prompt you were answering is visible alongside the transcript/feedback that
-    answer it, not just the day/time and status. Still absent for miscellaneous, which has no
-    question.
-  - **`status === 'failed'`** shows a clear failed notice instead of a transcript/feedback/metrics
-    section — there isn't one, since a transcription failure marks the row failed with nothing else
-    attempted (see [AI processing endpoint](#ai-processing-endpoint)) — plus, as of Phase 3 Step 2,
-    a "Regenerate report" button right alongside it (`ReportSection` in `history/[id].tsx`).
-    `pending`/`processing` (a row can be tapped into straight from History before the pipeline
-    finishes) shows a plain "still processing" notice instead, rather than rendering `null`
-    transcript/feedback as if that were the real, finished content.
+- **Detail screen (Phase 3 Step 1, done; visually restyled in v2 Epic D Part 7):** tapping a row
+  pushes `src/app/(tabs)/history/[id].tsx` (`router.push({ pathname: '/history/[id]', params: { id
+  } })` from `RecordingListItem`), a dynamic Expo Router route sitting alongside `index.tsx` in the
+  same `history/` directory — `history/_layout.tsx` wraps both in a headerless `Stack` (matching
+  every other screen's no-native-header convention) rather than letting the default nested-stack
+  header appear only here. It fetches the full row with `fetchRecordingById()`
+  (`src/lib/recordings.ts`; relies on the existing `recordings` select RLS policy to make a bad id
+  or another user's id come back as `null` instead of a 403 the frontend has to special-case).
+  Loading and not-found/error states (bad id, RLS-blocked id, or a genuine fetch failure) are all
+  handled explicitly, the last two with a Retry action.
+  - **Layout, top to bottom, as of Part 7's restyle** (all `Theme` tokens, no pure white/black,
+    Noto Sans throughout — the same design system as the rest of v2):
+    1. **Header row:** the **editable `title`** (Part 2 — see below) as a large bold heading
+       (`styles.titleText`, 24px `Theme.typography.fontFamily.bold`, up to 3 lines, muted
+       "Untitled recording" for a `NULL` title), `flex: 1` so it shares the row with a fixed
+       right-hand cluster: the `FavoriteStar` and the Part 4 `RecordingActionsMenu` (3-dot menu)
+       — the same heading-row pattern as the List card (Part 3/4), at a larger scale.
+    2. **Meta row:** the colour-coded mode pill (`modePillColors()`, now shared with the List card
+       via `src/lib/modes.ts` — see the "List card restyle" bullet below) plus the status badge
+       (`getStatusPresentation`) on the left, the date/time (`formatRecordedAt`) right-aligned
+       opposite them.
+    3. **Question, always shown** (Part 7 change — see the bullet below): the full `question`
+       text, or the literal **"No prompt"** for a null one (miscellaneous, or an interview/story
+       lookup edge case) — never omitted, mirroring the List card's Part 3 "No prompt" pattern
+       rather than the old conditional-render.
+    4. **Audio section**, in a `<Card>`: see the "Audio playback restyle" bullet below for
+       `pending`/`failed` rows too — playback exists independently of pipeline `status` since
+       audio uploads before processing ever starts.
+    5. **`ReportSection`** — `failed`/`pending`/`processing` notices, or (once `done`) **Metrics →
+       Feedback → Transcript**, in that order (reordered from the pre-restyle Transcript → Metrics
+       → Feedback, so a quick numeric glance comes first, then the coaching prose, then the raw
+       transcript last as reference) — see the "Metrics" and "Failed state" bullets below.
+  - **Title editing (v2 Epic D Part 2, done):** `TitleSection` — the title text + a pencil,
+    tapping which opens a pre-filled input box (confirm saves via `updateRecordingTitle`, a direct
+    Supabase update; "Cancel" reverts). Handles a `NULL` title (starts empty, shows a muted
+    "Untitled recording"). Full detail — interaction, the endpoint-vs-direct call, the
+    not-optimistic save — is in [Recording titles](#recording-titles)'s "Editing (Part 2)"
+    subsection, including the **Part 7 bug fix** (a `title_edited_by_user` flag that stops a later
+    pipeline run from overwriting a hand-set title).
+  - **Question display (Phase 4 Step 5 exit-checkpoint review, done; changed to always-shown in
+    Part 7):** `fetchRecordingById()` selects `question` (since Phase 3 Step 1), and a "Question"
+    label + the full text renders right under the meta row, above audio playback. Through Epic D
+    Part 6 this only rendered `if (recording.question)`, i.e. omitted entirely for miscellaneous;
+    **Part 7 changed it to always render**, showing the literal "No prompt" for a null question —
+    matching the List card's established Part 3 pattern (a mode's "no question" state is a visible,
+    consistent piece of UI, not an absence) and closing the one inconsistency between the two
+    screens' treatment of a null question.
+  - **Audio playback restyle (v2 Epic D Part 7, done):** `AudioSection`'s "ready" branch now
+    renders inside the same `<Card>` as its deleted/missing/error branches (previously only those
+    three used a card; the real player rendered bare) — a **pill-shaped Play/Pause button**
+    (`Theme.colors.accent` fill, `play.fill`/`pause.fill` `SymbolView` + label in
+    `Theme.colors.onAccent`), a token-coloured progress bar (`Theme.colors.border` track,
+    `Theme.colors.accent` fill), and elapsed/duration text (`"0:00 / 4:16"`, `formatDuration`).
+    This restyle lives in the shared `AudioPlaybackControls` component
+    (`src/components/audio-playback-controls.tsx`), so the **Home tab's post-recording preview**
+    (`RecordingPlayback` in `index.tsx`) picks up the identical look for free — one component, one
+    restyle, both call sites. The `audio_deleted` / no-`audio_path` / load-error notices (Phase 3's
+    existing conditionals) are unchanged in behaviour, just restyled as plain text inside the same
+    Card rather than a separate nested one.
+  - **Metrics restyle (v2 Epic D Part 7, done):** the old plain label/value rows are gone —
+    `MetricsRow` now renders three compact stat blocks (filler-word rate, pace in wpm, repetition
+    count) side by side in one `<Card>`, separated by hairline dividers: a bold value on top, a
+    muted label underneath. Same `formatMetrics()` conversions as before (fraction → rounded
+    percentage, etc.) and the same "Not available." fallback when `metrics` is `null` — just a
+    cleaner small visual treatment instead of a plain list.
+  - **`status === 'failed'`** shows a clear failed notice (heading in `Theme.colors.recordRed`)
+    instead of a transcript/feedback/metrics section — there isn't one, since a transcription
+    failure marks the row failed with nothing else attempted (see [AI processing
+    endpoint](#ai-processing-endpoint)) — plus, as of Phase 3 Step 2, a **"Regenerate report"**
+    button right alongside it (`ReportSection` in `history/[id].tsx`; restyled in Part 7 as a
+    filled `Theme.colors.recordRed` pill with `Theme.colors.onAccent` text, matching the menu's own
+    destructive-action colour). `pending`/`processing` (a row can be tapped into straight from
+    History before the pipeline finishes) shows a plain "still processing" notice instead, rather
+    than rendering `null` transcript/feedback as if that were the real, finished content.
   - **"Regenerate report" (Phase 3 Step 2, done):** the failed-state button above calls
     `regenerateReport()` (`src/lib/api.ts`) against the new `POST /recordings/{id}/regenerate`
     endpoint (see [AI processing endpoint](#ai-processing-endpoint)'s "Regenerate endpoint" bullet
@@ -1304,9 +1354,13 @@ this logic was rebuilt in v2 Epic C Part 3 (`QuestionArea`) — see below and
     `deleteRecordingAudio()`, the new `deleteRecording()`, `regenerateReport()`). `AudioSection`
     is now **playback only** — the old inline "Download audio" / "Delete audio" rows below the
     player are gone (as are the `DownloadAudioButton` / `DeleteAudioButton` components). Menu-
-    action errors render as a small red block just under the mode line. On a successful "Delete
-    recording", `router.back()` returns to the list. See [History](#history)'s "3-dot actions
-    menu" bullet and [Delete recording](#delete-recording).
+    action errors render as a small red block just under the meta row. On a successful "Delete
+    recording", `router.back()` returns to the list. **Part 7 kept this menu as-is** — the design
+    screenshots used for the Part 7 restyle show separate inline "Download"/"Delete" text links on
+    this screen (matching Section 3's original spec), but that was a pre-Part-4 layout; Part 4's
+    consolidation into one menu (for parity with the List card) was deliberately not reverted, and
+    Part 7 only restyled everything *around* it. See [History](#history)'s "3-dot actions menu"
+    bullet and [Delete recording](#delete-recording).
 
 ## Audio delete
 
@@ -1790,7 +1844,10 @@ would have covered on its own):
   docs/PROJECT_PLAN.md Section 3) **plus a short recording `title`** (v2 Epic D Part 1 — same
   call, structured JSON; see [Recording titles](#recording-titles)), and only then sets
   `status: done` with the real feedback and title attached (`title` may be `NULL` if
-  generation returned nothing usable for it — that alone never fails the recording).
+  generation returned nothing usable for it — that alone never fails the recording; `title` is
+  also omitted from this write entirely — leaving a user's hand-set title untouched — when
+  `title_edited_by_user` is `true`, v2 Epic D Part 7, see [Recording titles](#recording-titles)'s
+  "Not overwriting a hand-edited title" subsection).
   `status: done` now means the full pipeline actually ran, transcript through feedback.
   Each stage's result is written to the row as soon as it succeeds (transcript, then metrics), so
   a later stage failing can never lose or overwrite earlier, already-successful work — the same
@@ -1974,11 +2031,12 @@ v2 Epic D — a short, human-readable label per recording ("Challenging Coworker
 (backend/data): auto-generation + storage. **Part 2** (done): the recording is now
 **user-editable** on the History detail screen. **Part 3** (done): the title is the bold
 heading of each restyled History **list** card (see "List display (Part 3)" below and
-[History](#history)'s "List card restyle" bullet). Existing recordings keep `title = null` —
-**no backfill**; they get a title if regenerated, if a user sets one by hand (Part 2), or
-naturally on new recordings. The History **detail-screen** visual restyle was **not** part of
-Epic D (Part 6 shipped the calendar instead) — it's deferred to a later epic; the detail
-screen is still functionally correct on the pre-restyle layout.
+[History](#history)'s "List card restyle" bullet). **Part 7** (done): fixed a bug where a
+pipeline run silently overwrote a hand-edited title (see "Not overwriting a hand-edited title
+(Part 7)" below) — the History **detail-screen** visual restyle also landed in Part 7,
+described in [History](#history)'s "Detail screen" bullet rather than repeated here. Existing
+recordings keep `title = null` — **no backfill**; they get a title if regenerated, if a user
+sets one by hand (Part 2), or naturally on new recordings.
 
 - **Schema:** `title` nullable `text` on `recordings`, migration
   `supabase/migrations/0005_recording_title.sql` (`alter table public.recordings add column
@@ -2009,18 +2067,17 @@ screen is still functionally correct on the pre-restyle layout.
 - **Storage:** `process_recording` (`app/services/processing.py`) writes `title:
   generated.title` alongside `feedback` and `status: 'done'` in the same final update — no
   separate write, no new pipeline stage. A regenerate refreshes it too (can move `NULL` ↔ a
-  real value) — see [Background processing](#background-processing). **A pipeline run
-  overwrites a hand-set title** — unlikely to bite in practice (you'd have to title a
-  recording before its report exists, then regenerate) and not guarded against in Part 2.
+  real value) — see [Background processing](#background-processing). **A pipeline run used to
+  overwrite a hand-set title** — fixed in Part 7, see "Not overwriting a hand-edited title
+  (Part 7)" below.
 
 ### Editing (Part 2)
 
-- **Where:** the History **detail** screen (`src/app/(tabs)/history/[id].tsx`) — the
-  pre-restyle screen, as-is. `TitleSection` renders at the top of the scroll content as the
-  screen's main heading (`type="subtitle"`); the date line below it was demoted
-  `subtitle` → `smallBold`/`textSecondary` so the title is the visual header (a hierarchy
-  consequence of adding the title, not a Part-3 restyle — Part 3 owns the real visual pass).
-  The History **list** is untouched — it still doesn't select or show `title` (Part 3).
+- **Where:** the History **detail** screen (`src/app/(tabs)/history/[id].tsx`). `TitleSection`
+  renders at the top of the header row as the screen's large bold heading (Part 7's restyle —
+  see [History](#history)'s "Detail screen" bullet for the full layout this sits in; the
+  interaction described below is unchanged from Part 2). The History **list** shows `title`
+  too as of Part 3 (see "List display (Part 3)" below).
 - **Interaction:** mirrors the custom-question pencil-edit in `QuestionArea` (Epic C Part 3 —
   that pattern lives inline there, not as a shared component, so this *mirrors* it rather than
   importing). Display = the title text + a `pencil` `SymbolView`; tap it → a bordered input
@@ -2034,13 +2091,15 @@ screen is still functionally correct on the pre-restyle layout.
 - **Validation:** identical to custom questions — non-empty after `trim()`, nothing else (no
   length cap, no content filtering).
 - **Persistence — direct Supabase update, not a backend endpoint.** `updateRecordingTitle(id,
-  title)` in `src/lib/recordings.ts` does `supabase.from('recordings').update({ title })` —
-  the same call and the same reasoning as `setFavorite` (Phase 3 Step 4): RLS ("Users can
-  update their own recordings", `0001`) already scopes it to the caller, and a title is a
-  plain label with no Gemini/Storage work and no logic attached elsewhere. Contrast the audio
-  **delete** endpoint, which is a backend route *because* it's a Storage delete + DB update
-  that must not disagree (and Storage had no delete RLS policy) — none of that applies to a
-  text field. A backend round-trip would only add latency.
+  title)` in `src/lib/recordings.ts` does `supabase.from('recordings').update({ title,
+  title_edited_by_user: true })` — the same call and the same reasoning as `setFavorite`
+  (Phase 3 Step 4): RLS ("Users can update their own recordings", `0001`) already scopes it to
+  the caller, and a title is a plain label with no Gemini/Storage work and no logic attached
+  elsewhere. Contrast the audio **delete** endpoint, which is a backend route *because* it's a
+  Storage delete + DB update that must not disagree (and Storage had no delete RLS policy) —
+  none of that applies to a text field. A backend round-trip would only add latency. The
+  `title_edited_by_user: true` write (Part 7) is new — see "Not overwriting a hand-edited
+  title (Part 7)" below for what it's for.
 - **Save is NOT optimistic** (matching `handleDeleteAudio`, not the favorite toggle):
   `recording.title` only changes after the write lands. The editor stays open with a spinner
   during the save and shows an inline error + stays open on failure, so a failed save never
@@ -2065,55 +2124,119 @@ screen is still functionally correct on the pre-restyle layout.
 - The question/"No prompt" secondary line, the mode pill, date and star are described in
   [History](#history)'s "List card restyle" bullet.
 
+### Not overwriting a hand-edited title (Part 7)
+
+**The bug (flagged in the Part 6 wrap-up):** `process_recording()` always wrote
+`title: generated.title` into its final `status: 'done'` update, on *every* run — including a
+"Regenerate report" run triggered after a user had already retitled the recording by hand via
+the Part 2 editor. Regenerating a report (e.g. to get a better transcript/feedback, or to
+recover a `failed` row) silently threw away the user's own title and replaced it with a fresh
+AI-generated one, with no warning and no way to tell it had happened short of noticing the
+title had changed.
+
+**The fix:**
+
+- **Schema:** a new boolean column, `title_edited_by_user`, `not null default false` — migration
+  `supabase/migrations/0006_title_edited_by_user.sql`
+  (`alter table public.recordings add column title_edited_by_user boolean not null default
+  false;`). Defaulting `false` means every existing row and every freshly-inserted row starts
+  out exactly as before — still eligible for an AI-generated title — so this is purely additive,
+  no backfill needed and no behavior change for a recording that's never been hand-retitled.
+- **Setting it — the one and only place a title is ever hand-set:** `updateRecordingTitle()`
+  (`src/lib/recordings.ts`, the Part 2 editor's save call) now writes `title_edited_by_user:
+  true` in the same update as `title` itself — see the "Editing (Part 2)" section's
+  "Persistence" bullet above.
+- **Reading it — where the check now lives in the pipeline:** `process_recording()`
+  (`backend/app/services/processing.py`) selects `title_edited_by_user` alongside `mode`/
+  `question` in its very first row-read (right after flipping `status` to `processing`), so it's
+  in hand for the rest of the run without a second round-trip. At the end of the run, building
+  the final `status: 'done'` update, the code now branches: if the flag is `true`, `title` is
+  **left out of the update payload entirely** (a plain Python `dict` built conditionally,
+  not written and then overwritten) — Supabase never touches that column, so whatever the user
+  set stays exactly as they set it. If the flag is `false` (the default — never edited, or a
+  recording generated fresh), `title: generated.title` is written exactly as before, unchanged
+  behavior. **Feedback, transcript, and metrics are completely unaffected by this flag** — only
+  the `title` write is conditional; a regenerate on a hand-titled recording still fully refreshes
+  everything else.
+- **Applies to every pipeline entry point uniformly** — there's only one place `status: 'done'`
+  is ever written (`process_recording`'s final update), and both `/process` (initial generation)
+  and `/regenerate` schedule that exact same function (see [Background
+  processing](#background-processing)), so this fix covers both without any endpoint-specific
+  code.
+
 ## Epic D wrap-up
 
-Same spirit as the [Phase 3 assessment](#phase-3-assessment) and [Phase 4 exit
-checkpoint](#phase-4-exit-checkpoint): does the full History experience hold together as one
-coherent screen after all 6 parts, and what's still shaky before Epic E?
+**Epic D is now fully complete — all 7 parts.** Same spirit as the [Phase 3
+assessment](#phase-3-assessment) and [Phase 4 exit checkpoint](#phase-4-exit-checkpoint): does the
+full History experience hold together as one coherent, **fully restyled** feature top to bottom,
+and what's still shaky before Epic E? This replaces the Part 6 wrap-up above (which covered Parts
+1–6 with the detail screen still deferred and the title-overwrite bug still open) now that Part 7
+has closed out both.
 
-**All 6 parts, and where each lives:**
+**All 7 parts, and where each lives:**
 1. **Title generation** (Part 1) — `backend/app/services/feedback.py` returns
    `GeneratedFeedback(feedback, title)` from one structured-JSON Gemini call; `process_recording`
    stores `title` alongside `status: 'done'`. Migration `0005_recording_title.sql`. Lenient on a
    missing title (row still `done`, `title` = `NULL`).
-2. **Title editing** (Part 2) — `TitleSection` on the detail screen; pencil → pre-filled input →
-   `updateRecordingTitle()` direct-Supabase update, not optimistic, handles `NULL`.
+2. **Title editing** (Part 2) — `TitleSection`; pencil → pre-filled input → `updateRecordingTitle()`
+   direct-Supabase update, not optimistic, handles `NULL`. Restyled as the detail screen's large
+   bold heading in Part 7 (interaction unchanged).
 3. **List card restyle** (Part 3) — each row a `<Card>`: title heading (muted "Untitled
    recording" fallback), question/"No prompt" line, colour-coded mode pill, right-aligned
-   date, favorite star.
+   date, favorite star. `modePillColors()` moved to `src/lib/modes.ts` in Part 7 so the detail
+   screen could share it instead of duplicating it.
 4. **3-dot menu** (Part 4) — shared `RecordingActionsMenu` on list + detail: Download audio,
    Delete audio, Delete recording (new backend `DELETE /recordings/{id}`, `Alert.alert`-gated),
-   Regenerate report (failed only). `DownloadAudioButton` / `DeleteAudioButton` deleted.
+   Regenerate report (failed only). `DownloadAudioButton` / `DeleteAudioButton` deleted. Kept
+   as-is by Part 7 — see [History](#history)'s detail-screen "3-dot actions menu" bullet for why
+   the design's inline text-link mockup for this screen wasn't reverted to.
 5. **Search + toggle** (Part 5) — client-side substring filter over `title` + `question`;
    minimalist underline Calendar/List tabs.
 6. **Calendar** (Part 6) — `MonthCalendar`: 7-column month grid, capped next-month nav,
    client-side per-day dots from `created_at` local date, tap-a-day → List filtered to that
    date, "Showing {date}" chip to reset, search and day filter mutually exclusive.
+7. **Detail-screen restyle** (Part 7, new) — the last deferred piece: the header (large bold
+   editable title + star + 3-dot menu), a mode-pill/status-badge/date meta row, an
+   always-shown Question/"No prompt" block, a `<Card>`-wrapped pill-shaped audio player
+   (restyled `AudioPlaybackControls`, shared with the Home tab), compact 3-stat metric blocks,
+   and bold Metrics/Feedback/Transcript section headers with `Theme.typography.body` copy. Full
+   layout in [History](#history)'s "Detail screen" bullet. **Also fixed in Part 7:** the
+   title-overwrite bug — see [Recording titles](#recording-titles)'s "Not overwriting a
+   hand-edited title (Part 7)" subsection for the `title_edited_by_user` column and where the
+   check now lives in `process_recording()`.
 
 **Built and internally consistent, confirmed by reading the code:** every part composes through
-the same `RecordingRow` shape and the one `fetchRecordings()` query (widened once, for `title`).
-The Part 6 calendar adds only client-side derived state (`recordingsByDay` memo, `dayFilter` /
-`calendar` / `emptyDayNotice`) — no new query, no backend change, no new dependency. Polling,
-focus-refetch, and every per-row action (favorite / regenerate / delete audio / delete recording
-/ download) still operate on the **full** `recordings` list; only what the `FlatList` renders
-(`filteredRecordings`) is narrowed by search/day. `npx tsc --noEmit` and `eslint` are clean.
+the same `RecordingRow`/`RecordingDetail` shapes and the same two queries (`fetchRecordings()`,
+`fetchRecordingById()`). The detail screen's restyle touched no data-fetching logic at all — it's
+a pure presentation change over the exact same `recording` object Parts 1–4/6 already populate;
+the one *behavioral* change in Part 7 (the title-overwrite fix) lives entirely in the backend
+pipeline and one frontend write, independent of any rendering. Polling, focus-refetch, and every
+per-row action (favorite / regenerate / delete audio / delete recording / download) are untouched.
+`npx tsc --noEmit`, `eslint`, and the backend's full pytest suite (42 tests) are all clean.
 
-**What's verified vs. not:** type-check + lint only — **no on-device pass yet**, same standing
-caveat as every Phase 3/4 step (see [Phase 3 assessment](#phase-3-assessment)). Epic D's earlier
-parts (1–5) were also never given a dedicated Expo-Go pass; this wrap-up's test plan below covers
-the whole History surface in one run.
+**What's verified vs. not:** type-check + lint + pytest only — **no on-device pass yet across any
+part of Epic D**, same standing caveat as every Phase 3/4 step (see [Phase 3
+assessment](#phase-3-assessment)). The test plan below is the single pass meant to close that gap
+for the whole History surface, restyle included, in one run.
 
 **Shaky / worth knowing before Epic E:**
-- **A pipeline run still overwrites a hand-set title** (flagged in [Recording
-  titles](#recording-titles)) — unchanged by Part 6.
+- **The title-overwrite bug is fixed by code, not yet confirmed on-device** — the logic reads
+  correctly (see the fix's own writeup) and the backend pytest suite still passes, but no live
+  Gemini regenerate has actually been run against a hand-titled recording yet. The test plan
+  below covers exactly that as its first non-trivial check.
 - **`formatRecordedAt` vs. `dayKey` both use local time** — consistent with each other, so a
   card's displayed date always matches the calendar cell it's filed under. But a user who
   travels across timezones between recording and viewing could see a recording shift days.
   Accepted — matches how a phone's own calendar/photos behave.
-- **The History detail-screen visual restyle never happened** — Part 6 shipped the calendar
-  instead. The detail screen is functionally complete but still on the pre-redesign layout
-  (`ThemedText`/`ThemedView`, no `<Card>` treatment for its main sections beyond what Part 2/4
-  touched). Not a regression; just unfinished polish, to be picked up in a later epic.
+- **The restyled `AudioPlaybackControls` now also changes the Home tab's post-recording
+  preview** (`RecordingPlayback` in `index.tsx`), since Part 7 restyled the shared component
+  rather than forking a detail-screen-only variant. This is intentional (one player, one look,
+  consistent with the rest of v2) but means Part 7's on-device check should glance at the Home
+  tab's playback too, not just History's.
+- **`getStatusPresentation` (`recording-status.ts`) still hardcodes red/green hex** rather than
+  `Theme` tokens — unchanged by Part 7 (only the failed-state heading and Regenerate button were
+  moved onto `Theme.colors.recordRed`; the shared status-badge colors were left as they were,
+  consistent with the "flagged for Epic C/D" note in [Design system](#design-system)).
 - **`MonthCalendar` re-derives the grid every render** (no `useMemo` on `cells`) — trivial at
   28–31 cells, not worth memoising.
 - **Month nav has no lower bound** — you can page back indefinitely into empty months. Harmless
@@ -2121,29 +2244,48 @@ the whole History surface in one run.
 
 **Nothing found that blocks starting Epic E.**
 
-**History end-to-end test plan** (one pass, supersedes per-part spot checks):
+**History end-to-end test plan** (one pass, supersedes per-part spot checks and the Part 6 wrap-up's
+test plan):
 1. Open History with several recordings — confirm the restyled list: title headings, "Untitled
    recording" on any NULL-title row, question / "No prompt" line, colour-coded mode pills,
    dates, stars.
-2. Tap a row → detail screen. Edit the title (pencil → change → confirm), back out, confirm the
-   list shows the new title. Re-open, "Cancel" an edit, confirm no change.
-3. On the list, open the 3-dot menu on a row: confirm Download / Delete audio / Delete recording
+2. Tap a `done` recording → detail screen. Confirm the restyled layout: large bold title with
+   star + 3-dot menu on the header row, mode pill + status badge + date meta row, the Question
+   block (or "No prompt"), a pill-shaped Play/Pause button with a working progress bar and
+   "0:00 / …" time display, the three compact metric stat blocks, and bold Feedback/Transcript
+   headers with normal body-weight text underneath.
+3. **Title-overwrite fix:** on that same recording, edit the title via the pencil (change it to
+   something distinctive, confirm). Force it into a `failed` state if it isn't already one (e.g.
+   temporarily break `GEMINI_API_KEY`, or use an already-`failed` row instead), then trigger
+   **Regenerate report** (from the 3-dot menu or the prominent button) and let it complete.
+   Confirm the title you set is **still exactly what you typed** — not replaced by a fresh
+   AI-generated one — while transcript/feedback/metrics do refresh normally.
+4. Open a `failed` recording's detail view — confirm the restyled failed notice (red heading,
+   description, filled red "Regenerate report" pill) still works and recovers the row to `done`.
+5. Open a **Miscellaneous** recording's detail view — confirm the Question block reads "No
+   prompt" rather than being blank or absent.
+6. Edit a title, "Cancel" instead of confirming — confirm no change persists, on this screen or
+   back in the list.
+7. On the list, open the 3-dot menu on a row: confirm Download / Delete audio / Delete recording
    appear (Regenerate only on a `failed` row). Run Download (share sheet opens), Delete audio
    (no confirm, menu items update). On a throwaway row run Delete recording → confirm the
-   `Alert.alert`, confirm, and the **whole row** disappears.
-4. Type in the search bar — confirm the list filters live on title + prompt substring; confirm
+   `Alert.alert`, confirm, and the **whole row** disappears. Repeat the menu check from the
+   detail screen and confirm `router.back()` lands on the list with the row gone.
+8. Type in the search bar — confirm the list filters live on title + prompt substring; confirm
    "No recordings match …" for a non-matching term; clear it.
-5. Switch to **Calendar** — confirm the current month renders with a dot on each day you
+9. Switch to **Calendar** — confirm the current month renders with a dot on each day you
    actually recorded something, today ringed.
-6. Tap a day **with** a recording — confirm it switches to List, shows a "Showing {date}" chip,
-   and lists only that day's recording(s). Tap the chip → back to the full list.
-7. Switch back to Calendar, tap a day with **nothing** — confirm no crash, just a subtle "No
-   recordings on …" line.
-8. Navigate to a previous month (‹) — confirm it renders correctly (dots if you have old
-   recordings, an empty grid otherwise). Confirm the next-month (›) chevron is disabled/dimmed
-   once you're back on the current month.
-9. Type a search term, then switch to Calendar and tap a day — confirm the search term is
-   **cleared** (not AND-combined) and you see everything from that day.
+10. Tap a day **with** a recording — confirm it switches to List, shows a "Showing {date}" chip,
+    and lists only that day's recording(s). Tap the chip → back to the full list.
+11. Switch back to Calendar, tap a day with **nothing** — confirm no crash, just a subtle "No
+    recordings on …" line.
+12. Navigate to a previous month (‹) — confirm it renders correctly (dots if you have old
+    recordings, an empty grid otherwise). Confirm the next-month (›) chevron is disabled/dimmed
+    once you're back on the current month.
+13. Type a search term, then switch to Calendar and tap a day — confirm the search term is
+    **cleared** (not AND-combined) and you see everything from that day.
+14. On the Home tab, record and preview a take before uploading — confirm the (also-restyled)
+    playback pill button + progress bar look and work the same way there.
 
 ## Background processing
 
@@ -2214,9 +2356,13 @@ the whole History surface in one run.
     not assumed — it already starts every run by flipping `status` straight to `processing` (not
     `pending`; there's no intermediate `pending` state on a regenerate, unlike a fresh upload) as
     its very first write, then overwrites `transcript` unconditionally the moment transcription
-    succeeds, `metrics` unconditionally right after, and `feedback` + `title` only alongside the
-    final `status: done` write (so a regenerate also refreshes the title, and can move it from
-    `NULL` to a real value or vice versa). There's no separate failure-reason column or other failure-related state
+    succeeds, `metrics` unconditionally right after, and `feedback` (unconditionally) + `title`
+    (only when `title_edited_by_user` is `false` — v2 Epic D Part 7, see [Recording
+    titles](#recording-titles)'s "Not overwriting a hand-edited title" subsection) alongside the
+    final `status: done` write — so a regenerate refreshes the title too, and can move it from
+    `NULL` to a real value or vice versa, *unless* the user has since hand-edited it, in which
+    case the title is left alone while everything else still refreshes. There's no separate
+    failure-reason column or other failure-related state
     on the `recordings` row (see `supabase/migrations/0001_initial_schema.sql`) to clear first. The
     one nuance: if a regenerate run itself fails again at the feedback stage, whatever `transcript`/
     `metrics` that run just (re)computed stay on the row — same "don't discard good partial work"

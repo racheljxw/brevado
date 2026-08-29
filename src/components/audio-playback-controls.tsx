@@ -1,9 +1,9 @@
 import { useAudioPlayer, useAudioPlayerStatus } from 'expo-audio';
+import { SymbolView } from 'expo-symbols';
 import { Pressable, StyleSheet, View } from 'react-native';
 
 import { ThemedText } from '@/components/themed-text';
-import { Spacing } from '@/constants/theme';
-import { useTheme } from '@/hooks/use-theme';
+import { Theme } from '@/constants/theme';
 import { formatDuration } from '@/lib/format-time';
 
 /**
@@ -15,9 +15,15 @@ import { formatDuration } from '@/lib/format-time';
  * file. `useAudioPlayer(uri)` doesn't care whether `uri` is a local
  * `file://` path or a remote (signed) URL, so no branching is needed here —
  * callers just pass whichever `uri` they have.
+ *
+ * v2 Epic D Part 7 — restyled onto `Theme` tokens as part of the History
+ * detail-screen restyle: a filled pill Play/Pause button (accent fill,
+ * play.fill/pause.fill icon + label) and a token-coloured progress track,
+ * matching the design's audio-player treatment. Shared with the Home tab's
+ * post-recording preview (`RecordingPlayback`), which picks up the same
+ * restyle for free since both call sites render this one component.
  */
 export function AudioPlaybackControls({ uri }: { uri: string }) {
-  const theme = useTheme();
   const player = useAudioPlayer(uri);
   const status = useAudioPlayerStatus(player);
 
@@ -37,41 +43,69 @@ export function AudioPlaybackControls({ uri }: { uri: string }) {
   return (
     <View style={styles.container}>
       <Pressable
-        style={({ pressed }) => [styles.playButton, { borderColor: theme.text }, pressed && styles.pressed]}
-        onPress={togglePlayback}>
-        <ThemedText type="smallBold">{status.playing ? 'Pause' : 'Play'}</ThemedText>
+        style={({ pressed }) => [styles.playButton, pressed && styles.pressed]}
+        onPress={togglePlayback}
+        accessibilityRole="button"
+        accessibilityLabel={status.playing ? 'Pause' : 'Play'}>
+        <SymbolView
+          name={status.playing ? 'pause.fill' : 'play.fill'}
+          size={14}
+          tintColor={Theme.colors.onAccent}
+        />
+        <ThemedText type="smallBold" style={styles.playLabel}>
+          {status.playing ? 'Pause' : 'Play'}
+        </ThemedText>
       </Pressable>
 
-      <View style={[styles.progressTrack, { backgroundColor: theme.backgroundSelected }]}>
-        <View style={[styles.progressFill, { backgroundColor: theme.text, width: `${progress * 100}%` }]} />
+      <View style={styles.progressRow}>
+        <View style={styles.progressTrack}>
+          <View style={[styles.progressFill, { width: `${progress * 100}%` }]} />
+        </View>
+        <ThemedText type="small" themeColor="textSecondary" style={styles.timeText}>
+          {formatDuration(status.currentTime)} / {formatDuration(status.duration)}
+        </ThemedText>
       </View>
-      <ThemedText type="small" themeColor="textSecondary">
-        {formatDuration(status.currentTime)} / {formatDuration(status.duration)}
-      </ThemedText>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
-    gap: Spacing.two,
+    gap: Theme.spacing.md,
     alignItems: 'center',
     alignSelf: 'stretch',
   },
   playButton: {
-    paddingHorizontal: Spacing.five,
-    paddingVertical: Spacing.two,
-    borderRadius: Spacing.five,
-    borderWidth: StyleSheet.hairlineWidth,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Theme.spacing.xs,
+    backgroundColor: Theme.colors.accent,
+    paddingHorizontal: Theme.spacing.xl,
+    paddingVertical: Theme.spacing.sm,
+    borderRadius: Theme.radius.pill,
+  },
+  playLabel: {
+    color: Theme.colors.onAccent,
+  },
+  progressRow: {
+    alignSelf: 'stretch',
+    alignItems: 'center',
+    gap: Theme.spacing.xs,
   },
   progressTrack: {
     alignSelf: 'stretch',
-    height: 4,
-    borderRadius: 2,
+    height: 6,
+    borderRadius: Theme.radius.pill,
+    backgroundColor: Theme.colors.border,
     overflow: 'hidden',
   },
   progressFill: {
     height: '100%',
+    backgroundColor: Theme.colors.accent,
+    borderRadius: Theme.radius.pill,
+  },
+  timeText: {
+    alignSelf: 'center',
   },
   pressed: {
     opacity: 0.7,

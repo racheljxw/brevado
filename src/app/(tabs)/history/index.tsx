@@ -25,7 +25,7 @@ import { useTheme } from '@/hooks/use-theme';
 import { deleteRecording, deleteRecordingAudio, regenerateReport } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
 import { formatRecordedAt } from '@/lib/format-time';
-import { formatMode } from '@/lib/modes';
+import { formatMode, modePillColors } from '@/lib/modes';
 import { TERMINAL_STATUSES } from '@/lib/recording-status';
 import { fetchRecordings, setFavorite, shareRecordingAudio, type RecordingRow } from '@/lib/recordings';
 
@@ -59,18 +59,9 @@ import { fetchRecordings, setFavorite, shareRecordingAudio, type RecordingRow } 
 // exactly what the card displays — searching "untitled" surfaces these rows.
 const UNTITLED_LABEL = 'Untitled recording';
 
-function modePillColors(mode: string): { backgroundColor: string; color: string } {
-  switch (mode) {
-    case 'interview':
-      return { backgroundColor: Theme.colors.modeInterview, color: Theme.colors.modeInterviewText };
-    case 'story':
-      return { backgroundColor: Theme.colors.modeStory, color: Theme.colors.modeStoryText };
-    case 'miscellaneous':
-      return { backgroundColor: Theme.colors.modeMiscellaneous, color: Theme.colors.modeMiscellaneousText };
-    default:
-      return { backgroundColor: Theme.colors.border, color: Theme.colors.textPrimary };
-  }
-}
+// `modePillColors` moved to `src/lib/modes.ts` in v2 Epic D Part 7 — the
+// History detail screen's restyle needed the identical pill, so both
+// screens now share one definition.
 
 function RecordingListItem({
   recording,
