@@ -220,7 +220,9 @@ being individually rewritten), all pure white/black is gone, the background is f
 everywhere, and the bottom nav is styled to the Figma spec as far as the system tab bar allows.
 Full per-screen restyling of Record and History (cards, pills, buttons, spacing) is **deferred to
 Epic C/D**, which rebuild those screens — Part 2 was a light-touch app-wide pass, not a
-screen-by-screen redesign.
+screen-by-screen redesign. Epic C (the Record flow) has now started — see the
+[Epic C Part 1](#epic-c-part-1--mode-select-screen-restyle) subsection below; it is multi-part and
+Part 1 covered only the mode-select screen's look.
 
 - **Where it lives:** `src/constants/theme.ts` — one module, extended, not replaced. Exports:
   `Colors` (v1, light/dark keyed, **now pointing at the warm palette** — both `light` and `dark`
@@ -374,6 +376,44 @@ for this pass): `#e5484d` (error/delete red — `settings.tsx`, `index.tsx` reco
 `recording-status.ts`), `#f5a623` (favorite star, `favorite-star.tsx`), and the Expo-template
 splash blues in `animated-icon.tsx` (`#208AEF`, `#3C9FFE`/`#0274DF`).
 
+### Epic C Part 1 — mode-select screen restyle
+
+Epic C restyles the **Record flow** and is **multi-part**; nothing outside the mode-select
+screen's *look* was touched in Part 1:
+
+- **Part 1 (done):** the mode-select screen's visual restyle only — flat `#FFFAF6` background
+  (already there via the Epic B `Colors` repoint), Noto Sans typography for the new static
+  **"Unmute your potential."** (24px, a step up from the `heading` variant) over **"Choose a
+  mode."** (`body` variant) two-line intro, and the three mode options as a **single horizontal
+  row of small pill-shaped buttons** (`flex: 1` each, `Theme.radius.pill`, `Theme.colors.card`
+  fill, `Theme.colors.border` 1px border, a soft `Theme.colors.shadow` `#BEA398` @ 15% drop shadow
+  with 0/0 offset — RN can't do the design's 5 spread / 50 blur so `shadowRadius: 25` + `elevation:
+  3` stand in), in their **unselected state only** (`paddingVertical` `sm`/8 — deliberately low so the pill
+  isn't over-round). The label font size is **derived from measurements in `ModeSelect`**: row
+  width from `onLayout`, plus the longest label's actual rendered width from `onTextLayout` on a
+  hidden absolutely-positioned measurer at `MODE_LABEL_MEASURE_FONT` (16). From those it picks the
+  size that leaves `MODE_LABEL_SIDE_GAP` (16px) clear on each side of "Miscellaneous" within its
+  pill — ~32px total — clamped `MODE_LABEL_MIN_FONT`–`MAX_FONT` (11–18), and applies **the same
+  value to all three** labels, so nothing truncates and no pill's text looks smaller than its
+  neighbours. `adjustsFontSizeToFit` was tried first and rejected for shrinking only the one
+  overflowing label; a glyph-width-ratio estimate was tried next and replaced by the `onTextLayout`
+  measurement for accuracy across fonts/screens. **Load-bearing width fix:** `heroSection` gained `alignSelf: 'stretch'` —
+  `safeArea` centres its children, so before this `heroSection` hugged the tagline's width and the
+  pill row couldn't get any wider no matter the padding (which is why the first gutter tweak looked
+  like it did nothing). The doubled gutter was also removed — `heroSection` drops its
+  `paddingHorizontal`, `safeArea`'s goes 24 → 16 — affects the whole Record tab. The old per-option descriptions were dropped; the old `"Brevado"` title + `"Logged
+  in as {email}"` lines were removed (see [Mode selection](#mode-selection)'s "Greeting removed"
+  bullet). `ModeSelect` no longer wraps `<Card>` — it renders bordered `Pressable` pills directly.
+- **Part 2 (pending):** the mode-select → question/record **transition animation**, and with it
+  the mode pill's **selected/filled state** (deliberately not built in Part 1 since the animation
+  work has to touch it), plus the "stay on Record showing processing status" behaviour change.
+- **Part 3 (pending):** the **prompt / custom-question** screen restyle (`QuestionSelect`), and
+  unifying the `"Storytelling"` pill label with `MODE_LABELS`' `"Story"` (see
+  [Mode selection](#mode-selection)).
+- Still open from this part: the tagline may read oddly stacked over the flat instruction line
+  once seen against the design screenshots — flagged for the human's on-device review, in case
+  "Choose a mode." is worth cutting or rewording.
+
 ### Still flagged for Epic C/D
 
 - **`recordRed` mismatch:** the record button in `index.tsx` uses `#e5484d`, not
@@ -386,8 +426,11 @@ splash blues in `animated-icon.tsx` (`#208AEF`, `#3C9FFE`/`#0274DF`).
 - **Splash screen** (`animated-icon.tsx` + `app.json` splash `#208AEF`) is still the Expo-template
   blue + Expo logo — needs a Brevado brand asset + cream bg.
 - **Nav bar ❌ items** above (stroke, drop shadow, iOS active pill) — need a custom tab bar.
-- **Noto Sans on-device check:** `tsc` is clean and the font resolves, but the actual rendering
-  (and the nav approximations) haven't been seen on the physical test iPhone yet.
+- **Noto Sans on-device check:** `@expo-google-fonts/noto-sans` (`^0.4.2`) is now correctly
+  installed (the human re-ran `npx expo install @expo-google-fonts/noto-sans` locally after the
+  SDK 54→57 recovery), `npx tsc --noEmit` is clean, and the four weight subpath imports in
+  `_layout.tsx` resolve — but the actual rendering (and the nav approximations) still haven't been
+  seen on the physical test iPhone.
 
 ## Recording
 
@@ -538,8 +581,27 @@ shell around it.
   [History](#history)'s list -> detail push does (that's why *that* flow uses a real nested route
   and this one doesn't); still true post-Step 3 — the question screen turned out not to need any
   of that either, just its own local loading/error state.
-  - `'mode-select'` (default): the three mode option cards (`ModeSelect`) — Interview, Story,
-    Miscellaneous — each with a one-line description.
+  - `'mode-select'` (default): a fixed two-line intro — the static tagline **"Unmute your
+    potential."** (heading variant) over the instruction **"Choose a mode."** (body variant) — then
+    the three mode options (`ModeSelect`). As of v2 Epic C Part 1 the options sit on **one
+    horizontal row of pill-shaped buttons** (each `flex: 1`, white fill, tan hairline border, a soft
+    `#BEA398` @ 15% drop shadow, `paddingVertical` `sm`/8 — kept low so the pill doesn't read as
+    over-round, unselected state only). All three labels share **one** font size, computed from real
+    measurements: the row width (`onLayout`) and the longest label's rendered width (`onTextLayout`
+    on a hidden measurer at a fixed reference size) → the largest size that leaves ~16px clear on
+    each side of "Miscellaneous" within its pill (~32px total), clamped 11–18px, adapting to any
+    screen with no glyph-width guessing. Per-`<Text>` `adjustsFontSizeToFit` was rejected because it
+    shrank "Miscellaneous" alone. The one-line descriptions each option used to carry were dropped
+    in the restyle. The tagline above renders at 24px (a step up from the `heading` variant's 20).
+    - **Width fix:** `heroSection` needs `alignSelf: 'stretch'` — `safeArea` centres its children,
+      so without it `heroSection` hugged its widest child (the tagline) and the pill row could
+      never exceed that line's width, making every gutter/padding tweak invisible. With it,
+      `heroSection` fills `safeArea` and the row spans the screen. The gutter was also de-doubled
+      (`heroSection` lost its own `paddingHorizontal`, `safeArea`'s went 24 → 16) — applies to the
+      whole Record tab, not just mode-select. The middle option's pill reads **"Storytelling"**, though `mode`
+    is still `'story'` and `MODE_LABELS` (used by the `'question'`/`'record'` screens) still renders
+    it as "Story" — that label mismatch is left for Epic C Part 3 to unify. See
+    [Design system](#design-system)'s "Epic C Part 1" subsection.
   - `'question'`: shown after selecting Interview or Story. `QuestionSelect` (Phase 4 Step 3,
     replacing Step 2's dead-end `ModePlaceholder`) kicks off `pickQuestionForMode()`
     (`src/lib/question-selection.ts` — see [Question selection](#question-selection)) the moment
@@ -567,10 +629,20 @@ shell around it.
 - **Cap check relocated here** from the old record button — see [Recording cap](#recording-cap)
   for the full detail. It now runs once in `handleSelectMode`, before any mode is entered, rather
   than in `handleStartRecording`.
+- **Greeting removed (v2 Epic C Part 1):** the Phase 1 `'mode-select'` header showed a static
+  `"Brevado"` title plus a `"Logged in as {email}"` line (the last bit of per-user text left on
+  this tab — it was already flagged for Epic B to reconcile). Both are gone. There was never any
+  real greeting-*personalization* logic (no name derivation, no first-time/returning branch) — just
+  those two lines — and they're replaced by the genuinely static **"Unmute your potential." /
+  "Choose a mode."** pair, identical for every user every time. The email now lives only on the
+  [Settings screen](#settings-screen). The `"Brevado"` title and email line were rendered above all
+  three flow screens, so `'question'` and `'record'` also lose them — those screens have their own
+  context headers ("Mode: …", the question banner) and weren't otherwise restyled in this part.
 - **Verification status:** frontend type-checks clean (`npx tsc --noEmit`). Not yet exercised in
   Expo Go on the physical test iPhone — same caveat as several Phase 3 steps (see [Phase 3
   assessment](#phase-3-assessment)) — including re-confirming the cap check still blocks/unblocks
-  correctly at its current location. Suggested way to re-verify the cap: the same
+  correctly at its current location, and the Epic C Part 1 restyle (tagline/subtitle copy, pill
+  shape, cream background, Noto Sans) against the design screenshots. Suggested way to re-verify the cap: the same
   temporarily-lower-`MAX_RECORDINGS_PER_USER`-to-2 trick used to verify Phase 3 Step 3 (see that
   section's "How this was tested" bullet). See [Question selection](#question-selection)'s own
   verification note for the Step 3-specific test plan (confirming a real question reaches the DB,
@@ -1537,6 +1609,32 @@ pure string-building with no network call of its own, so it's easy to unit-test 
 - The same pattern (no cron) applies to the v3 question-pool top-up: it fires from a
   `BackgroundTasks` call triggered by mode selection running low on unused questions, not a
   scheduled job. See plan Section 5's "Question pool" subsection.
+
+## Dependency installation convention
+
+**Every new npm / Expo package install is run by the human, locally, via `npx expo install
+<package>` — never by Claude Code, and never via `npm audit fix`.** This is a hard rule, learned
+the expensive way from the SDK 54→57 incident.
+
+- **Claude Code must not run install commands in its own sandbox.** It has no real network access
+  to the npm registry, so an install there either fails outright or — worse — silently resolves a
+  version that doesn't match the pinned Expo SDK. Expo / React Native / the `react-native-*` and
+  `expo-*` packages are tightly version-coupled to the SDK; a mismatched resolve can typecheck and
+  still break at runtime in Expo Go, often not obviously.
+- **NEVER `npm audit fix --force`** (and avoid plain `npm audit fix`). It ignores `package.json`'s
+  pinned version ranges and will bump `expo` / `react-native` / their peers across a **major SDK
+  boundary** to "resolve" an advisory, with no warning. That is exactly what caused the **SDK 54→57
+  incident**: an `audit fix --force` jumped the project multiple SDK versions ahead of what the
+  test iPhone's installed Expo Go app supports, breaking the app; recovery meant pinning every
+  package back to SDK 54 by hand and having the human re-run `npx expo install
+  @expo-google-fonts/noto-sans` locally.
+- **`npx expo install --fix` / `npx expo upgrade` are also off-limits** without being asked —
+  already in [Conventions](#conventions) below, same reasoning, restated here because it's the same
+  failure mode.
+- **When a future step needs a new dependency: stop and hand the exact install command back to the
+  human** (e.g. "run `npx expo install expo-haptics` locally, then tell me to continue"). Don't run
+  it, don't work around it, don't add a bare `package.json` entry and hope — wait for the human to
+  install it and confirm before continuing that step.
 
 ## Conventions
 
