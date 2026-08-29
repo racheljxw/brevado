@@ -36,14 +36,16 @@ import { ThemedView } from '@/components/themed-view';
 import { WebBadge } from '@/components/web-badge';
 import { BottomTabInset, MaxContentWidth, Spacing, Theme } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
-import { startProcessing } from '@/lib/api';
+import { regenerateReport, startProcessing } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
 import { formatDuration } from '@/lib/format-time';
 import { MODE_LABELS } from '@/lib/modes';
 import { pickQuestionForMode } from '@/lib/question-selection';
 import type { Question } from '@/lib/questions';
+import { getStatusPresentation, TERMINAL_STATUSES } from '@/lib/recording-status';
 import {
   buildAudioPath,
+  fetchRecordingById,
   getActiveRecordingCount,
   MAX_RECORDINGS_PER_USER,
   RecordingUploadError,
@@ -71,20 +73,182 @@ type PermissionState = 'unknown' | 'granted' | 'denied';
 type UploadState = 'idle' | 'uploading' | 'error' | 'done';
 type UploadErrorInfo = { message: string; stage: RecordingUploadStage };
 
+// v2 Epic C Part 4 — the inline processing-status display, shown on the
+// Record screen after a successful upload instead of navigating away to
+// History. It reuses the SAME polling shape History already has (see the
+// note in `pollStatus` below), just fetching this one recording.
+//
+//   pending / processing → a status badge (History's `getStatusPresentation`)
+//                          + spinner
+//   done                 → badge + "See more details ›" → this recording's
+//                          History detail screen
+//   failed               → badge + "Regenerate report" (the Phase 3 Step 2
+//                          endpoint/flow, same as History's) inline
+function ProcessingStatus({
+  recordingId,
+  kickoffError,
+  onRetryKickoff,
+  onSeeDetails,
+}: {
+  recordingId: string;
+  kickoffError: string | null;
+  onRetryKickoff: () => void;
+  onSeeDetails: () => void;
+}) {
+  const theme = useTheme();
+  const [status, setStatus] = useState<string>('pending');
+  const [pollFailed, setPollFailed] = useState(false);
+  const [regenerating, setRegenerating] = useState(false);
+  const [regenerateError, setRegenerateError] = useState<string | null>(null);
+
+  // Out-of-order guard — same purpose as History's `requestSeqRef` (Phase 2
+  // Step 7 / Phase 3 Step 2): a slower, older fetch resolving after a newer
+  // one can't overwrite fresh state.
+  const requestSeqRef = useRef(0);
+  const statusRef = useRef(status);
+  useEffect(() => {
+    statusRef.current = status;
+  }, [status]);
+
+  const pollStatus = useCallback(async () => {
+    const requestId = ++requestSeqRef.current;
+    try {
+      const row = await fetchRecordingById(recordingId);
+      if (requestId !== requestSeqRef.current) return;
+      if (row) {
+        setStatus(row.status);
+        setPollFailed(false);
+      }
+    } catch {
+      if (requestId !== requestSeqRef.current) return;
+      // A transient poll failure shouldn't wipe the last-known status —
+      // just show a quiet "retrying" note and let the next tick try again.
+      setPollFailed(true);
+    }
+  }, [recordingId]);
+
+  // First fetch on mount.
+  useEffect(() => {
+    pollStatus();
+  }, [pollStatus]);
+
+  // Poll while non-terminal, only while the Record tab is focused — the
+  // exact 1.5s / `TERMINAL_STATUSES`-stop / focus-gated shape as History's
+  // list polling (Phase 2 Step 7) and its detail screen (Phase 3 Step 2).
+  // The only divergence: it fetches this one recording (`fetchRecordingById`)
+  // rather than the whole list, because that's all this screen tracks.
+  useFocusEffect(
+    useCallback(() => {
+      const interval = setInterval(() => {
+        if (TERMINAL_STATUSES.has(statusRef.current)) return;
+        pollStatus();
+      }, 1500);
+      return () => clearInterval(interval);
+    }, [pollStatus])
+  );
+
+  async function handleRegenerate() {
+    setRegenerating(true);
+    setRegenerateError(null);
+    try {
+      await regenerateReport(recordingId);
+      // `process_recording()` flips straight to 'processing' as its first
+      // step regardless of entry point — reflect that immediately so the
+      // poll above picks it back up (same as History's `handleRegenerate`).
+      setStatus('processing');
+    } catch (err) {
+      setRegenerateError(err instanceof Error ? err.message : 'Could not regenerate — try again.');
+    } finally {
+      setRegenerating(false);
+    }
+  }
+
+  const presentation = getStatusPresentation(status, theme);
+  const nonTerminal = !TERMINAL_STATUSES.has(status);
+
+  return (
+    <View style={styles.processingStatus}>
+      <View style={styles.processingBadgeRow}>
+        {nonTerminal && <ActivityIndicator size="small" color={theme.textSecondary} />}
+        <View style={[styles.statusBadge, { backgroundColor: presentation.backgroundColor }]}>
+          <ThemedText type="smallBold" style={{ color: presentation.textColor }}>
+            {presentation.label}
+          </ThemedText>
+        </View>
+      </View>
+
+      {status === 'done' && (
+        <Pressable onPress={onSeeDetails} hitSlop={8} style={({ pressed }) => pressed && styles.pressed}>
+          <ThemedText style={styles.questionLink}>See more details ›</ThemedText>
+        </Pressable>
+      )}
+
+      {status === 'failed' && (
+        <>
+          <ThemedText type="small" themeColor="textSecondary" style={styles.uriLabel}>
+            Something went wrong generating your report.
+          </ThemedText>
+          <Pressable
+            onPress={handleRegenerate}
+            disabled={regenerating}
+            hitSlop={8}
+            style={({ pressed }) => (pressed || regenerating) && styles.pressed}>
+            {regenerating ? (
+              <ActivityIndicator size="small" color={theme.textSecondary} />
+            ) : (
+              <ThemedText style={styles.questionLink}>Regenerate report</ThemedText>
+            )}
+          </Pressable>
+          {regenerateError && (
+            <ThemedText type="small" style={styles.errorText}>
+              {regenerateError}
+            </ThemedText>
+          )}
+        </>
+      )}
+
+      {kickoffError && nonTerminal && (
+        <>
+          <ThemedText type="small" style={styles.errorText}>
+            Couldn&apos;t start processing.
+          </ThemedText>
+          <Pressable onPress={onRetryKickoff} hitSlop={8} style={({ pressed }) => pressed && styles.pressed}>
+            <ThemedText style={styles.questionLink}>Try again</ThemedText>
+          </Pressable>
+        </>
+      )}
+
+      {pollFailed && nonTerminal && (
+        <ThemedText type="small" themeColor="textSecondary" style={styles.uriLabel}>
+          Couldn&apos;t check status — retrying…
+        </ThemedText>
+      )}
+    </View>
+  );
+}
+
 function RecordingPlayback({
   uri,
   uploadState,
   uploadError,
   uploadedRecordingId,
+  processingKickoffError,
   onKeep,
   onDiscard,
+  onRetryKickoff,
+  onSeeDetails,
+  onChangeMode,
 }: {
   uri: string;
   uploadState: UploadState;
   uploadError: UploadErrorInfo | null;
   uploadedRecordingId: string | null;
+  processingKickoffError: string | null;
   onKeep: () => void;
   onDiscard: () => void;
+  onRetryKickoff: () => void;
+  onSeeDetails: () => void;
+  onChangeMode: () => void;
 }) {
   const theme = useTheme();
   const isUploading = uploadState === 'uploading';
@@ -95,14 +259,13 @@ function RecordingPlayback({
 
       <AudioPlaybackControls uri={uri} />
 
-      <ThemedText type="code" themeColor="textSecondary" style={styles.uriLabel} numberOfLines={2}>
-        {uri}
-      </ThemedText>
-
       {uploadState === 'done' && uploadedRecordingId && (
-        <ThemedText type="small" themeColor="textSecondary" style={styles.uriLabel}>
-          Recording id: <ThemedText type="code">{uploadedRecordingId}</ThemedText>
-        </ThemedText>
+        <ProcessingStatus
+          recordingId={uploadedRecordingId}
+          kickoffError={processingKickoffError}
+          onRetryKickoff={onRetryKickoff}
+          onSeeDetails={onSeeDetails}
+        />
       )}
 
       {uploadState === 'error' && uploadError && (
@@ -148,13 +311,22 @@ function RecordingPlayback({
           </Pressable>
         </>
       ) : (
-        <Pressable
-          style={({ pressed }) => [styles.discardButton, pressed && styles.pressed]}
-          onPress={onDiscard}>
-          <ThemedText type="smallBold" themeColor="textSecondary">
-            Record another
-          </ThemedText>
-        </Pressable>
+        <>
+          <Pressable
+            style={({ pressed }) => [styles.discardButton, pressed && styles.pressed]}
+            onPress={onDiscard}>
+            <ThemedText type="smallBold" themeColor="textSecondary">
+              Record another
+            </ThemedText>
+          </Pressable>
+          <Pressable
+            style={({ pressed }) => [styles.discardButton, pressed && styles.pressed]}
+            onPress={onChangeMode}>
+            <ThemedText type="smallBold" themeColor="textSecondary">
+              ‹ Change mode
+            </ThemedText>
+          </Pressable>
+        </>
       )}
     </Card>
   );
@@ -714,10 +886,28 @@ export default function RecordScreen() {
   const [uploadState, setUploadState] = useState<UploadState>('idle');
   const [uploadError, setUploadError] = useState<UploadErrorInfo | null>(null);
   const [uploadedRecordingId, setUploadedRecordingId] = useState<string | null>(null);
+  // v2 Epic C Part 4: if the `POST /recordings/{id}/process` kick-off itself
+  // fails (best-effort — the upload already succeeded), `ProcessingStatus`
+  // shows a "couldn't start processing" note + retry rather than the status
+  // silently sticking at "Pending" forever.
+  const [processingKickoffError, setProcessingKickoffError] = useState<string | null>(null);
   // Set once per recording (on first upload attempt) so a retry after a
   // failure overwrites the same Storage object instead of leaving stray
   // partial uploads behind. Cleared whenever the recording itself resets.
   const audioPathRef = useRef<string | null>(null);
+
+  // v2 Epic C Part 4: the post-upload flow keeps the user on this screen
+  // showing live status. When they *leave* the screen after a recording is
+  // done (tap "See more details", or switch tabs), the screen resets on
+  // their next visit so no stale status/recording is lingering — this pair
+  // of refs drives that: `uploadStateRef` so the blur handler can read the
+  // latest upload state without re-subscribing, `resetPendingRef` as the
+  // "reset me on next focus" flag.
+  const uploadStateRef = useRef(uploadState);
+  useEffect(() => {
+    uploadStateRef.current = uploadState;
+  }, [uploadState]);
+  const resetPendingRef = useRef(false);
 
   const pulseAnim = useRef(new Animated.Value(1)).current;
 
@@ -745,21 +935,61 @@ export default function RecordScreen() {
     return () => loop.stop();
   }, [recorderState.isRecording, pulseAnim]);
 
-  function resetRecordingState() {
+  // Clears just the current take (audio + upload + processing state), leaving
+  // the chosen mode/question in place — "Discard & re-record" and "Record
+  // another" (same prompt). All setters are stable so `[]` deps is correct.
+  const resetRecordingState = useCallback(() => {
     setRecordedUri(null);
     audioPathRef.current = null;
     setUploadState('idle');
     setUploadError(null);
     setUploadedRecordingId(null);
-  }
+    setProcessingKickoffError(null);
+  }, []);
 
-  function handleBackToModeSelect() {
+  // Full reset back to the mode-select screen — abandons the take *and* the
+  // chosen mode/question. "‹ Change mode", and the post-recording
+  // reset-on-return (below).
+  const handleBackToModeSelect = useCallback(() => {
+    resetRecordingState();
     setSelectedMode(null);
     setPoolQuestion(null);
     setCustomQuestion(null);
     setQuestionError(null);
     setFlowScreen('mode-select');
-  }
+  }, [resetRecordingState]);
+
+  // v2 Epic C Part 4: reset the screen the next time it's focused, but only
+  // if the user left *after* finishing a recording (upload done). Leaving
+  // mid-take (recorded-not-uploaded) is preserved, same as before — an
+  // accidental tab tap shouldn't throw away an unsaved take.
+  useFocusEffect(
+    useCallback(() => {
+      if (resetPendingRef.current) {
+        resetPendingRef.current = false;
+        handleBackToModeSelect();
+      }
+      return () => {
+        if (uploadStateRef.current === 'done') {
+          resetPendingRef.current = true;
+        }
+      };
+    }, [handleBackToModeSelect])
+  );
+
+  // v2 Epic C Part 4: kick off backend processing. Best-effort — the upload
+  // already succeeded and the row exists, so a failure here doesn't lose the
+  // recording; it's surfaced inline (see `processingKickoffError`) with a
+  // retry rather than navigating away.
+  const kickProcessing = useCallback(async (id: string) => {
+    setProcessingKickoffError(null);
+    try {
+      await startProcessing(id);
+    } catch (err) {
+      console.warn('Failed to start processing for recording', id, err);
+      setProcessingKickoffError(err instanceof Error ? err.message : 'Could not start processing.');
+    }
+  }, []);
 
   // Phase 4 Step 3 — runs pickQuestionForMode (src/lib/question-selection.ts)
   // for the given mode and stores the result as `poolQuestion`, so
@@ -788,6 +1018,10 @@ export default function RecordScreen() {
   // `QuestionArea` then shows. Miscellaneous has no question step and jumps
   // straight to 'record'.
   function startModeSelection(mode: Mode) {
+    // v2 Epic C Part 4: clear any finished/lingering take so entering the
+    // record flow is always fresh (this is the "start a new recording via
+    // mode-select" reset path).
+    resetRecordingState();
     setCustomQuestion(null);
     setPoolQuestion(null);
     setQuestionError(null);
@@ -877,21 +1111,14 @@ export default function RecordScreen() {
       setUploadedRecordingId(result.id);
       setUploadState('done');
 
-      // Phase 2 Step 2: kick off backend processing now that the row exists.
-      // Best-effort — the recording is already safely uploaded and visible
-      // in History regardless, so a failure here shouldn't block navigating
-      // there. If it does fail, the row is simply left at 'pending' with no
-      // retry yet (that's a later step); this is enough to prove the wiring
-      // for now.
-      startProcessing(result.id).catch((err) => {
-        console.warn('Failed to start processing for recording', result.id, err);
-      });
-
-      // Step 6: land on the history list so the new recording is visible
-      // immediately, instead of stopping at a dead-end confirmation. This
-      // screen's own state is left as "done" (not reset) so tabbing back
-      // here still shows the accurate confirmation + "Record another".
-      router.navigate('/history');
+      // v2 Epic C Part 4: kick off backend processing, then STAY on this
+      // screen — `ProcessingStatus` (rendered by `RecordingPlayback` in the
+      // 'done' state) polls the recording and shows pending -> processing ->
+      // done/failed live, with a "See more details" link to the History
+      // detail screen once done. (Phase 1 Step 5's `router.navigate('/history')`
+      // right here is gone — that was the old "navigate away after upload"
+      // behaviour this step replaces.)
+      kickProcessing(result.id);
     } catch (err) {
       const stage = err instanceof RecordingUploadError ? err.stage : 'upload';
       const message = err instanceof Error ? err.message : 'Something went wrong.';
@@ -1023,8 +1250,15 @@ export default function RecordScreen() {
                   uploadState={uploadState}
                   uploadError={uploadError}
                   uploadedRecordingId={uploadedRecordingId}
+                  processingKickoffError={processingKickoffError}
                   onKeep={handleKeepAndUpload}
                   onDiscard={resetRecordingState}
+                  onRetryKickoff={() => uploadedRecordingId && kickProcessing(uploadedRecordingId)}
+                  onSeeDetails={() =>
+                    uploadedRecordingId &&
+                    router.push({ pathname: '/history/[id]', params: { id: uploadedRecordingId } })
+                  }
+                  onChangeMode={handleBackToModeSelect}
                 />
               )}
             </>
@@ -1362,6 +1596,29 @@ const styles = StyleSheet.create({
     borderWidth: StyleSheet.hairlineWidth,
   },
   uriLabel: {
+    textAlign: 'center',
+  },
+  // v2 Epic C Part 4 — inline processing-status block (`ProcessingStatus`).
+  processingStatus: {
+    alignItems: 'center',
+    alignSelf: 'stretch',
+    gap: Theme.spacing.sm,
+    marginTop: Theme.spacing.xs,
+  },
+  processingBadgeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Theme.spacing.sm,
+  },
+  // Same status-badge visual language as History (`getStatusPresentation`
+  // supplies the colours) — restyled to a v2 pill.
+  statusBadge: {
+    paddingHorizontal: Theme.spacing.md,
+    paddingVertical: Theme.spacing.xs,
+    borderRadius: Theme.radius.pill,
+  },
+  errorText: {
+    color: '#e5484d',
     textAlign: 'center',
   },
   errorCard: {

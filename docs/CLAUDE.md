@@ -25,16 +25,21 @@ section below (e.g. [Recording cap](#recording-cap), [Mode selection](#mode-sele
 [Phase 4 exit checkpoint](#phase-4-exit-checkpoint)) rather than repeated here — all of it is still
 accurate for what exists in the repo today.
 
-**v2 — a UI redesign plus a handful of new features — is starting now.** See
-[Scope](#scope) below for the full summary: a bottom-nav restructure (new "Streaks" placeholder
-tab, Home renamed to "Record"), a new Settings screen, a full visual redesign matched from design
-screenshots outside this repo, Record-flow changes (a mode-select transition animation, no more
-auto-navigate to History after upload, auto-generated editable recording titles), and a History
-redesign (search bar, calendar view, and a 3-dot per-row menu that adds a new "Delete recording"
-action alongside the existing download/delete-audio/regenerate actions). We're working
-phase-by-phase and step-by-step, same discipline as v1 — nothing below this section has been
-touched by v2 work yet, so the rest of this document still describes the v1 implementation exactly
-as it exists in the repo right now.
+**v2 — a UI redesign plus a handful of new features — is in progress.** See [Scope](#scope) below
+for the full summary. Progress so far:
+- **Epic A (done):** nav shell restructure (Record / History / Streaks), Settings screen.
+- **Epic B (done):** the shared design system (`src/constants/theme.ts` — warm palette, Noto
+  Sans, `Card`, nav styling).
+- **Epic C (done — all 4 parts):** the Record flow — mode-select restyle, the shift animation,
+  the `QuestionArea` (pool / custom question), the record disc, and the **post-recording
+  behaviour change** (stay on Record + live status + "See more details", replacing the
+  auto-navigate-to-History). See [Epic C](#epic-c--record-flow-restyle-parts-14-all-done--epic-c-is-complete).
+- **Epic D (next):** the History redesign — search bar, calendar/list toggle, 3-dot per-row menu,
+  new "Delete recording" action, restyled list/detail.
+- Still v2 but not started: auto-generated editable recording titles.
+
+Sections below that predate a given Epic still describe the v1 implementation where that Epic
+hasn't rewritten them — History especially is still all-v1 until Epic D.
 
 **Terminology note:** docs/PROJECT_PLAN.md's old "v2" scope (criteria-based scoring, progress
 charts, streak calendar, re-practice mode, dynamic question pool, additional modes) has been
@@ -386,11 +391,21 @@ for this pass): `#e5484d` (error/delete red — `settings.tsx`, `index.tsx` reco
 `recording-status.ts`), `#f5a623` (favorite star, `favorite-star.tsx`), and the Expo-template
 splash blues in `animated-icon.tsx` (`#208AEF`, `#3C9FFE`/`#0274DF`).
 
-### Epic C — Record-flow restyle (Parts 1–3 done, Part 4 = record button + stay-on-screen)
+### Epic C — Record-flow restyle (Parts 1–4 all done — Epic C is complete)
 
-Epic C restyles the **Record flow** and is **multi-part**. Parts 1–3 (below) are done: the
-mode-select screen, the shift animation, and the folded-in question/custom-question area. Part 4 —
-the record-button restyle and the post-upload "stay on Record" behaviour — is the last part.
+Epic C restyled the **Record flow**, in four parts, **all now done**:
+1. **Part 1** — the mode-select screen restyle (pills, tagline, palette).
+2. **Part 2** — the mode-select → question **shift animation**.
+3. **Part 3** — the folded-in **`QuestionArea`** (pool / custom-input / confirmed-custom) + the
+   interim record disc.
+4. **Part 4** — the record disc's final placement (Part 3 already shipped its visual), and — the
+   substantial half — the **post-recording behaviour change**: after upload the Record screen
+   **stays put** and shows live processing status inline, with "See more details" → the recording's
+   History detail once done, and inline "Regenerate report" on failure. Full behaviour in
+   [Mode selection](#mode-selection)'s "Post-recording flow" bullet.
+
+**Epic D (History redesign) is next** — search bar, calendar/list toggle, 3-dot per-row menu, the
+new "Delete recording" action, restyled list/detail. See [Scope](#scope).
 
 - **Part 1 (done):** the mode-select screen's visual restyle only — flat `#FFFAF6` background
   (already there via the Epic B `Colors` repoint), Noto Sans typography for the new static
@@ -712,15 +727,40 @@ shell around it.
   - `'record'`: shown after selecting **Miscellaneous** (straight there, no question step — see
     below), or after "Start recording" from `QuestionArea`. The record/playback/upload UI. Renders
     a banner above the record button — "{Interview|Storytelling} question" plus
-    `customQuestion ?? poolQuestion?.text` — whenever there's a question. A "‹ Change mode" link is
-    shown alongside the record button.
+    `customQuestion ?? poolQuestion?.text` — whenever there's a question.
+- **Post-recording flow (v2 Epic C Part 4 — the behaviour half; the record-button restyle was
+  Part 3's disc):** after "Keep & upload" succeeds the Record screen **stays put** (the old
+  `router.navigate('/history')` is gone). `RecordingPlayback`'s `'done'` state renders
+  **`ProcessingStatus`**, which polls this one recording and shows it move **pending → processing →
+  done/failed** live:
+  - *pending/processing:* a status badge (History's `getStatusPresentation` colours, restyled to a
+    v2 pill) + a spinner.
+  - *done:* the badge + a **"See more details ›"** link → `router.push('/history/[id]')` for
+    **this** recording (not the History tab in general).
+  - *failed:* the badge + **"Regenerate report"** inline — the same `regenerateReport()` endpoint/
+    optimistic-`processing` flow History uses (Phase 3 Step 2), just without leaving the screen.
+  - If `POST /recordings/{id}/process` itself fails, `ProcessingStatus` shows "Couldn't start
+    processing" + a retry (`kickProcessing`) rather than the status silently sticking at "Pending".
+  - **Polling reuse:** `ProcessingStatus` *replicates* (does not extract a shared hook — to keep
+    the History files literally untouched) the History **detail screen's** single-recording poll
+    (Phase 3 Step 2), which is itself Step 7's list-polling shape applied to one row: 1.5s
+    interval, `TERMINAL_STATUSES` stop, `requestSeqRef` out-of-order guard, `useFocusEffect`-gated,
+    silent in-place updates. The only divergence is `fetchRecordingById(id)` instead of
+    `fetchRecordings()` — the Record screen only ever tracks the single just-uploaded recording.
+  - **Reset:** two buttons in the `'done'` state — **"Record another"** (`resetRecordingState`,
+    keeps the same mode/question, fresh take) and **"‹ Change mode"** (`handleBackToModeSelect`,
+    full reset to mode-select). And a **reset-on-return**: a `useFocusEffect` on the Record screen
+    flags itself on *blur while `uploadState === 'done'`*, and on the next *focus* runs
+    `handleBackToModeSelect()` — so leaving after a finished recording (tap "See more details",
+    switch tabs) and coming back lands on a clean mode-select, no stale status. Leaving *mid-take*
+    (recorded-not-uploaded) is still preserved. `startModeSelection` also calls
+    `resetRecordingState()` up front.
 - **Interview/Story reach recording for real** — `selectedMode` plus `poolQuestion` /
   `customQuestion` (component state in `index.tsx`) carry through to `'record'` and into
   `handleKeepAndUpload`'s `uploadRecording()` call as `mode` + `customQuestion ?? poolQuestion?.text
   ?? null` — see [Question selection](#question-selection) for the exclusion logic and
-  [Upload](#upload) for the insert. Tapping "Discard & re-record" / "Record another" does **not**
-  re-run selection or clear those — re-recording after a discard reuses the same question. A fresh
-  pick needs "‹ Change mode".
+  [Upload](#upload) for the insert. "Discard & re-record" / "Record another" reuse the same
+  question; a fresh pick needs "‹ Change mode".
 - **Cap check** — runs once in `handleSelectMode` on the **first** mode tap. Switching mode
   afterwards skips the re-check (recording count can't have changed). See
   [Recording cap](#recording-cap).
@@ -949,12 +989,11 @@ this logic was rebuilt in v2 Epic C Part 3 (`QuestionArea`) — see below and
 - Loading (first fetch only, not on subsequent focus refetches — those update the list silently
   once data arrives so switching tabs doesn't re-blank it), empty, and fetch-error (with a Retry
   action, and without clearing any previously-loaded list) states are all handled explicitly.
-- Upload → History handoff: on a successful upload, the Home tab (`src/app/(tabs)/index.tsx`)
-  calls `router.navigate('/history')` right after setting its own "done" state, so the user lands
-  on the updated list immediately instead of stopping at a static confirmation. The Home tab's own
-  "done" confirmation state is intentionally left in place (not reset) underneath — tabbing back
-  to Home still shows "Uploaded" + the recording id + "Record another", rather than silently
-  resetting a screen the user didn't touch.
+- Upload → History handoff: **removed in v2 Epic C Part 4.** The Record tab used to
+  `router.navigate('/history')` right after a successful upload; now it **stays on the Record
+  screen** and shows live processing status inline (`ProcessingStatus` component), with a "See
+  more details" link to *this* recording's detail screen once done. See
+  [Mode selection](#mode-selection)'s "Post-recording flow" bullet for the full behaviour.
 - **Detail screen (Phase 3 Step 1, done):** tapping a row pushes `src/app/(tabs)/history/[id].tsx`
   (`router.push({ pathname: '/history/[id]', params: { id } })` from `RecordingListItem`), a
   dynamic Expo Router route sitting alongside `index.tsx` in the same `history/` directory —
@@ -1504,15 +1543,18 @@ would have covered on its own):
   bump the default in `app/config.py` (or set `GEMINI_MODEL` in `.env`/Render) — a one-line
   config change, no code edit. If you're reading this later and wondering why the model choice
   doesn't match some older note that said `gemini-2.5-flash`: that's why.
-- **Frontend polling (Step 7, done):** the History screen (`src/app/(tabs)/history.tsx`) refetches
-  on a 1.5s interval whenever any visible row is `pending`/`processing`, so status visibly moves to
-  `done`/`failed` without a manual pull-to-refresh — see [History](#history) for the full behavior
-  (out-of-order-response guard, per-row stop condition, focus-gating) and why a flat interval
-  (rather than backoff) was kept. Still a plain interval, not SSE/WebSockets/real-time — that
-  tradeoff was reconsidered for this step and kept: the pipeline finishes in seconds to tens of
-  seconds, this app has a handful of test users, and a push mechanism would add real infra
-  (a persistent connection, or a DB trigger/webhook to invalidate on) for a savings that isn't
-  needed at this scale.
+- **Frontend polling (Step 7, done):** the History list (`src/app/(tabs)/history/index.tsx`)
+  refetches on a 1.5s interval whenever any visible row is `pending`/`processing`, so status
+  visibly moves to `done`/`failed` without a manual pull-to-refresh — see [History](#history) for
+  the full behavior (out-of-order-response guard, per-row stop condition, focus-gating) and why a
+  flat interval (rather than backoff) was kept. Still a plain interval, not SSE/WebSockets/
+  real-time — the pipeline finishes in seconds to tens of seconds, this app has a handful of test
+  users, and a push mechanism would add real infra for a savings that isn't needed at this scale.
+  - The History **detail screen** (`history/[id].tsx`, Phase 3 Step 2) and — as of v2 Epic C Part
+    4 — the **Record screen** (`ProcessingStatus` in `index.tsx`) each have the same-shaped poll
+    for a *single* recording (`fetchRecordingById` instead of `fetchRecordings`). The Record
+    screen's is a deliberate replication of the detail screen's, not a shared hook — see
+    [Mode selection](#mode-selection)'s "Post-recording flow" bullet.
 - **Regenerate endpoint (Phase 3 Step 2, done):** `POST /recordings/{recording_id}/regenerate`
   sits alongside `/process` in the same router, sharing its auth/ownership check but requiring
   `status == 'failed'` instead of `'pending'`, and scheduling the identical
