@@ -4,3 +4,7 @@ pydantic-settings==2.15.0
 supabase==2.31.0
 google-genai==2.19.0
 mutagen==1.48.1
+# IANA timezone database for zoneinfo — used by app/services/daily_questions.py
+# (v4) for the US Eastern / DST-aware daily-question boundary. Not guaranteed
+# present on Windows (local dev) or a slim Linux container, so pinned explicitly.
+tzdata==2026.3

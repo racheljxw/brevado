@@ -2,7 +2,7 @@ import logging
 
 from fastapi import FastAPI
 
-from app.routers import health, recordings
+from app.routers import health, questions, recordings
 
 # Root logging config for the whole app — INFO and above show up wherever uvicorn's
 # own output goes. Added in Phase 2 Step 3 so the app/services/processing.py logging
@@ -14,3 +14,4 @@ app = FastAPI(title="Brevado API")
 
 app.include_router(health.router)
 app.include_router(recordings.router)
+app.include_router(questions.router)
