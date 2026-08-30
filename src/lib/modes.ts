@@ -4,9 +4,8 @@ import type { RecordingMode } from './recordings';
 
 // v2 Epic C Part 3 — one source of truth for how each recording mode is
 // shown to the user. "Storytelling" (not "Story") matches the design
-// screenshots and the mode-select pill label. Internal values
-// (`mode: 'story'` in the DB / schema, `QuestionMode` in
-// src/lib/questions.ts) are unchanged — this is display-string only.
+// screenshots and the mode-select pill label. The internal DB/schema value
+// (`mode: 'story'`) is unchanged — this is display-string only.
 export const MODE_LABELS: Record<RecordingMode, string> = {
   interview: 'Interview',
   story: 'Storytelling',

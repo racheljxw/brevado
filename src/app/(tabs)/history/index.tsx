@@ -27,7 +27,14 @@ import { useAuth } from '@/lib/auth-context';
 import { dayKeyToDate, formatRecordedAt, localDayKey as dayKey } from '@/lib/format-time';
 import { formatMode, modePillColors } from '@/lib/modes';
 import { TERMINAL_STATUSES } from '@/lib/recording-status';
-import { fetchRecordings, setFavorite, shareRecordingAudio, type RecordingRow } from '@/lib/recordings';
+import {
+  canRePracticeRecording,
+  fetchRecordings,
+  rePracticeNavParams,
+  setFavorite,
+  shareRecordingAudio,
+  type RecordingRow,
+} from '@/lib/recordings';
 
 // Phase 3 Step 1: rows are now tappable, pushing `history/[id]` for the full
 // detail view (transcript/feedback/metrics/playback). `onPress` is threaded
@@ -80,9 +87,11 @@ function RecordingListItem({
   onDownloadAudio,
   downloadingAudio,
   downloadAudioError,
+  onRePractice,
 }: {
   recording: RecordingRow;
   onPress: () => void;
+  onRePractice: () => void;
   onToggleFavorite: () => void;
   favoritePending: boolean;
   onRegenerate: () => void;
@@ -101,7 +110,8 @@ function RecordingListItem({
   const modePill = modePillColors(recording.mode);
 
   function handleMenuAction(action: RecordingMenuAction) {
-    if (action === 'download') onDownloadAudio();
+    if (action === 're-practice') onRePractice();
+    else if (action === 'download') onDownloadAudio();
     else if (action === 'delete-audio') onDeleteAudio();
     else if (action === 'delete-recording') onDeleteRecording();
     else if (action === 'regenerate') onRegenerate();
@@ -124,6 +134,7 @@ function RecordingListItem({
           </ThemedText>
           <FavoriteStar favorite={recording.favorite} onToggle={onToggleFavorite} disabled={favoritePending} size={20} />
           <RecordingActionsMenu
+            canRePractice={canRePracticeRecording(recording)}
             canDownload={!recording.audio_deleted && !!recording.audio_path}
             canDeleteAudio={!recording.audio_deleted}
             canRegenerate={recording.status === 'failed'}
@@ -775,6 +786,16 @@ export default function HistoryScreen() {
     }
   }
 
+  // v4 Epic I — "Re-practice this question" navigates to the Record tab
+  // (`src/app/(tabs)/index.tsx`) carrying the original recording's id + mode +
+  // question, which that screen consumes into a read-only "re-practice" state
+  // (no mode-select, no question toggle) and, on upload, writes back as the
+  // new recording's `re_practice_of`. A route-param handoff rather than shared
+  // state because the Record screen is a sibling tab, already param-capable.
+  function handleRePractice(recording: RecordingRow) {
+    router.navigate({ pathname: '/', params: rePracticeNavParams(recording) });
+  }
+
   const query = search.trim().toLowerCase();
   const filteredRecordings = useMemo(() => {
     if (!recordings) return [];
@@ -901,6 +922,7 @@ export default function HistoryScreen() {
                         onDownloadAudio={() => handleDownloadAudio(item.id, item.audio_path)}
                         downloadingAudio={downloadingAudioIds.has(item.id)}
                         downloadAudioError={downloadAudioErrors[item.id]}
+                        onRePractice={() => handleRePractice(item)}
                       />
                     )}
                     contentContainerStyle={styles.listContent}

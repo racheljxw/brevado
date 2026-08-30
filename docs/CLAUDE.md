@@ -110,9 +110,29 @@ fully v2 (Epic D, all 7 parts).
 the one standing caveat, shared with every Phase 3/4 and Epic C/D step). Three 0–100 per-recording
 scores (Impact / Clarity / Structure) come from the *existing* Gemini feedback call (Epic F), and
 the Streaks tab — home screen + three per-metric detail screens — aggregates them entirely
-client-side (Epic G). See [v3 scope](#v3-scope) and the [v3 wrap-up](#v3-wrap-up) below. **v4** —
-re-practice mode, the dynamic question pool, additional modes — was split back out of v3 and is
-**deliberately not part of this phase**; don't start building it.
+client-side (Epic G). See [v3 scope](#v3-scope) and the [v3 wrap-up](#v3-wrap-up) below.
+
+**v4 (Phase 7) — the global daily-question system + re-practice mode — is now the current
+phase.** Scope summary in [v4 scope](#v4-scope) below. **Epic H is complete — Step 1 (backend)
+and Step 2 (frontend wiring). Epic I (re-practice mode) is complete.**
+- **Step 1 (done):** the schema (migration `0008_daily_questions.sql` + seed
+  `0009_seed_question_pool.sql`), the lazy daily-question assignment logic
+  (`backend/app/services/daily_questions.py`), the `GET /questions/daily` endpoint, and unit
+  tests.
+- **Step 2 (done):** the Record flow now calls `GET /questions/daily?mode=interview|story`
+  (`fetchDailyQuestion` in `src/lib/api.ts`) instead of the old client-side pool pick; a
+  pool-picked recording stores both `question` text and the new `question_id` FK, a
+  custom-typed one stores only text (`question_id` null), miscellaneous unchanged. The old
+  path — `src/lib/question-selection.ts` (`pickQuestionForMode`) and `src/lib/questions.ts`
+  (the static 25+25 pool) — is **deleted**. Also fixed the Step 1 flagged FK gap:
+  `recordings.re_practice_of` now has `on delete set null` (migration
+  `0010_re_practice_of_on_delete.sql`). Type-check / lint clean; on-device pass is the one
+  standing caveat (shared with every Phase 3/4 and Epic C/D/F/G step).
+
+`recordings.re_practice_of` **is now set** — by a re-practice recording's upload (**Epic I**,
+done). Full detail in [Re-practice mode](#re-practice-mode); grouping/accordion History UI over
+those links is **Epic J** (next). Additional modes beyond interview/story stay **out of scope**
+for v4.
 
 **Terminology note:** docs/PROJECT_PLAN.md's original "v2" scope was renamed **v3** to free up
 "v2" for the UI-redesign release. That v3 list has since been **narrowed**: criteria-based scoring
@@ -636,6 +656,275 @@ Part 2 home screen, Part 3 detail screens) are all built. Type-check, `expo lint
 **Nothing found that blocks calling v3 complete** — the shakiness above is "unverified on device",
 not "known-broken".
 
+## v4 scope
+
+v4 (Phase 7) is **two features** — a global daily-question system and re-practice mode — plus a
+small client-side History-filters addition. Full plan detail in docs/PROJECT_PLAN.md Sections 2
+and 5. **Epic H** (the global daily-question system) is **complete** — Step 1 (backend) + Step 2
+(frontend wiring). **Epic I** (re-practice mode) is **complete** — see
+[Re-practice mode](#re-practice-mode). **Epic J** (the grouped/accordion History view over the
+`re_practice_of` links) is next. Detailed step writeups land in their own sections below as each
+is built, same as every prior epic; this is the reference summary.
+
+**Global daily-question system (replaces v1's per-user random-pick pool).**
+- Interview and Story each get exactly **one "question of the day," identical for every user**.
+  Miscellaneous is unchanged (free topic, no question).
+- **Lazy assignment, no cron.** The day's question for a mode is computed on the first request
+  that needs it and stored in a new `daily_questions` table; every later request that day reads
+  the stored row. No scheduled/background job — same "no cron" philosophy as the rest of the
+  backend (see [Background processing](#background-processing)).
+- **Day boundary = US Eastern (`America/New_York`), DST-aware** — real IANA rules via Python
+  `zoneinfo`, *not* a fixed UTC-5 offset. Colloquially "EST"; implemented as true US Eastern
+  with spring/fall transitions. **This is an interpretation of "daily" and is flagged for the
+  human to confirm** — it is the one product decision in Epic H Step 1 that isn't
+  mechanically forced.
+- **Structural no-repeat guarantee.** A pool question is **retired the instant it's assigned**
+  as a daily question (`questions.used_date` set to that day) — never assigned again, for
+  anyone. This is why v4 needs **no per-user "recently used" / exclusion tracking at all**:
+  the old `pickQuestionForMode` immediately-previous-question exclusion has nothing to
+  replace it because the situation it guarded against can no longer occur.
+- **Synchronous batch top-up on exhaustion.** When a mode's `used_date IS NULL` pool hits
+  zero, the request that triggered it generates **15 new questions** for that mode via one
+  Gemini call, **synchronously** (the user is waiting), inserts them, and assigns from the
+  new batch. Rare (≤ once per ~15 days per mode); adds one Gemini call's latency to that one
+  request. Deliberately *not* the old proactive/event-driven `BackgroundTasks` top-up idea —
+  the user needs an actual question back now.
+
+**Re-practice mode (Epic I — done).** A new recording made against an already-answered question
+carries a `recordings.re_practice_of` self-reference to the original recording. **That reference
+is the only attempt-grouping mechanism History needs** — because a freshly-assigned pool question
+is retired on assignment, the *only* way two recordings share a `question_id` is a deliberate
+re-practice, so following the `re_practice_of` chain to its root fully groups the attempts
+(no need to also group by `question_id`). Epic I built the entry point (a "Re-practice this
+question" item in History's 3-dot menu → the Record screen in a read-only re-practice state) and
+the write (`re_practice_of` set on upload). Full detail in [Re-practice mode](#re-practice-mode).
+The **grouped/accordion** History view over these links is **Epic J** — until it lands,
+re-practiced recordings just show as ordinary separate cards in History (functionally correct,
+not yet visually grouped).
+
+**Favorite / per-attempt actions in grouped History cards.** With re-practice groups, the
+3-dot menu splits: **favorite becomes a per-question-group concept** (the group card's star
+reads/writes the chain root's `favorite` flag), while **download audio / delete audio / delete
+recording / regenerate report all become per-*attempt* actions** inside each accordion panel's
+own 3-dot menu. This is also the first real consumer of the `favorite` flag, which has had no
+behavior attached to it anywhere until now.
+
+**History filters (small addition).** A **mode filter** and a **favorites-only toggle**, both
+client-side over the already-loaded list (same approach as v2's search / calendar — see
+[History](#history)), alongside the existing search bar.
+
+**Not in v4 — do not build:** additional modes beyond interview/story.
+
+**Old path removed (Epic H Step 2, done):** `src/lib/question-selection.ts`'s
+`pickQuestionForMode` + its exclusion logic, and the static `src/lib/questions.ts` pool, were
+**replaced** by the server-side path (`GET /questions/daily` via `fetchDailyQuestion` in
+`src/lib/api.ts`) and **deleted**. See [Daily questions](#daily-questions).
+
+## Daily questions
+
+v4 Epic H — the global daily-question system. **Step 1** (backend: schema + seed + assignment
+logic + endpoint + tests) and **Step 2** (frontend wiring + old-path removal + the FK fix) are
+both done. **Epic H is complete.**
+
+**Step 2 (frontend wiring):**
+- **The Record flow now reads the endpoint.** `loadQuestion(mode)` in `src/app/(tabs)/index.tsx`
+  calls **`fetchDailyQuestion(mode)`** (`src/lib/api.ts` — bearer-token `GET
+  /questions/daily?mode=…`, returns `{ id, mode, text }`) instead of the old client-side
+  `pickQuestionForMode`. `QuestionArea`'s pool state renders `poolQuestion.text`; its
+  loading / error+"Try again" states now point at the endpoint (a cold Render free-tier wake
+  can make the first fetch slow — the existing spinner covers it, a `502` shows the message +
+  retry). The **custom-question path is unchanged** — "Ask my own question instead" / the input
+  box / confirmed-custom all work exactly as in Epic C Part 3.
+- **Recording creation stores `question_id`.** `uploadRecording()` (`src/lib/recordings.ts`)
+  takes a new `questionId?: string | null` and inserts it as `recordings.question_id`.
+  `handleKeepAndUpload` passes `poolQuestion.id` **only** when the question came from the pool
+  (not custom-typed, not miscellaneous) — so a pool recording has both `question` text and a
+  matching `question_id`, a custom recording has `question` text + `question_id` null, and
+  miscellaneous has both null. (`re_practice_of` is set by Epic I — see
+  [Re-practice mode](#re-practice-mode); it also threads through `uploadRecording()`.)
+- **Old path deleted:** `src/lib/question-selection.ts` (`pickQuestionForMode` + its
+  immediately-previous-question exclusion) and `src/lib/questions.ts` (the static 25 + 25
+  pool) are **gone**. Their content lives on only in `0009_seed_question_pool.sql` (the DB
+  seed) and the backend generator. `RecordingMode` (`src/lib/recordings.ts`) is now a
+  self-contained `'interview' | 'story' | 'miscellaneous'` literal (was `QuestionMode |
+  'miscellaneous'`); the `QuestionMode` type is gone with `questions.ts`.
+
+**FK-on-delete fix (was flagged in Step 1):** `recordings.re_practice_of`'s foreign key had no
+`on delete` action. Migration **`0010_re_practice_of_on_delete.sql`** drops and re-adds it with
+**`on delete set null`** — deleting a recording never cascade-deletes its re-practice attempts
+and is never blocked by them; an attempt just loses the link and becomes standalone if its
+direct parent is removed. The migration looks the constraint name up from `pg_constraint`
+rather than assuming the `recordings_re_practice_of_fkey` convention (though that is the name),
+then re-adds it under that canonical name. Run it manually in the Supabase SQL editor after
+`0008`/`0009`.
+
+**Verification (Step 2):** `npx tsc --noEmit` + `eslint` clean. No on-device pass yet — the
+hand-off test plan: select Interview → confirm today's assigned question shows (matches
+`daily_questions` for today/interview in Supabase) → record + upload → the `recordings` row has
+both `question` text and a matching `question_id`. Repeat for Story. Custom question → `question`
+text set, `question_id` NULL. Miscellaneous → both NULL, unaffected. Reopen the app / use a
+second account → the **same** daily question appears, not a new random one.
+
+**Schema (migrations `0008_daily_questions.sql` + `0009_seed_question_pool.sql` + Step 2's
+`0010_re_practice_of_on_delete.sql`, run manually in the Supabase SQL editor like `0001`–`0007`):**
+- `questions.used_date date` (nullable, no default) — `NULL` = unused / available to be
+  assigned; a date = the day this question was assigned as a daily question, which retires it
+  permanently. Also `questions` now actually gets **rows** for the first time: `0009` seeds the
+  25 interview + 25 story prompts (the former `src/lib/questions.ts` static pool — now the
+  only place that text lives, since Step 2 deleted that file) as the starting pool, all
+  `used_date = NULL`. `0009` is idempotent (guarded by
+  `where not exists (select 1 from public.questions)`), so a double-run won't duplicate.
+- `daily_questions (date date, mode text check in ('interview','story'), question_id uuid
+  references questions(id), primary key (date, mode))` — the one assigned question per mode
+  per day. RLS on, open read (`using (true)`), writes via the service-role key only (same as
+  `questions`).
+- `recordings.question_id uuid references questions(id)` — which pool question a recording
+  answered. `NULL` for custom topics, miscellaneous, and every pre-v4 row.
+- `recordings.re_practice_of uuid references recordings(id)` — self-FK, set when a recording
+  is a re-practice of an earlier one (**written by `uploadRecording()` as of Epic I** — see
+  [Re-practice mode](#re-practice-mode); the column landed in `0008`). Step 2's
+  `0010_re_practice_of_on_delete.sql` gave it **`on delete set null`** (see the "FK-on-delete
+  fix" note below) — deleting a recording with re-practice children no longer FK-violates the
+  `DELETE /recordings/{id}` endpoint ([Delete recording](#delete-recording)); the children just
+  lose the link.
+- Indexes: `questions (mode) where used_date is null` (the candidate lookup),
+  `recordings (re_practice_of)` (grouping queries later).
+
+**Assignment algorithm — `get_or_assign_daily_question(mode)` in
+`backend/app/services/daily_questions.py`:**
+1. Compute "today" as `datetime.now(UTC).astimezone(ZoneInfo("America/New_York")).date()`
+   (`eastern_today()`, a module-level helper; takes an optional `now` for tests).
+2. **Fast path:** `select question_id from daily_questions where date = today and mode = ?` —
+   if a row exists, resolve + return that question, no further work.
+3. Otherwise pick a **random** `questions` row for the mode with `used_date is null`.
+4. **Exhaustion:** if there are none, call Gemini **synchronously** for a batch of
+   `QUESTION_BATCH_SIZE` (15) new questions (`generate_question_batch` — structured-JSON
+   response, `{"questions": [string, ...]}` schema, prompted with the existing pool texts to
+   avoid near-duplicates), dedupe them against the existing pool + each other, `insert` them
+   into `questions` (`used_date` null), and pick a random one of the new rows. A batch that
+   comes back empty/unusable raises `DailyQuestionError` → the endpoint 502s.
+5. **Concurrency guard:** `insert into daily_questions (date, mode, question_id) values (...)
+   on conflict (date, mode) do nothing returning question_id` (via supabase-py
+   `.upsert(..., on_conflict="date,mode", ignore_duplicates=True)`).
+   - Insert **returned a row** → we won the race → also `update questions set used_date = today
+     where id = <candidate>`, then return the candidate.
+   - Insert **returned nothing** → a concurrent request already assigned today's question →
+     re-read the `daily_questions` row and return **that** question; our candidate is left
+     untouched (`used_date` still null), available for a future day.
+6. Return the resolved `Question` (`{id, mode, text}`).
+
+`mode` must be `'interview'` or `'story'` (`DAILY_QUESTION_MODES`); anything else (incl.
+`'miscellaneous'`) raises `DailyQuestionError`.
+
+**Why this concurrency shape:** the `primary key (date, mode)` + `on conflict do nothing` makes
+the *database* the single arbiter of who assigns a given day's question — two near-simultaneous
+first-of-the-day requests can both pick a candidate, but only one insert succeeds, only that
+one marks its candidate `used_date`, and both return the same resolved question. The loser's
+candidate is never marked, so it stays available. (A simultaneous *exhaustion* race is
+possible-but-vanishingly-rare: both requests generate a batch, both insert 15, one wins the
+assignment, the other's 15 simply stay unused for future days — wasteful, not incorrect.)
+
+**Endpoint:** `GET /questions/daily?mode=interview` (`backend/app/routers/questions.py`) —
+standard bearer-token auth (`Depends(get_current_user_id)`), **no ownership check** (the data
+isn't user-specific). Returns `{"id", "mode", "text"}`. `400` for a bad/missing `mode`, `502`
+(`DailyQuestionError`) if generation was needed and failed. Registered in `app/main.py`.
+
+**Tests** (`backend/tests/test_daily_questions.py`, pytest — same isolation discipline as
+`test_processing.py`: a `FakeStore` in-memory implementation of the tiny store protocol
+`get_or_assign_daily_question` depends on, so no live Supabase/Gemini): `eastern_today()`
+DST-awareness (same UTC wall-clock time lands on different local dates in January vs. July;
+plus a spring-forward same-day check), the already-assigned fast path (never calls the
+generator), pick-from-pool + `used_date` marking, exhaustion → batch generation → assignment,
+an empty-generation → `DailyQuestionError`, the unsupported-mode guard, and the concurrency
+guard (a `RacingFakeStore` where a competitor wins the `try_assign`: our candidate is **not**
+marked used, and both calls resolve to the competitor's question).
+
+**Dependency:** `tzdata` added to `backend/requirements.txt` — `zoneinfo` needs the IANA
+database, which isn't guaranteed present on Windows (local dev) or a slim Linux container.
+Re-run `pip install -r requirements.txt -r requirements-dev.txt` from `backend/` before
+running the tests.
+
+**Verification:** `pytest` from `backend/` (the new file + the existing suite). **Not yet
+exercised against the live Supabase project or a live Gemini call** — that's the manual pass
+in the Step 1 hand-off test plan (run the migrations, hit `GET /questions/daily?mode=interview`
+twice, confirm one `daily_questions` row, same question both times, exactly one `questions`
+row with `used_date` set).
+
+## Re-practice mode
+
+v4 Epic I — lets a user re-record their answer to a question they've already practised. The new
+recording stores `recordings.re_practice_of` pointing at the original; that link is the whole
+feature at the data level. **No migration** — the column has existed since
+`0008_daily_questions.sql` and got `on delete set null` in `0010_re_practice_of_on_delete.sql`
+(Epic H). **Type-check + `eslint` clean; no on-device pass yet** — same standing caveat as every
+Phase 3/4 and Epic C/D/F/G step.
+
+The **grouped/accordion History view** that makes re-practice attempts *visible as a group* is
+**Epic J**, not this. Until Epic J lands, a re-practiced recording is just another ordinary card
+in History — functionally correct (the `re_practice_of` link is written), not yet visually
+grouped.
+
+**Entry point — a 3-dot menu item.** `RecordingActionsMenu`
+(`src/components/recording-actions-menu.tsx`) gained a **"Re-practice this question"** action
+(`RecordingMenuAction` `'re-practice'`, listed first, `arrow.counterclockwise` icon, not
+destructive, no confirmation). It's shown via a new `canRePractice` prop, computed by
+**`canRePracticeRecording()`** (`src/lib/recordings.ts`): the recording's `mode` is `interview`
+or `story` **and** it has a question (a pool `question_id` **or** custom `question` text). So it
+**never appears on Miscellaneous**, and never on an interview/story row that somehow has no
+question. Wired identically on the **History list card** (`history/index.tsx` →
+`RecordingListItem`) and the **detail screen** (`history/[id].tsx` header menu) — same
+`canRePracticeRecording` guard, same handler shape, consistent with every other menu action.
+
+To make `question_id` available for the guard and the handoff, **`fetchRecordings()` and
+`fetchRecordingById()` both now select `question_id`** (added to `RecordingRow` /
+`RecordingDetail`) — the History screens didn't read it before.
+
+**The handoff — route params into the shared Record screen.** Tapping the menu item calls
+`router.navigate({ pathname: '/', params: rePracticeNavParams(recording) })`. **`rePracticeNavParams()`**
+(`src/lib/recordings.ts`, shared by list + detail so they can't drift) returns
+`{ rpSource, rpMode, rpQuestion, rpQuestionId, rpTs }` — the original recording's id, mode,
+question text, pool `question_id` (`''` when none), and a `Date.now()` **nonce** (`rpTs`).
+
+The Record screen (`src/app/(tabs)/index.tsx`) is the same component three flows already share
+(mode-select→pool-pick, mode-select→custom, and now re-practice). It reads the params with
+`useLocalSearchParams` and a `useEffect` **consumes** them: it dedupes on `rpTs` (a ref —
+re-focusing the tab later doesn't re-fire; re-practising the same recording twice *does*, because
+`rpTs` changes), then clears the params via `router.setParams` as a second guard, then calls
+`enterRePractice(ctx)`. `enterRePractice`:
+- runs the **same recording-cap check** `handleSelectMode` does (`getActiveRecordingCount` vs
+  `MAX_RECORDINGS_PER_USER`) — **no exemption for re-practice**. On a cap hit it drops to
+  `flowScreen: 'mode-select'` with `blockedByCap` true, so the user sees the existing
+  `CapBlockedCard`. Fails open on a check error, same as `handleSelectMode` (the Postgres trigger
+  `0004` is the real backstop).
+- otherwise sets a new **`rePractice` state** (`RePracticeContext` = `{ sourceId, mode, question,
+  questionId }`), `selectedMode`, and `flowScreen: 'record'` — **straight to the record screen,
+  no mode-select animation, no `QuestionArea`, no pool fetch, no custom-input toggle**. The
+  question shows **read-only** in the record screen's existing question banner (its label reads
+  "Re-practising this {Interview|Storytelling} question").
+- The "‹ Change mode" back link still works as an escape hatch — `handleBackToModeSelect` now
+  also clears `rePractice`.
+
+**Writing `re_practice_of`.** `handleKeepAndUpload` branches on `rePractice`: when set, `mode` /
+`question` / `questionId` come **verbatim from `rePracticeContext`** (not from
+`poolQuestion`/`customQuestion`, which aren't populated in this flow), and `uploadRecording()` is
+passed a new **`rePracticeOf: rePractice.sourceId`** arg → inserted as `recordings.re_practice_of`.
+It always points at **the exact recording the menu was opened from** — if that recording is
+itself a re-practice of something else, this still points at it directly, not at a deeper
+ancestor. Walking the chain to a root is Epic J's job. A normal (non-re-practice) recording
+passes `rePracticeOf: null` and is unchanged.
+
+**Post-recording behaviour is unchanged** — after upload the screen stays on Record with inline
+`ProcessingStatus` and "See more details" (v2 Epic C Part 4). No re-practice-specific
+post-recording UI; the visible comparison is Epic J.
+
+**Test plan (hand-off, no on-device pass yet):** from an Interview recording's 3-dot menu (list
+*and* detail), tap "Re-practice this question" → land directly on the record screen with the
+exact same question shown read-only (no toggle, no pool load, no custom input) → record + upload
+→ check the new `recordings` row in Supabase: `mode` and `question` match the original,
+`question_id` matches iff the original was a pool pick, and **`re_practice_of` = the original
+recording's id**. Confirm Miscellaneous recordings never show the menu option. Confirm the cap
+still blocks at 30 (the `CapBlockedCard` appears instead of the record screen).
+
 ## Database
 
 Supabase Postgres, no ORM — query via the `supabase-js` client (`src/lib/supabase.ts`) using
@@ -678,15 +967,35 @@ changes as a new numbered migration file rather than editing an applied one.
   action that *does* remove the whole row (+ its audio) — see [Delete recording](#delete-recording).
   That runs through a backend endpoint on the service-role client, so it needs no `recordings`
   DELETE RLS policy (none was added).
-- `questions` — stub only (`id`, `mode`, `prompt_text`, `created_at`), reserved shape for the
-  Phase 4 hardcoded pool and v4's (Phase 7) dynamic pool / re-practice. Not queried anywhere yet.
+- `questions` — the global question pool. `id`, `mode`, `prompt_text`, `created_at`, plus
+  `used_date date` (nullable — v4 Epic H Step 1, migration `0008_daily_questions.sql`; `NULL`
+  = unused/available, a date = the day it was assigned as a daily question, which retires it
+  permanently). **Seeded for the first time in v4** — `0009_seed_question_pool.sql` inserts the
+  25 interview + 25 story prompts (the former `src/lib/questions.ts` pool, now deleted) as the
+  starting pool. Read by the backend's `daily_questions.py` (service-role); the frontend never
+  reads this table directly — it goes through `GET /questions/daily`. Through v1–v3 this table
+  was an unqueried stub.
+- `daily_questions` — v4 Epic H Step 1, migration `0008_daily_questions.sql`. `(date, mode,
+  question_id)` with `primary key (date, mode)` — the one question-of-the-day per mode per day.
+  Written lazily by `get_or_assign_daily_question` (service-role); the PK doubles as the
+  concurrency guard for first-of-the-day assignment. See [Daily questions](#daily-questions).
+- `recordings` also gains (v4 Epic H, migration `0008_daily_questions.sql`):
+  `question_id uuid references questions(id)` (which pool question this recording answered —
+  `NULL` for custom topics / miscellaneous / every pre-v4 row; **written by `uploadRecording()`
+  as of Epic H Step 2** — only for a daily-pool pick) and `re_practice_of uuid references
+  recordings(id) on delete set null` (self-FK — set when a recording re-practices an earlier
+  question; **written by `uploadRecording()` as of Epic I** — see
+  [Re-practice mode](#re-practice-mode); the `on delete set null` was added in migration
+  `0010_re_practice_of_on_delete.sql`, Epic H Step 2, so deleting a parent recording nulls its
+  attempts' link instead of FK-violating).
 
 RLS is **on** for both tables and scoped to `user_id = auth.uid()` on `recordings` (select/insert/
 update only — **still no DELETE policy, deliberately**: the v2 Epic D Part 4 "Delete recording"
 feature deletes rows through a backend endpoint using the service-role client, which bypasses RLS,
 so no client-facing DELETE policy was opened up — 0001's "add one deliberately if a delete feature
-shows up" note is satisfied by routing deletion server-side instead). `questions` is open-read (no
-user-specific data); writes to it go through the service-role key only, bypassing RLS. Storage (`recordings-audio` bucket, private) mirrors this: objects must
+shows up" note is satisfied by routing deletion server-side instead). `questions` and
+`daily_questions` are both open-read (no user-specific data); all writes to them go through the
+service-role key only, bypassing RLS. Storage (`recordings-audio` bucket, private) mirrors this: objects must
 live under a `{user_id}/...` path prefix, enforced by storage RLS policies in
 `0002_storage_bucket.sql`.
 
@@ -1024,10 +1333,15 @@ new "Delete recording" action, restyled list/detail. See [Scope](#scope).
     placeholder box with a "Continue" button here; **Part 3 replaced it** with the real
     `QuestionArea` and its own "Start recording" button (miscellaneous now skips straight to
     `'record'` in `startModeSelection`). Cap check runs once, on the first tap only.
-  - **"‹ Change mode" moved to the header** — because the picked sub-state reads as a detail view,
-    the back affordance sits top-left in the header row, sharing it with the profile icon
-    (`styles.header` is now `flexDirection: 'row'` + `space-between`). It's `FadeIn`/`FadeOut` and
-    only shown while `flowScreen === 'mode-select' && selectedMode`.
+  - **"‹ Change mode" is a header back link** — because the picked sub-state reads as a detail
+    view, the back affordance replaces `AppHeader` with a `HeaderBackLink` in the header row
+    (never an inline body link), exactly as History's detail screen and Settings do. It's
+    `FadeIn`/`FadeOut`. Shown (`showChangeModeHeader` in `index.tsx`) while
+    `flowScreen === 'mode-select' && selectedMode`, **and** on the pre-recording record screen
+    (`flowScreen === 'record' && !recordedUri && !recorderState.isRecording`) — so the header
+    stays a "Change mode" link continuously from picking a mode through to tapping record, then
+    reverts to `AppHeader` once recording starts or a take is captured (v4 Epic I tidy-up; the
+    inline `BackLink` that used to sit at the bottom of the record area is gone).
   - **Not in Part 2:** real question content (→ Part 3, done), the record button restyle and the
     "stay on Record showing processing status" behaviour change (→ Part 4).
   - **Known rough edges:** interrupting the 1s transition mid-flight (tap "‹ Change mode" while the
@@ -1086,7 +1400,7 @@ new "Delete recording" action, restyled list/detail. See [Scope](#scope).
   - **Naming unified:** `"Storytelling"` everywhere user-facing. `MODE_LABELS` moved to
     `src/lib/modes.ts` (`Record<RecordingMode, string>`), plus a `formatMode(string)` helper the
     History screens use (`recording.mode` is typed `string` there). `mode: 'story'` in the
-    DB/schema and `QuestionMode` are unchanged — display-string only.
+    DB/schema is unchanged — display-string only.
 - **Part 4 (next, final part of Epic C):** the record-button restyle and the post-upload
   "stay on Record" behaviour change. After Part 4, Epic C's visual restyle of the Record flow is
   complete.
@@ -1345,10 +1659,11 @@ shell around it.
     switch tabs) and coming back lands on a clean mode-select, no stale status; a fresh pick
     that way is how you change mode after finishing. Leaving *mid-take* (recorded-not-uploaded)
     is still preserved. `startModeSelection` also calls `resetRecordingState()` up front.
-- **Interview/Story reach recording for real** — `selectedMode` plus `poolQuestion` /
-  `customQuestion` (component state in `index.tsx`) carry through to `'record'` and into
-  `handleKeepAndUpload`'s `uploadRecording()` call as `mode` + `customQuestion ?? poolQuestion?.text
-  ?? null` — see [Question selection](#question-selection) for the exclusion logic and
+- **Interview/Story reach recording for real** — `selectedMode` plus `poolQuestion`
+  (a `DailyQuestion` from `GET /questions/daily`) / `customQuestion` (component state in
+  `index.tsx`) carry through to `'record'` and into `handleKeepAndUpload`'s `uploadRecording()`
+  call as `mode` + `question` (`customQuestion ?? poolQuestion?.text ?? null`) + `questionId`
+  (`poolQuestion.id`, only for a pool pick) — see [Question selection](#question-selection) and
   [Upload](#upload) for the insert. "Discard & re-record" / "Record another" reuse the same
   question; a fresh pick needs "‹ Change mode" (available before recording, or by leaving the
   Record tab and returning after a finished take — see the Reset bullet above).
@@ -1358,8 +1673,13 @@ shell around it.
 - **Advancing past mode-select:** `handleSelectMode` → `startModeSelection(mode)`. For
   **miscellaneous** that sets `flowScreen = 'record'` immediately (no animation, no question
   step). For **interview/story** it sets `selectedMode` (driving the shift animation) and fires
-  `loadQuestion(mode)`; `QuestionArea`'s own "Start recording" button is what later sets
-  `flowScreen = 'record'`. (The Part 2 "Continue" hop is gone.)
+  `loadQuestion(mode)` — which as of v4 Epic H Step 2 calls `fetchDailyQuestion(mode)`
+  (`GET /questions/daily`) rather than the deleted client-side `pickQuestionForMode`;
+  `QuestionArea`'s own "Start recording" button is what later sets `flowScreen = 'record'`.
+- **Re-practice entry (v4 Epic I):** a **third** way into `flowScreen = 'record'`, bypassing
+  mode-select entirely. Route params from History's "Re-practice this question" menu item are
+  consumed into `rePractice` state by `enterRePractice` (which runs the same cap check), fixing
+  the mode + question read-only. See [Re-practice mode](#re-practice-mode).
 - **Greeting removed (v2 Epic C Part 1):** the Phase 1 `'mode-select'` header showed a static
   `"Brevado"` title plus a `"Logged in as {email}"` line (the last bit of per-user text left on
   this tab — it was already flagged for Epic B to reconcile). Both are gone. There was never any
@@ -1374,96 +1694,48 @@ shell around it.
   correctly at its current location, and the Epic C Part 1 restyle (tagline/subtitle copy, pill
   shape, cream background, Noto Sans) against the design screenshots. Suggested way to re-verify the cap: the same
   temporarily-lower-`MAX_RECORDINGS_PER_USER`-to-2 trick used to verify Phase 3 Step 3 (see that
-  section's "How this was tested" bullet). See [Question selection](#question-selection)'s own
-  verification note for the Step 3-specific test plan (confirming a real question reaches the DB,
-  and that exclusion/repeat behavior is correct).
+  section's "How this was tested" bullet). See [Daily questions](#daily-questions) for the v4
+  Epic H Step 2 test plan (today's assigned question reaches the DB with a matching
+  `question_id`; the same question shows for a second account/session).
 
 ## Question selection
 
-Phase 4 Step 3 — replaces Step 2's `ModePlaceholder` dead end with real question-selection logic
-for Interview/Storytelling, and threads the result into the database for the first time
-(Miscellaneous still inserts `mode: 'miscellaneous', question: null`, unchanged). The *UI* around
-this logic was rebuilt in v2 Epic C Part 3 (`QuestionArea`) — see below and
+Interview/Storytelling show a question before recording; Miscellaneous has none (inserts
+`mode: 'miscellaneous', question: null`). As of **v4 Epic H Step 2** the pool question comes
+from the **global daily-question endpoint** — the old client-side pick
+(`pickQuestionForMode` / `src/lib/question-selection.ts`) and the static pool
+(`src/lib/questions.ts`) are **deleted**. The *UI* is `QuestionArea` (v2 Epic C Part 3) — see
 [Design system](#design-system).
 
-**Mode naming (v2 Epic C Part 3):** every user-facing label is now **"Storytelling"** (not
-"Story"), matching the design and the mode-select pill. `MODE_LABELS` lives in `src/lib/modes.ts`
-(`Record<RecordingMode, string>`); `formatMode(string)` there is what the History list/detail use
-(their `recording.mode` is typed `string`). The internal `mode: 'story'` value and the
-`QuestionMode` type are **unchanged** — display strings only.
+**Mode naming (v2 Epic C Part 3):** every user-facing label is **"Storytelling"** (not
+"Story"), matching the design and the mode-select pill. `MODE_LABELS` lives in `src/lib/modes.ts`;
+`formatMode(string)` there is what the History list/detail use. The internal `mode: 'story'`
+value is unchanged — display strings only.
 
-- **Lives in `src/lib/question-selection.ts`, a new sibling file to `src/lib/questions.ts` — not
-  added to `questions.ts` itself.** `questions.ts` is Step 1's pure data + lookup module (no
-  Supabase, no async) and its own comments say so explicitly; this file's only job is a Supabase
-  round-trip plus a random pick, so splitting them keeps `questions.ts` exactly what Step 1 said it
-  would stay. The one exported function, `pickQuestionForMode(mode, userId)`, is called from
-  `index.tsx`'s `handleSelectMode`/`loadQuestion` the moment Interview or Story is chosen (see
-  [Mode selection](#mode-selection)).
-- **The logic:** fetch the user's most recent recording in that same mode (`recordings` table,
-  `.eq('user_id', userId).eq('mode', mode).order('created_at', { ascending: false }).limit(1)`),
-  read its `question` column, filter that exact text out of `getQuestionsForMode(mode)`'s full
-  pool, then pick randomly from what's left. No previous recording in this mode (first time ever,
-  or nothing matched) skips straight to picking randomly from the full pool. Per
-  docs/PROJECT_PLAN.md Section 3, only the *immediate* previous question is excluded — repeats are
-  otherwise fine, and there's no broader "recently used" tracking here (explicitly out of scope for
-  v1).
-- **Exclusion is by exact TEXT match, not a stored question id — flagged deliberately, not an
-  oversight.** The schema (`supabase/migrations/0001_initial_schema.sql`) has no `question_id`
-  column; `question` is free text by design, because Step 4's custom-topic input will also write
-  arbitrary user-typed text into that same column, not just curated pool picks — a `question_id`
-  foreign key couldn't represent that case anyway. Exact-text matching has one narrow fragility: if
-  a pool question's wording in `questions.ts` is ever edited later, a previously-stored recording
-  referencing the old wording stops matching, so exclusion silently doesn't fire for that one
-  transition (it degrades to "no exclusion possible," allowing a same-question repeat — not a crash
-  or a wrong pick). That's an accepted tradeoff, not a bug to fix now: pool wording shouldn't churn
-  often post-launch, and the same text-match approach is *required* anyway for the custom-topic
-  case once Step 4 ships (a custom-typed previous question correctly won't match any pool entry,
-  which correctly falls through to "pick from the full pool" — there was never anything to exclude
-  it from). A `question_id` column would only harden the pool-question case and wouldn't help the
-  custom-topic case at all, so it isn't worth adding preemptively.
-- **Fails open, like the recording-cap check:** if the Supabase lookup itself errors (network
-  blip), `pickQuestionForMode` logs a warning and falls back to picking from the full pool rather
-  than blocking question selection over a lookup that couldn't complete — mirrors
-  `getActiveRecordingCount`'s judgment call (see [Recording cap](#recording-cap)). This means the
-  screen's own error/"Try again" state (see [Mode selection](#mode-selection)) is for a rarer
-  failure than the lookup alone — in practice it would only fire if something in
-  `pickQuestionForMode` failed in a way that isn't the network lookup, which shouldn't happen given
-  the pool is always non-empty static data.
-- **Reaching the database:** `index.tsx` keeps the pool pick in `poolQuestion` and any confirmed
-  custom text in `customQuestion` (Epic C Part 3 — these were one conflated `selectedQuestion`
-  before). `handleKeepAndUpload` passes `mode: selectedMode` and `question: customQuestion ??
-  poolQuestion?.text ?? null` into `uploadRecording()` (`src/lib/recordings.ts`). `uploadRecording`
-  just takes `mode`/`question` as parameters and inserts them as-is; it has no selection logic of
-  its own. See [Upload](#upload) and [Mode selection](#mode-selection).
-- **Custom topic input** — Phase 4 Step 4 built it functionally; **v2 Epic C Part 3 restyled it**
-  into the `QuestionArea` component (`src/app/(tabs)/index.tsx`), replacing the old
-  `QuestionSelect`. Three states — pool pick (large quoted text + "Ask my own question instead"),
-  a bordered `Theme`-token input box with an icon submit, and confirmed-custom (quoted text +
-  pencil to re-edit) — see [Design system](#design-system)'s Epic C Part 3 bullet for the visual
-  detail. Validation is unchanged: trim-then-check-non-empty (`submitDraft` in `QuestionArea`), no
-  length limit or content filtering.
-  - **No schema or `uploadRecording()` changes were ever needed** — `uploadRecording()` just
-    inserts whatever `question` string it's given, pool-picked or hand-typed. Part 3 only changed
-    *how* the two are held in state (`poolQuestion` + `customQuestion` instead of one
-    `selectedQuestion`), not the insert path.
-  - **Exclusion on the next recording in that mode still works, confirmed by reading
-    `pickQuestionForMode`, not assumed.** Its lookup reads whatever raw text is in the previous
-    recording's `question` column and filters it out of the pool by exact match (see this file's
-    own top-of-section note on exclusion) — it has no notion of "pool question" vs. "custom
-    question," so a custom-typed question stored today is excluded from tomorrow's suggestion
-    exactly like a pool question would be. In practice this exclusion rarely has a visible effect
-    for a custom question specifically, since custom text won't match a pool entry anyway — but it
-    does mean the *same* custom text won't be immediately re-suggested if a future step ever
-    surfaces past custom questions as suggestions.
-  - **Verification status (Epic C Part 3):** `npx tsc --noEmit` clean, iOS bundle exports clean.
-    Not yet exercised on the physical test iPhone. Test plan: select Interview → confirm the pool
-    question shows as large quoted text with "Ask my own question instead" below; tap it → input
-    box appears, link becomes "‹ Use prompt instead"; type + tap the submit icon → confirmed-custom
-    state with the pencil; tap the pencil → input box pre-filled with your text; "‹ Use prompt
-    instead" from either custom state → back to the pool question. Repeat for Storytelling.
-    Miscellaneous → straight to recording, no question step. Then upload one of each and check the
-    `recordings` rows in Supabase — `question` should be the pool text / the exact custom text /
-    `null` respectively, and the next Interview pick should exclude whatever you last used.
+- **Pool question:** `loadQuestion(mode)` in `src/app/(tabs)/index.tsx` calls
+  **`fetchDailyQuestion(mode)`** (`src/lib/api.ts` → `GET /questions/daily?mode=…`, bearer-token
+  auth). It returns `{ id, mode, text }`; `index.tsx` stores it in `poolQuestion`
+  (type `DailyQuestion`, from `api.ts`). Same for every user that day — assignment,
+  no-repeat, and pool top-up all live server-side (see [Daily questions](#daily-questions)).
+  Loading / error+"Try again" states are `QuestionArea`'s pool-state UI, pointed at this fetch
+  (a `502`, or a slow cold-start on Render's free tier, shows the retry).
+- **Custom question — unchanged.** "Ask my own question instead" → a bordered `Theme`-token
+  input box with an icon submit → confirmed-custom (quoted text + pencil to re-edit). Validation
+  is trim-then-check-non-empty (`submitDraft` in `QuestionArea`), no length limit or content
+  filtering. `poolQuestion` / `customQuestion` are separate parent state.
+- **Reaching the database:** `handleKeepAndUpload` passes to `uploadRecording()`
+  (`src/lib/recordings.ts`):
+  - `mode: selectedMode` (or `'miscellaneous'`).
+  - `question: customQuestion ?? poolQuestion?.text ?? null` — the effective question text
+    (`null` for miscellaneous).
+  - `questionId`: **`poolQuestion.id` only when the question came from the pool** — i.e. not
+    custom-typed and not miscellaneous. `uploadRecording` inserts it as `recordings.question_id`
+    (the `questions` FK). So: pool recording → `question` + `question_id` both set; custom
+    recording → `question` only, `question_id` NULL; miscellaneous → both NULL. `re_practice_of`
+    stays NULL for a normal recording — it's set only on a **re-practice** upload (v4 Epic I,
+    see [Re-practice mode](#re-practice-mode)).
+- **Verification (Epic H Step 2):** `npx tsc --noEmit` + `eslint` clean. On-device test plan in
+  [Daily questions](#daily-questions).
 
 ## History
 
@@ -1638,6 +1910,10 @@ this logic was rebuilt in v2 Epic C Part 3 (`QuestionArea`) — see below and
   22×22 box (so it lines up with the 20px favorite star beside it). The trigger is a nested
   `Pressable`, so tapping it doesn't fire the row's navigate-to-detail `onPress` (RN responder
   system). Items, in order, each shown conditionally:
+  - **Re-practice this question** (v4 Epic I) — `canRePractice` = interview/story **and** has a
+    question (`canRePracticeRecording()`); never on Miscellaneous. Navigates to the Record screen
+    in a read-only re-practice state; the new recording's `re_practice_of` is set on upload. See
+    [Re-practice mode](#re-practice-mode). No confirmation, not destructive.
   - **Download audio** — `canDownload` = `!audio_deleted && audio_path` set. Calls the existing
     `shareRecordingAudio()` (see [Audio download](#audio-download)).
   - **Delete audio** — `canDeleteAudio` = `!audio_deleted`. The existing Phase 3 Step 5
@@ -1842,9 +2118,11 @@ this logic was rebuilt in v2 Epic C Part 3 (`QuestionArea`) — see below and
     upload-then-insert — see [Upload](#upload)) is handled the same defensive way rather than
     crashing.
   - **3-dot actions menu (v2 Epic D Part 4, done):** the same `RecordingActionsMenu` as the
-    list card, in this screen's header row after the `FavoriteStar`. Carries **Download audio**,
+    list card, in this screen's header row after the `FavoriteStar`. Carries **Re-practice this
+    question** (v4 Epic I — interview/story with a question only), **Download audio**,
     **Delete audio**, **Delete recording**, and (when failed) **Regenerate report** — same
-    conditional visibility, same underlying calls (`shareRecordingAudio()`,
+    conditional visibility, same underlying calls (`rePracticeNavParams()` + `router.navigate`,
+    `shareRecordingAudio()`,
     `deleteRecordingAudio()`, the new `deleteRecording()`, `regenerateReport()`). `AudioSection`
     is now **playback only** — the old inline "Download audio" / "Delete audio" rows below the
     player are gone (as are the `DownloadAudioButton` / `DeleteAudioButton` components). Menu-
@@ -2085,29 +2363,17 @@ before starting Phase 4?
 
 ## Question pool (v1)
 
-Phase 4 Step 1 — the fixed pool of 25 interview questions + 25 story questions
-docs/PROJECT_PLAN.md calls for in v1 (a dynamically-growing, AI-generated pool is v4, Phase 7 —
-see [Scope](#scope)).
+**Removed in v4 Epic H Step 2.** Phase 4 Step 1 shipped a fixed pool of 25 interview + 25 story questions as static in-app data
+(`src/lib/questions.ts`, `type Question = { id, mode, text }`, ids `interview-01`…`story-25`),
+with `getQuestionsForMode` / `getQuestionById` helpers and the `QuestionMode` type. It was the
+runtime pool for v1–v3.
 
-- **Lives in `src/lib/questions.ts` as static in-app data — deliberately NOT the `questions` DB
-  table stub** (see [Database](#database)). A fixed v1 pool doesn't need a DB round-trip on every
-  mode selection, and this matches docs/PROJECT_PLAN.md's "no AI cost, no scheduled jobs required"
-  framing for v1. The `questions` table stays exactly the stub it already was — reserved shape,
-  not queried anywhere yet — until v4's (Phase 7) dynamic pool needs real rows to track "answered"
-  against.
-- **Shape:** `type Question = { id: string; mode: 'interview' | 'story'; text: string }`. Ids
-  follow `interview-01`...`interview-25` / `story-01`...`story-25` — stable and zero-padded
-  specifically so this same data can seed the DB table cleanly in v4 without renumbering
-  anything that by then might be referenced elsewhere (e.g. a user's answered-question history).
-- **Helpers, ready but unused:** `getQuestionsForMode(mode)` (filters the pool by mode) and
-  `getQuestionById(id)`. Note the "exclude the immediately-previous question" selection logic is
-  explicitly **not** here — that's Phase 4 Step 3's job, wherever the recording flow actually picks
-  a question to show. This file stays data + plain lookup only.
-- **Wiring status:** this file was data + plain lookup only when Step 1 landed, with zero
-  user-facing behavior change until later steps wired it up — see [Mode selection](#mode-selection),
-  [Question selection](#question-selection), and the exit checkpoint below for Steps 2-5, all of
-  which are now done. Don't read this bullet as "still unwired" — it describes Step 1's own scope,
-  not the pool's current state.
+**v4 Epic H removed it.** `0009_seed_question_pool.sql` copied those exact 50 prompts into the
+`questions` DB table as the starting global pool (that migration is now the only place the text
+lives), and **Epic H Step 2 deleted `src/lib/questions.ts`** — the Record flow reads
+`GET /questions/daily` instead (see [Question selection](#question-selection) and
+[Daily questions](#daily-questions)). `RecordingMode` in `src/lib/recordings.ts` is now a
+self-contained literal union rather than `QuestionMode | 'miscellaneous'`.
 
 ## Phase 4 exit checkpoint
 
@@ -2235,14 +2501,16 @@ would have covered on its own):
 - Structure: a small package rather than a single file, since Phase 2 will grow this a lot —
   `backend/app/main.py` creates the FastAPI app (and now also configures root logging — see
   [AI processing endpoint](#ai-processing-endpoint)) and includes routers from
-  `backend/app/routers/` (`health.py`, `recordings.py`); `backend/app/config.py` holds a
-  `pydantic-settings` `Settings` object reading from `.env`. `backend/app/supabase_client.py`
+  `backend/app/routers/` (`health.py`, `recordings.py`, and — v4 Epic H — `questions.py`);
+  `backend/app/config.py` holds a `pydantic-settings` `Settings` object reading from `.env`. `backend/app/supabase_client.py`
   builds the one shared service-role Supabase client, `backend/app/gemini_client.py` (Step 3)
   builds the one shared Gemini client the same way, `backend/app/auth.py` holds the bearer-token
   verification dependency, and `backend/app/services/` holds background-work logic —
   `processing.py` (the pipeline orchestration), `metrics.py` (Step 4, pure deterministic-metrics
-  logic — see [Metrics](#metrics)), and `feedback.py` (Step 5, mode-aware feedback-prompt building
-  and the Gemini call that generates it — see [AI processing endpoint](#ai-processing-endpoint)).
+  logic — see [Metrics](#metrics)), `feedback.py` (Step 5, mode-aware feedback-prompt building
+  and the Gemini call that generates it — see [AI processing endpoint](#ai-processing-endpoint)),
+  and — v4 Epic H — `daily_questions.py` (the lazy daily-question assignment logic + its
+  synchronous Gemini batch-generation — see [Daily questions](#daily-questions)).
   `metrics.py` and `feedback.py` are both kept as their own modules rather than folded into
   `processing.py` for the same reason: neither has any Supabase/network call of its own beyond (for
   `feedback.py`) the single Gemini call, both are easy to unit-test in isolation, and
@@ -2254,7 +2522,9 @@ would have covered on its own):
   simplest thing that works and matches Render's default Python build). Includes `supabase`
   (`supabase-py`, added in Step 2), `google-genai` (added in Step 3 — see
   [AI processing endpoint](#ai-processing-endpoint) for why this package specifically, not the
-  older `google-generativeai`), and `mutagen` (added in Step 4 — see [Metrics](#metrics) for why).
+  older `google-generativeai`), `mutagen` (added in Step 4 — see [Metrics](#metrics) for why), and
+  `tzdata` (added in v4 Epic H — the IANA tz database `zoneinfo` needs for the Eastern daily-question
+  boundary; not guaranteed present on Windows/slim Linux).
   Test-only dependencies (`pytest`) live in a separate `backend/requirements-dev.txt`, not
   installed on Render, since the deployed service never runs tests — install both files locally
   (`pip install -r requirements.txt -r requirements-dev.txt`) to run `pytest` from `backend/`.
@@ -2284,7 +2554,9 @@ would have covered on its own):
   see [AI processing endpoint](#ai-processing-endpoint)), `DELETE /recordings/{id}/audio` (see
   [Audio delete](#audio-delete)), and `DELETE /recordings/{id}` (the whole row + audio; v2 Epic
   D Part 4, see [Delete recording](#delete-recording)). All four bearer-token-verified and
-  ownership-checked; the two `/process`-family ones also gate on `status`.
+  ownership-checked; the two `/process`-family ones also gate on `status`. **v4 Epic H Step 1**
+  adds `GET /questions/daily?mode=...` in a new `app/routers/questions.py` — bearer-token auth,
+  no ownership check (not user-specific data); see [Daily questions](#daily-questions).
 - **What `process_recording()` does:** the FastAPI app, `/health`, and the processing pipeline. Upload and
   row-creation still happen entirely on the frontend against Supabase directly
   (`src/lib/recordings.ts`); this backend is only involved from the moment a row already exists.

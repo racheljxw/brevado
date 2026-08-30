@@ -26,7 +26,12 @@ import { Spacing, Theme } from '@/constants/theme';
 // existing no-confirmation behaviour (an explicit product decision, Phase 3
 // Step 5).
 
-export type RecordingMenuAction = 'download' | 'delete-audio' | 'delete-recording' | 'regenerate';
+export type RecordingMenuAction =
+  | 're-practice'
+  | 'download'
+  | 'delete-audio'
+  | 'delete-recording'
+  | 'regenerate';
 
 type MenuItem = {
   action: RecordingMenuAction;
@@ -44,6 +49,7 @@ const MENU_WIDTH = 220;
 const ROW_HEIGHT_ESTIMATE = 44;
 
 export function RecordingActionsMenu({
+  canRePractice = false,
   canDownload,
   canDeleteAudio,
   canRegenerate,
@@ -51,6 +57,12 @@ export function RecordingActionsMenu({
   onSelect,
   iconSize = 20,
 }: {
+  /**
+   * v4 Epic I — the recording is Interview/Story AND has a question (a pool
+   * `question_id` or custom text). Never true for Miscellaneous. Tapping it
+   * navigates to the Record screen pre-set to re-record that same question.
+   */
+  canRePractice?: boolean;
   /** audio still present (audio_path set and not audio_deleted). */
   canDownload: boolean;
   /** audio still present (not audio_deleted). */
@@ -68,6 +80,11 @@ export function RecordingActionsMenu({
   const { width: screenW, height: screenH } = useWindowDimensions();
 
   const items: MenuItem[] = [
+    canRePractice && {
+      action: 're-practice',
+      label: 'Re-practice this question',
+      icon: 'arrow.counterclockwise',
+    },
     canDownload && { action: 'download', label: 'Download audio', icon: 'square.and.arrow.down' },
     canDeleteAudio && { action: 'delete-audio', label: 'Delete audio', icon: 'trash' },
     { action: 'delete-recording', label: 'Delete recording', icon: 'trash.fill', destructive: true },

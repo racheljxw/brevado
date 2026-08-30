@@ -1,5 +1,5 @@
 import { AudioModule, RecordingPresets, setAudioModeAsync, useAudioRecorder, useAudioRecorderState } from 'expo-audio';
-import { useFocusEffect, useRouter } from 'expo-router';
+import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { SymbolView } from 'expo-symbols';
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import {
@@ -36,12 +36,10 @@ import { ThemedView } from '@/components/themed-view';
 import { WebBadge } from '@/components/web-badge';
 import { BottomTabInset, MaxContentWidth, Spacing, Theme } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
-import { regenerateReport, startProcessing } from '@/lib/api';
+import { fetchDailyQuestion, regenerateReport, startProcessing, type DailyQuestion } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
 import { formatDuration } from '@/lib/format-time';
 import { MODE_LABELS } from '@/lib/modes';
-import { pickQuestionForMode } from '@/lib/question-selection';
-import type { Question } from '@/lib/questions';
 import { TERMINAL_STATUSES } from '@/lib/recording-status';
 import {
   buildAudioPath,
@@ -68,6 +66,27 @@ import {
 // and deep-linkable URL in a way this flow doesn't (yet).
 type FlowScreen = 'mode-select' | 'record';
 type Mode = RecordingMode;
+
+// v4 Epic I — re-practice mode. When the user taps "Re-practice this question"
+// from a History recording's 3-dot menu, that screen navigates here with route
+// params (`rpSource` / `rpMode` / `rpQuestion` / `rpQuestionId` / `rpTs`). This
+// screen consumes them into `rePractice` state, which is a THIRD entry path
+// into the record flow alongside the normal mode-select→pool-pick and
+// mode-select→custom paths:
+//   - no mode-select step (mode is fixed to the original's)
+//   - no question UI at all — no pool fetch, no "ask my own" toggle, no custom
+//     input; the fixed question is shown read-only and recording starts
+//   - on upload, `handleKeepAndUpload` sends `rePracticeOf: sourceId` so the
+//     new recording's `re_practice_of` points at the ORIGINAL row the menu was
+//     opened from (never a further-back ancestor — Epic J walks the chain).
+// The 30-recording cap still applies (checked in `enterRePractice`, same as
+// `handleSelectMode`) — no exemption.
+type RePracticeContext = {
+  sourceId: string;
+  mode: 'interview' | 'story';
+  question: string;
+  questionId: string | null;
+};
 
 type PermissionState = 'unknown' | 'granted' | 'denied';
 type UploadState = 'idle' | 'uploading' | 'error' | 'done';
@@ -668,7 +687,7 @@ function QuestionArea({
   onStartRecording,
 }: {
   mode: 'interview' | 'story';
-  poolQuestion: Question | null;
+  poolQuestion: DailyQuestion | null;
   loading: boolean;
   error: string | null;
   customQuestion: string | null;
@@ -734,7 +753,7 @@ function QuestionArea({
             <View style={styles.uploadingRow}>
               <ActivityIndicator />
               <ThemedText type="small" themeColor="textSecondary">
-                Finding a question…
+                Loading today&apos;s question…
               </ThemedText>
             </View>
           )}
@@ -824,6 +843,13 @@ export default function RecordScreen() {
   const { user } = useAuth();
   const theme = useTheme();
   const router = useRouter();
+  const params = useLocalSearchParams<{
+    rpSource?: string;
+    rpMode?: string;
+    rpQuestion?: string;
+    rpQuestionId?: string;
+    rpTs?: string;
+  }>();
 
   const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
   const recorderState = useAudioRecorderState(recorder, 200);
@@ -837,10 +863,14 @@ export default function RecordScreen() {
   // toggle between them. `customQuestion` non-null = the user typed their
   // own; the effective question for the recording is `customQuestion ??
   // poolQuestion?.text`.
-  const [poolQuestion, setPoolQuestion] = useState<Question | null>(null);
+  const [poolQuestion, setPoolQuestion] = useState<DailyQuestion | null>(null);
   const [customQuestion, setCustomQuestion] = useState<string | null>(null);
   const [questionLoading, setQuestionLoading] = useState(false);
   const [questionError, setQuestionError] = useState<string | null>(null);
+  // v4 Epic I — non-null while this attempt is a re-practice of an existing
+  // recording (see `RePracticeContext` above). Drives the read-only question
+  // banner on the record screen and the `re_practice_of` value on upload.
+  const [rePractice, setRePractice] = useState<RePracticeContext | null>(null);
 
   const [permission, setPermission] = useState<PermissionState>('unknown');
   const [canAskAgain, setCanAskAgain] = useState(true);
@@ -939,6 +969,7 @@ export default function RecordScreen() {
     setPoolQuestion(null);
     setCustomQuestion(null);
     setQuestionError(null);
+    setRePractice(null);
     setFlowScreen('mode-select');
   }, [resetRecordingState]);
 
@@ -974,20 +1005,20 @@ export default function RecordScreen() {
     }
   }, []);
 
-  // Phase 4 Step 3 — runs pickQuestionForMode (src/lib/question-selection.ts)
-  // for the given mode and stores the result as `poolQuestion`, so
-  // `QuestionArea` can render it. Also used by that component's "Try again"
-  // action on a failed lookup.
+  // v4 Epic H Step 2 — fetches today's globally-assigned question for the mode
+  // from `GET /questions/daily` (src/lib/api.ts → the FastAPI backend) and
+  // stores it as `poolQuestion` (id + text), so `QuestionArea` can render it
+  // and `handleKeepAndUpload` can store the `question_id`. Also the retry
+  // target for `QuestionArea`'s "Try again" on a failed/slow fetch.
   async function loadQuestion(mode: 'interview' | 'story') {
-    if (!user) return;
     setQuestionLoading(true);
     setQuestionError(null);
     setPoolQuestion(null);
     try {
-      const question = await pickQuestionForMode(mode, user.id);
+      const question = await fetchDailyQuestion(mode);
       setPoolQuestion(question);
     } catch (err) {
-      setQuestionError(err instanceof Error ? err.message : 'Could not choose a question.');
+      setQuestionError(err instanceof Error ? err.message : "Couldn't load today's question.");
     } finally {
       setQuestionLoading(false);
     }
@@ -1008,6 +1039,7 @@ export default function RecordScreen() {
     setCustomQuestion(null);
     setPoolQuestion(null);
     setQuestionError(null);
+    setRePractice(null);
     if (mode === 'miscellaneous') {
       setSelectedMode('miscellaneous');
       setFlowScreen('record');
@@ -1016,6 +1048,76 @@ export default function RecordScreen() {
     setSelectedMode(mode);
     loadQuestion(mode);
   }
+
+  // v4 Epic I — enter the read-only re-practice state from a History 3-dot
+  // menu handoff (route params, consumed by the effect below). Runs the same
+  // recording-cap check `handleSelectMode` does — a re-practice recording gets
+  // no cap exemption. On a cap hit it drops back to mode-select showing the
+  // `CapBlockedCard` (same UI as a blocked normal start); otherwise it goes
+  // straight to the record screen with the mode + question fixed.
+  const enterRePractice = useCallback(
+    async (ctx: RePracticeContext) => {
+      // A prior finished take's "reset me on next focus" flag would otherwise
+      // fire `handleBackToModeSelect` and bounce us out of re-practice.
+      resetPendingRef.current = false;
+      resetRecordingState();
+      setCustomQuestion(null);
+      setPoolQuestion(null);
+      setQuestionError(null);
+      setBlockedByCap(false);
+
+      if (user) {
+        try {
+          const count = await getActiveRecordingCount(user.id);
+          if (count >= MAX_RECORDINGS_PER_USER) {
+            setRePractice(null);
+            setSelectedMode(null);
+            setFlowScreen('mode-select');
+            setBlockedByCap(true);
+            return;
+          }
+        } catch (err) {
+          // Fail open, same as `handleSelectMode` — the Postgres trigger
+          // (0004_recording_cap_enforcement.sql) is the real backstop.
+          console.warn('Recording cap check failed for re-practice, allowing it to proceed', err);
+        }
+      }
+
+      setRePractice(ctx);
+      setSelectedMode(ctx.mode);
+      setFlowScreen('record');
+    },
+    [resetRecordingState, user]
+  );
+
+  // Consume the History re-practice handoff. `rpTs` is a per-tap nonce — we
+  // dedupe on it (via `rpConsumedRef`) so re-focusing this tab later doesn't
+  // re-trigger, and so re-practicing the same recording twice in a row still
+  // fires. The params are cleared afterward as a belt-and-braces second guard.
+  const rpConsumedRef = useRef<string | null>(null);
+  useEffect(() => {
+    const ts = typeof params.rpTs === 'string' ? params.rpTs : null;
+    const source = typeof params.rpSource === 'string' ? params.rpSource : null;
+    const mode =
+      params.rpMode === 'interview' || params.rpMode === 'story' ? params.rpMode : null;
+    if (!ts || !source || !mode || rpConsumedRef.current === ts) return;
+    rpConsumedRef.current = ts;
+
+    const question = typeof params.rpQuestion === 'string' ? params.rpQuestion : '';
+    const questionId =
+      typeof params.rpQuestionId === 'string' && params.rpQuestionId ? params.rpQuestionId : null;
+
+    enterRePractice({ sourceId: source, mode, question, questionId });
+    router.setParams({ rpSource: '', rpMode: '', rpQuestion: '', rpQuestionId: '', rpTs: '' });
+  }, [
+    params.rpTs,
+    params.rpSource,
+    params.rpMode,
+    params.rpQuestion,
+    params.rpQuestionId,
+    enterRePractice,
+    router,
+  ]);
 
   async function handleSelectMode(mode: Mode) {
     if (!user || checkingCap) return;
@@ -1086,11 +1188,36 @@ export default function RecordScreen() {
     setUploadError(null);
 
     try {
-      const mode = selectedMode ?? 'miscellaneous';
-      // Miscellaneous never has a question; interview/story pass the chosen
-      // question — the custom-typed text if there is one, else the pool pick.
-      const question = mode === 'miscellaneous' ? null : (customQuestion ?? poolQuestion?.text ?? null);
-      const result = await uploadRecording({ userId: user.id, localUri: recordedUri, audioPath: path, mode, question });
+      // v4 Epic I — a re-practice attempt carries the ORIGINAL recording's
+      // mode / question / question_id verbatim (the question was shown
+      // read-only, no pool fetch or custom input), plus `rePracticeOf` = the
+      // id of the recording the 3-dot menu was opened from.
+      //
+      // Otherwise: miscellaneous never has a question; interview/story pass the
+      // chosen question — the custom-typed text if there is one, else the daily
+      // pool pick — and `question_id` is only set for a pool pick (not custom,
+      // not miscellaneous). See uploadRecording / the schema.
+      const usingCustom = customQuestion != null;
+      const mode = rePractice ? rePractice.mode : (selectedMode ?? 'miscellaneous');
+      const question = rePractice
+        ? rePractice.question
+        : mode === 'miscellaneous'
+          ? null
+          : (customQuestion ?? poolQuestion?.text ?? null);
+      const questionId = rePractice
+        ? rePractice.questionId
+        : mode === 'miscellaneous' || usingCustom
+          ? null
+          : (poolQuestion?.id ?? null);
+      const result = await uploadRecording({
+        userId: user.id,
+        localUri: recordedUri,
+        audioPath: path,
+        mode,
+        question,
+        questionId,
+        rePracticeOf: rePractice?.sourceId ?? null,
+      });
       setUploadedRecordingId(result.id);
       setUploadState('done');
 
@@ -1112,17 +1239,36 @@ export default function RecordScreen() {
 
   const elapsed = formatDuration(recorderState.durationMillis / 1000);
 
+  // The question banner shown above the record button on the 'record' screen.
+  // In re-practice mode it's the fixed original question; otherwise the chosen
+  // custom text or daily pool pick. Miscellaneous has none.
+  const recordMode: Mode | null = rePractice ? rePractice.mode : selectedMode;
+  const recordQuestion = rePractice
+    ? rePractice.question
+    : (customQuestion ?? poolQuestion?.text ?? null);
+
+  // Show the "Change mode" header back link (in place of `AppHeader`) whenever
+  // we're past mode selection but before a take exists: the mode-picked
+  // sub-state of mode-select, AND the pre-recording record screen. Once
+  // recording starts or a take is captured, "Change mode" no longer applies
+  // (Epic C Part 4) and `AppHeader` returns. This is the ONE back affordance
+  // for the record flow — it always lives in the header row, never inline in
+  // the body, matching History's detail screen and Settings.
+  const showChangeModeHeader =
+    (flowScreen === 'mode-select' && !!selectedMode) ||
+    (flowScreen === 'record' && !recordedUri && !recorderState.isRecording);
+
   return (
     <ThemedView style={styles.container}>
       <SafeAreaView style={styles.safeArea}>
-        {/* v2: once a mode is picked, this screen's header swaps from
-            "brevado. + profile icon" (`AppHeader`) to a header-row back
-            link reading "Change mode" (`HeaderBackLink`) — the same swap
-            History's detail screen and Settings do with their own back
-            links, just triggered by `selectedMode` instead of a different
-            route. Both render through the exact same row shape, so nothing
-            about the header's position ever shifts, only its content. */}
-        {flowScreen === 'mode-select' && selectedMode ? (
+        {/* v2: once a mode is picked (and through the pre-recording record
+            screen), this screen's header swaps from "brevado. + profile icon"
+            (`AppHeader`) to a header-row back link reading "Change mode"
+            (`HeaderBackLink`) — the same swap History's detail screen and
+            Settings do with their own back links. Both render through the exact
+            same row shape, so nothing about the header's position ever shifts,
+            only its content. See `showChangeModeHeader` above. */}
+        {showChangeModeHeader ? (
           <Reanimated.View
             style={styles.headerFade}
             entering={FadeIn.duration(200)}
@@ -1163,13 +1309,15 @@ export default function RecordScreen() {
             <>
               {!recordedUri && (
                 <View style={styles.recordArea}>
-                  {selectedMode && selectedMode !== 'miscellaneous' && (customQuestion ?? poolQuestion?.text) && (
+                  {recordMode && recordMode !== 'miscellaneous' && recordQuestion && (
                     <Card style={styles.questionBanner}>
                       <ThemedText type="small" themeColor="textSecondary">
-                        {MODE_LABELS[selectedMode]} question
+                        {rePractice
+                          ? `Re-practising this ${MODE_LABELS[recordMode]} question`
+                          : `${MODE_LABELS[recordMode]} question`}
                       </ThemedText>
                       <ThemedText type="smallBold" style={styles.uriLabel}>
-                        {customQuestion ?? poolQuestion?.text}
+                        {recordQuestion}
                       </ThemedText>
                     </Card>
                   )}
@@ -1211,9 +1359,6 @@ export default function RecordScreen() {
                     </Card>
                   )}
 
-                  {!recorderState.isRecording && (
-                    <BackLink label="Change mode" onPress={handleBackToModeSelect} style={styles.discardButton} />
-                  )}
                 </View>
               )}
 

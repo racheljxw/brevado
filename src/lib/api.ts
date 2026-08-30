@@ -12,24 +12,33 @@ export class ProcessingRequestError extends Error {}
  * (`backend/app/routers/recordings.py`). Kept private; callers use the named
  * exports below so call sites stay self-explanatory.
  */
-async function authorizedRecordingRequest(
-  path: string,
-  method: 'POST' | 'DELETE',
-  actionLabel: string
-): Promise<void> {
+function requireApiUrl(): string {
   if (!apiUrl) {
     throw new ProcessingRequestError(
       'Missing EXPO_PUBLIC_API_URL. Copy .env.example to .env and set it, then restart the dev server.'
     );
   }
+  return apiUrl;
+}
 
-  const { data, error: sessionError } = await supabase.auth.getSession();
+async function requireAccessToken(): Promise<string> {
+  const { data, error } = await supabase.auth.getSession();
   const accessToken = data.session?.access_token;
-  if (sessionError || !accessToken) {
+  if (error || !accessToken) {
     throw new ProcessingRequestError('No active session — cannot authorize the request.');
   }
+  return accessToken;
+}
 
-  const response = await fetch(`${apiUrl}${path}`, {
+async function authorizedRecordingRequest(
+  path: string,
+  method: 'POST' | 'DELETE',
+  actionLabel: string
+): Promise<void> {
+  const base = requireApiUrl();
+  const accessToken = await requireAccessToken();
+
+  const response = await fetch(`${base}${path}`, {
     method,
     headers: { Authorization: `Bearer ${accessToken}` },
   });
@@ -38,6 +47,44 @@ async function authorizedRecordingRequest(
     const body = await response.text().catch(() => '');
     throw new ProcessingRequestError(`Backend rejected the ${actionLabel} request (${response.status}): ${body}`);
   }
+}
+
+/**
+ * v4 Epic H Step 2 — the one shared "question of the day" for a mode, from the
+ * FastAPI backend's `GET /questions/daily?mode=interview|story`
+ * (`backend/app/routers/questions.py` → `app/services/daily_questions.py`).
+ *
+ * This replaces v1's client-side `pickQuestionForMode` (deleted): the question
+ * is now assigned server-side, identical for every user that day, and a pool
+ * question is retired the instant it's assigned so it never repeats. The
+ * returned `id` is the `questions` row's PK — the caller stores it as
+ * `recordings.question_id` alongside the text so History (Epic I) can group
+ * re-practice attempts. Custom typed-in questions have no `id` and store
+ * `question_id: null`.
+ *
+ * Bearer-token auth like the `recordings` calls, but no ownership check on the
+ * backend — the data isn't user-specific. A `502` here is almost always a
+ * transient Gemini failure during a rare pool top-up; the screen surfaces the
+ * message with a "Try again".
+ */
+export type DailyQuestion = { id: string; mode: string; text: string };
+
+export async function fetchDailyQuestion(mode: 'interview' | 'story'): Promise<DailyQuestion> {
+  const base = requireApiUrl();
+  const accessToken = await requireAccessToken();
+
+  const response = await fetch(`${base}/questions/daily?mode=${encodeURIComponent(mode)}`, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+
+  if (!response.ok) {
+    const body = await response.text().catch(() => '');
+    throw new ProcessingRequestError(
+      `Couldn't load today's question (${response.status}): ${body}`
+    );
+  }
+
+  return (await response.json()) as DailyQuestion;
 }
 
 function postRecordingAction(recordingId: string, action: 'process' | 'regenerate'): Promise<void> {

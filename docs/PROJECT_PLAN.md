@@ -71,11 +71,50 @@ Re-practice mode, the dynamic question pool, and additional modes are split out 
   over already-fetched recordings data (consistent with how v2's History search and calendar were
   built) — no new backend endpoint.
 
-### In scope for v4
-Split out of the original v3 scope — deliberately **not** part of the current phase:
-- Re-practice / redo-question mode
-- Dynamically growing, AI-generated question pool (plus the `answered_questions` table — Section 5)
-- Additional modes beyond interview/story
+### In scope for v4 (Phase 7 — building now)
+Split out of the original v3 scope. Two features plus a small History-filters addition.
+
+**Global daily-question system** (replaces v1's per-user random-pick pool)
+- Interview and Story each get exactly **one "question of the day," shared by every user** —
+  the same question for everyone on a given day. Miscellaneous is unchanged (free topic, no
+  question).
+- **Lazy assignment, no cron.** A mode's question for the day is computed on the first
+  request that needs it (the first user of the day to open that mode) and stored; every
+  later request that day just reads the stored row. No scheduled or background job.
+- **Day boundary is US Eastern (`America/New_York`), DST-aware** — real IANA timezone rules
+  via `zoneinfo`, *not* a fixed UTC-5 offset held year-round. Colloquially "EST," but the
+  spring/fall transitions are handled correctly. *(Flagged for confirmation — this is an
+  interpretation of what "daily" means and is worth a deliberate sign-off.)*
+- **Structural no-repeat guarantee.** A pool question is **permanently retired the instant
+  it is assigned as a daily question** (its `questions.used_date` is set) — never assigned
+  again, for anyone. This removes the need for any per-user "recently used" / exclusion
+  tracking entirely: no two users and no two days can ever be served the same
+  freshly-assigned question.
+- **Synchronous batch top-up on exhaustion.** When a mode's pool of unused questions hits
+  zero, the request that triggered the exhaustion generates a **new batch of 15 questions**
+  for that mode via one Gemini call, **synchronously** (that user is waiting for a question
+  right now), inserts them, then assigns from the new batch. Rare (≤ once per ~15 days per
+  mode) but adds one Gemini call's latency to that single request. This is a deliberate
+  departure from the old proactive/event-driven `BackgroundTasks` top-up idea — the user
+  needs a real question back immediately, not eventually.
+
+**Re-practice mode**
+- Revisit an already-answered question and record a new attempt; the new recording carries a
+  `re_practice_of` self-reference to the original recording.
+- **`re_practice_of` is the only grouping mechanism History needs.** Because a pool question
+  can only ever be *freshly* assigned once (see the no-repeat guarantee above), the only way
+  two recordings share a question is a deliberate re-practice — so following the
+  `re_practice_of` chain to its root is sufficient to group attempts; there is no need to
+  also group by `question_id`.
+
+**History filters** (small addition)
+- A **mode filter** and a **favorites-only toggle**, both client-side, alongside the existing
+  search — same "filter the already-loaded list" approach as v2's search / calendar view.
+  This is the first real consumer of the `favorite` flag, which until now has had no
+  behavior attached to it anywhere.
+
+**Not in v4:** additional modes beyond interview/story — confirmed **out of scope** for this
+release.
 
 ### Explicitly out of scope (for now)
 - Email notifications
@@ -186,11 +225,23 @@ moved to v4 below.
 - A per-metric detail screen. Clarity's is the one place the old raw metrics resurface — pace
   (WPM), filler rate, repetition, and grammar-issue count as supporting badges.
 
-### v4
-Split out of the original v3 scope — deferred, not being built in the current phase:
-- Re-practice mode: revisit a previously answered question and record a new attempt; view both attempts and feedback side by side.
-- Dynamic question pool: see Section 5 below — grows automatically (event-driven top-up) and enables re-practice via the same `answered_questions` table.
-- Additional modes beyond interview/story, as needed.
+### v4 (Phase 7 — building now)
+Split out of the original v3 scope. See Section 2's "In scope for v4" for the full design; in
+brief:
+- **Global daily-question system** — one shared "question of the day" per mode (Interview /
+  Story), assigned lazily on first access (no cron), on a **US Eastern / DST-aware** day
+  boundary. A question is retired forever the moment it is assigned (`questions.used_date`),
+  which structurally guarantees no repeats with zero per-user tracking. When a mode's pool
+  runs out, the triggering request **synchronously** generates a fresh batch of 15 via Gemini
+  before assigning. Replaces v1's per-user random-pick pool and its
+  immediately-previous-question exclusion.
+- **Re-practice mode** — re-record against a previously answered question;
+  `recordings.re_practice_of` (self-reference) links the attempts, and is also the *only*
+  attempt-grouping mechanism History needs (a freshly-assigned pool question is never shared
+  between recordings except by deliberate re-practice).
+- **History filters** — client-side mode filter + favorites-only toggle beside the search
+  bar; the first feature to actually consume the `favorite` flag.
+- Additional modes beyond interview/story: **out of scope** for this release.
 
 ## 4. Tech Stack
 | Layer | Choice | Notes |
@@ -200,7 +251,7 @@ Split out of the original v3 scope — deferred, not being built in the current 
 | Database | Supabase Postgres | Users, recordings, transcripts, feedback, questions |
 | File storage | Supabase Storage | Audio files, capped per user (`MAX_RECORDINGS_PER_USER`) and manually deleted rather than time-expired |
 | API | Python (FastAPI) on Render | Handles uploads, serves data to the frontend, and runs background processing in-process via FastAPI's `BackgroundTasks` — no separate queue/broker/worker service |
-| AI | Gemini API (Flash model, free tier) | Transcription (native audio input) + feedback generation (v2 adds an auto-generated recording title to the same call; v3 adds three 0–100 scores — Impact / Clarity / Structure — plus a grammar-issue count); dynamic question generation in v4 |
+| AI | Gemini API (Flash model, free tier) | Transcription (native audio input) + feedback generation (v2 adds an auto-generated recording title to the same call; v3 adds three 0–100 scores — Impact / Clarity / Structure — plus a grammar-issue count); v4 adds synchronous batch generation of daily-question pool refills |
 | Hosting | Render (API only) | Frontend isn't web-hosted — it runs as an Expo project loaded through the Expo Go app; free-tier API subdomain, custom domain optional |
 
 ## 5. How It Works
@@ -220,14 +271,38 @@ Split out of the original v3 scope — deferred, not being built in the current 
 Note: since mode is now selected up front (not detected from spoken keywords), the earlier "detect interview vs. story from the first word" logic is no longer needed — this simplifies the pipeline.
 
 ### Question pool (v1 → v4 design)
-- v1: A small hardcoded pool (~20–30 prompts per mode). On session start, pick randomly from the pool, excluding only the immediately previous question (no back-to-back repeats; repeats otherwise fine). No AI cost, no scheduled jobs required.
-- v4: Add an answered_questions table (user, question, recording, date). This single table does double duty:
-  - Re-practice mode — browse previously answered questions and re-record against one, for free.
-  - Growing pool — event-driven, not scheduled: when a user selects a mode, check the
-    unused-question count for that mode against `answered_questions`; if none remain, fire a
-    `BackgroundTasks` call to Gemini to generate a new batch, explicitly prompted with the
-    existing pool to avoid near-duplicates. No cron, no weekly job — generation only happens when
-    a user is actually about to run out.
+- **v1 (being replaced in v4):** a small hardcoded pool (25 prompts per mode, in
+  `src/lib/questions.ts` as static in-app data). On session start, `pickQuestionForMode`
+  (`src/lib/question-selection.ts`) picks randomly from the pool, excluding only the
+  immediately previous question. No AI cost, no scheduled jobs. **v4 replaces both
+  `src/lib/questions.ts` and `pickQuestionForMode`** — the static file's 25 + 25 questions
+  seed the `questions` DB table as the starting pool, and selection moves server-side.
+- **v4 — global daily question, DB-backed, no `answered_questions` table.** The design landed
+  differently from this doc's original sketch (a per-user `answered_questions` table +
+  event-driven `BackgroundTasks` top-up):
+  - **Schema:** `questions` gains `used_date date` (null = unused/available; a date = the day
+    it was assigned as a daily question, which retires it forever). A new `daily_questions`
+    table `(date, mode, question_id)` with `primary key (date, mode)` stores the one assigned
+    question per mode per day. `recordings` gains `question_id` (which pool question this
+    recording answered — null for custom topics, miscellaneous, and all pre-v4 rows) and
+    `re_practice_of` (self-FK for re-practice).
+  - **Assignment (`get_or_assign_daily_question(mode)`, backend):** compute "today" in
+    `America/New_York`; if `daily_questions` already has a `(today, mode)` row, return that
+    question. Otherwise pick a random `used_date IS NULL` question for the mode, then
+    `INSERT ... ON CONFLICT (date, mode) DO NOTHING RETURNING question_id` as a concurrency
+    guard — if the insert returns a row, we won the race, so also set that question's
+    `used_date`; if it returns nothing, a concurrent request already assigned today's
+    question, so re-read `daily_questions` and return *that* one, leaving our candidate still
+    available for a future day.
+  - **Exhaustion:** if no `used_date IS NULL` question exists for the mode, the triggering
+    request **synchronously** calls Gemini for a batch of 15 new questions (structured-JSON
+    response, prompted with the existing pool to avoid near-duplicates), inserts them, then
+    assigns from the new batch. No `BackgroundTasks` — the requester needs a question back
+    immediately, and exhaustion is rare (≤ once per ~15 days per mode).
+  - **Re-practice** reuses `daily_questions` history + `recordings.re_practice_of` — no
+    separate `answered_questions` table. Because a question's `used_date` is set the instant
+    it is assigned, the only way two recordings share a `question_id` is a deliberate
+    re-practice, so the `re_practice_of` chain is all History needs to group attempts.
 
 ### Audio cap check
 No scheduled job. When a user starts a new recording, the app checks their count of recordings
@@ -249,8 +324,13 @@ Rather than a dated timeline, this is scoped as generic phases you can pick up i
   placeholder in Phase 5) — client-side score aggregation, streak counting, trend %. No backfill.
   See docs/CLAUDE.md's "v3 scope" for the step-by-step (Epic F: schema + scoring generation;
   Epic G: the Streaks tab).
-- **Phase 7 — v4** Re-practice mode, dynamically growing AI-generated question pool + event-driven
-  top-up generation (see Section 5 — not a weekly job), additional modes beyond interview/story.
+- **Phase 7 — v4** Global daily-question system (one shared, lazily-assigned "question of the
+  day" per mode on a US Eastern / DST-aware day boundary; a question is retired on assignment
+  for a structural no-repeat guarantee; synchronous Gemini batch-generation of 15 on pool
+  exhaustion — see Section 5), re-practice mode (`recordings.re_practice_of`, which is also
+  History's only attempt-grouping mechanism), and client-side History filters (mode +
+  favorites-only). Additional modes beyond interview/story are **out of scope**. Replaces v1's
+  `src/lib/questions.ts` static pool and `pickQuestionForMode`.
 
 ## 7. Cost
 At current scope (builder + a few test accounts), this is realistically $0/month:

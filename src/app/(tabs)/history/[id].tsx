@@ -27,8 +27,10 @@ import { formatRecordedAt } from '@/lib/format-time';
 import { formatMode, modePillColors } from '@/lib/modes';
 import { TERMINAL_STATUSES } from '@/lib/recording-status';
 import {
+  canRePracticeRecording,
   fetchRecordingById,
   getRecordingAudioUrl,
+  rePracticeNavParams,
   setFavorite,
   shareRecordingAudio,
   updateRecordingTitle,
@@ -584,14 +586,24 @@ export default function RecordingDetailScreen() {
     }
   }, [recording, router]);
 
+  // v4 Epic I — see the matching handler in `history/index.tsx`. Hands the
+  // Record tab the original recording's id + mode + question via route params;
+  // it enters a read-only re-practice state and writes `re_practice_of` on
+  // upload.
+  const handleRePractice = useCallback(() => {
+    if (!recording) return;
+    router.navigate({ pathname: '/', params: rePracticeNavParams(recording) });
+  }, [recording, router]);
+
   const handleMenuAction = useCallback(
     (action: RecordingMenuAction) => {
-      if (action === 'download') handleDownloadAudio();
+      if (action === 're-practice') handleRePractice();
+      else if (action === 'download') handleDownloadAudio();
       else if (action === 'delete-audio') handleDeleteAudio();
       else if (action === 'delete-recording') handleDeleteRecording();
       else if (action === 'regenerate') handleRegenerate();
     },
-    [handleDownloadAudio, handleDeleteAudio, handleDeleteRecording, handleRegenerate]
+    [handleRePractice, handleDownloadAudio, handleDeleteAudio, handleDeleteRecording, handleRegenerate]
   );
 
   // v2 Epic D Part 2 — persist a user-edited title. A direct Supabase update
@@ -684,6 +696,7 @@ export default function RecordingDetailScreen() {
                     actions into this menu for consistency with the list —
                     that decision stands through this restyle. */}
                 <RecordingActionsMenu
+                  canRePractice={canRePracticeRecording(recording)}
                   canDownload={!recording.audio_deleted && !!recording.audio_path}
                   canDeleteAudio={!recording.audio_deleted}
                   canRegenerate={recording.status === 'failed'}
