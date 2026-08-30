@@ -7,6 +7,7 @@ import { HeaderBackLink } from '@/components/app-header';
 import { FavoriteStar } from '@/components/favorite-star';
 import { RecordingActionsMenu, type RecordingMenuAction } from '@/components/recording-actions-menu';
 import { RecordingDetailBody } from '@/components/recording-detail-body';
+import { ScrollFade, SCROLL_FADE_HEIGHT } from '@/components/scroll-fade';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { TitleSection } from '@/components/title-section';
@@ -313,7 +314,11 @@ export default function RecordingDetailScreen() {
         )}
 
         {screenState === 'loaded' && recording && modePill && (
-          <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+          <View style={styles.scrollArea}>
+          <ScrollView
+            style={styles.scrollArea}
+            contentContainerStyle={styles.scrollContent}
+            showsVerticalScrollIndicator={false}>
             {/* Header: the editable title (Part 2) sharing its line with the
                 favorite star + 3-dot menu, mirroring the List card's heading
                 row (Part 3/4) at a larger scale. */}
@@ -345,6 +350,7 @@ export default function RecordingDetailScreen() {
                   canRegenerate={recording.status === 'failed'}
                   busy={downloadingAudio || deletingAudio || deletingRecording || regenerating}
                   onSelect={handleMenuAction}
+                  edgeAlign
                 />
               </View>
             </View>
@@ -396,6 +402,8 @@ export default function RecordingDetailScreen() {
               regenerateError={regenerateError}
             />
           </ScrollView>
+          <ScrollFade style={styles.topFade} />
+          </View>
         )}
 
         {Platform.OS === 'web' && <WebBadge />}
@@ -434,10 +442,21 @@ const styles = StyleSheet.create({
   centerText: {
     textAlign: 'center',
   },
+  // v4 Epic K — relative wrapper for the header `ScrollFade` overlay.
+  scrollArea: {
+    flex: 1,
+  },
+  topFade: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    height: SCROLL_FADE_HEIGHT,
+  },
   scrollContent: {
     gap: Theme.spacing.lg,
     paddingHorizontal: Spacing.four,
-    paddingTop: Spacing.three,
+    paddingTop: SCROLL_FADE_HEIGHT + Spacing.two,
     paddingBottom: BottomTabInset + Spacing.four,
   },
   // Header row: title (flex) + the star/menu cluster pinned to the right —
@@ -450,7 +469,7 @@ const styles = StyleSheet.create({
   headerActions: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: Spacing.three,
+    gap: Spacing.two,
     // nudge onto the title's optical centre on its first line
     marginTop: Spacing.half,
   },

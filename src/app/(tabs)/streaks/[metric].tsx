@@ -6,6 +6,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { HeaderBackLink } from '@/components/app-header';
 import { Card } from '@/components/card';
 import { MetricLineGraph } from '@/components/metric-line-graph';
+import { ScrollFade, SCROLL_FADE_HEIGHT } from '@/components/scroll-fade';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { TrendReadout } from '@/components/trend-readout';
@@ -170,7 +171,11 @@ export default function MetricDetailScreen() {
             </Pressable>
           </View>
         ) : (
-          <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+          <View style={styles.scrollArea}>
+          <ScrollView
+            style={styles.scrollArea}
+            contentContainerStyle={styles.scrollContent}
+            showsVerticalScrollIndicator={false}>
             {/* Heading + subheading on the left; the selected window's % change
                 + its "Last N days" label as a badge (shared card UI) top-right.
                 Shown only for a real trend (`'ok'`) — with no data, or only one
@@ -222,6 +227,8 @@ export default function MetricDetailScreen() {
               </View>
             )}
           </ScrollView>
+          <ScrollFade style={styles.topFade} />
+          </View>
         )}
 
         {Platform.OS === 'web' && <WebBadge />}
@@ -251,10 +258,20 @@ const styles = StyleSheet.create({
   centerText: {
     textAlign: 'center',
   },
+  scrollArea: {
+    flex: 1,
+  },
+  topFade: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    height: SCROLL_FADE_HEIGHT,
+  },
   scrollContent: {
     gap: Theme.spacing.xl,
     paddingHorizontal: Spacing.four,
-    paddingTop: Spacing.three,
+    paddingTop: SCROLL_FADE_HEIGHT + Spacing.two,
     paddingBottom: BottomTabInset + Spacing.four,
   },
   headerRow: {

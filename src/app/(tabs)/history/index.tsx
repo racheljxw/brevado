@@ -18,11 +18,12 @@ import { AppHeader } from '@/components/app-header';
 import { Card } from '@/components/card';
 import { FavoriteStar } from '@/components/favorite-star';
 import { RecordingActionsMenu, type RecordingMenuAction } from '@/components/recording-actions-menu';
+import { ScrollFade } from '@/components/scroll-fade';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { TitleSection } from '@/components/title-section';
 import { WebBadge } from '@/components/web-badge';
-import { BottomTabInset, MaxContentWidth, NotoSans, Palette, Spacing, Theme } from '@/constants/theme';
+import { BottomTabInset, MaxContentWidth, NotoSans, Spacing, Theme } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import { deleteRecording, deleteRecordingAudio, regenerateReport } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
@@ -162,16 +163,21 @@ function RecordingListItem({
             numberOfLines={2}
             compact
           />
-          <FavoriteStar favorite={recording.favorite} onToggle={onToggleFavorite} disabled={favoritePending} size={20} />
-          <RecordingActionsMenu
-            canRePractice={canRePracticeRecording(recording)}
-            canRename
-            canDownload={!recording.audio_deleted && !!recording.audio_path}
-            canDeleteAudio={!recording.audio_deleted}
-            canRegenerate={recording.status === 'failed'}
-            busy={downloadingAudio || deletingAudio || deletingRecording || regenerating}
-            onSelect={handleMenuAction}
-          />
+          {/* Tight star + 3-dot cluster pinned to the card's right edge; the
+              menu is `edgeAlign`ed so its dots line up with the date below. */}
+          <View style={styles.headingActions}>
+            <FavoriteStar favorite={recording.favorite} onToggle={onToggleFavorite} disabled={favoritePending} size={20} />
+            <RecordingActionsMenu
+              canRePractice={canRePracticeRecording(recording)}
+              canRename
+              canDownload={!recording.audio_deleted && !!recording.audio_path}
+              canDeleteAudio={!recording.audio_deleted}
+              canRegenerate={recording.status === 'failed'}
+              busy={downloadingAudio || deletingAudio || deletingRecording || regenerating}
+              onSelect={handleMenuAction}
+              edgeAlign
+            />
+          </View>
         </View>
 
         {/* Phase 4 Step 5 exit-checkpoint review: the question/topic (real as
@@ -320,20 +326,23 @@ function GroupedRecordingListItem({
             style={[styles.cardTitle, styles.titleFlex]}>
             {question}
           </ThemedText>
-          <FavoriteStar
-            favorite={root.favorite}
-            onToggle={onToggleFavorite}
-            disabled={favoritePending}
-            size={20}
-          />
-          <RecordingActionsMenu
-            canRePractice={canRePracticeRecording(mostRecent)}
-            canDownload={!mostRecent.audio_deleted && !!mostRecent.audio_path}
-            canDeleteAudio={!mostRecent.audio_deleted}
-            canRegenerate={mostRecent.status === 'failed'}
-            busy={downloadingAudio || deletingAudio || deletingRecording || regenerating}
-            onSelect={handleMenuAction}
-          />
+          <View style={styles.headingActions}>
+            <FavoriteStar
+              favorite={root.favorite}
+              onToggle={onToggleFavorite}
+              disabled={favoritePending}
+              size={20}
+            />
+            <RecordingActionsMenu
+              canRePractice={canRePracticeRecording(mostRecent)}
+              canDownload={!mostRecent.audio_deleted && !!mostRecent.audio_path}
+              canDeleteAudio={!mostRecent.audio_deleted}
+              canRegenerate={mostRecent.status === 'failed'}
+              busy={downloadingAudio || deletingAudio || deletingRecording || regenerating}
+              onSelect={handleMenuAction}
+              edgeAlign
+            />
+          </View>
         </View>
 
         <ThemedText type="small" themeColor="textSecondary" numberOfLines={1} style={styles.promptLine}>
@@ -601,32 +610,6 @@ function FilterBar({
   );
 }
 
-// v4 Epic K — a cream→transparent vertical fade rendered just below the
-// filter pills so History cards scrolling up *under* the pills dissolve into
-// the background instead of hard-clipping at the list edge. This project has
-// no `expo-linear-gradient` (and deliberately avoids adding gradient deps —
-// see the design-system notes), so it's a stack of thin non-overlapping
-// bands, each `flex: 1`, cream at full opacity up top (seamless with the
-// solid pill background above) fading to 0 at the bottom.
-const FADE_BAND_COUNT = 14;
-
-function CreamFade() {
-  return (
-    <View style={styles.creamFade} pointerEvents="none">
-      {Array.from({ length: FADE_BAND_COUNT }).map((_, i) => (
-        <View
-          key={i}
-          style={{
-            flex: 1,
-            backgroundColor: Palette.cream,
-            opacity: 1 - i / (FADE_BAND_COUNT - 1),
-          }}
-        />
-      ))}
-    </View>
-  );
-}
-
 function MonthCalendar({
   year,
   month,
@@ -775,7 +758,7 @@ export default function HistoryScreen() {
   // day chip + the cream→transparent fade tail). The list content is inset
   // by this so its first card starts just below the fade, and cards scroll
   // *under* the pills (fading out via `CreamFade`) rather than hard-clipping.
-  const [filterZoneHeight, setFilterZoneHeight] = useState(70);
+  const [filterZoneHeight, setFilterZoneHeight] = useState(56);
   const handleClearFilters = useCallback(() => {
     setModeFilter('all');
     setFavoritesOnly(false);
@@ -1384,7 +1367,7 @@ export default function HistoryScreen() {
                     }}
                     contentContainerStyle={[
                       styles.listContent,
-                      { paddingTop: filterZoneHeight + Spacing.three },
+                      { paddingTop: filterZoneHeight + Spacing.two },
                     ]}
                     showsVerticalScrollIndicator={false}
                     refreshControl={
@@ -1399,34 +1382,35 @@ export default function HistoryScreen() {
                 )}
 
                 {/* v4 Epic K — the filter pills + day chip, overlaid on the
-                    list and backed by a cream→transparent fade so cards flow
-                    seamlessly under them while scrolling. Measured so the
-                    list content can be inset by exactly its height. */}
+                    list. A cream→transparent `ScrollFade` sits BEHIND the
+                    pills (`opaqueFraction` keeps the top of the row solid,
+                    the fade starting ~mid-pill) so cards flow seamlessly
+                    under them while scrolling, with only a small gap to the
+                    first card. Measured so the list content is inset by
+                    exactly its height. */}
                 <View
                   style={styles.filterZone}
                   pointerEvents="box-none"
                   onLayout={(e) => setFilterZoneHeight(e.nativeEvent.layout.height)}>
-                  <View style={styles.filterSolid}>
-                    <FilterBar
-                      modeFilter={modeFilter}
-                      favoritesOnly={favoritesOnly}
-                      onChangeMode={setModeFilter}
-                      onToggleFavorites={() => setFavoritesOnly((v) => !v)}
-                    />
-                    {dayFilter && (
-                      <Pressable
-                        onPress={() => setDayFilter(null)}
-                        style={styles.dayFilterChip}
-                        accessibilityRole="button"
-                        accessibilityLabel="Show all recordings">
-                        <ThemedText type="small" themeColor="text">
-                          Showing {formatDayLabel(dayFilter)}
-                        </ThemedText>
-                        <SymbolView name="xmark.circle.fill" size={16} tintColor={theme.textSecondary} />
-                      </Pressable>
-                    )}
-                  </View>
-                  <CreamFade />
+                  <ScrollFade style={StyleSheet.absoluteFill} opaqueFraction={0.45} />
+                  <FilterBar
+                    modeFilter={modeFilter}
+                    favoritesOnly={favoritesOnly}
+                    onChangeMode={setModeFilter}
+                    onToggleFavorites={() => setFavoritesOnly((v) => !v)}
+                  />
+                  {dayFilter && (
+                    <Pressable
+                      onPress={() => setDayFilter(null)}
+                      style={styles.dayFilterChip}
+                      accessibilityRole="button"
+                      accessibilityLabel="Show all recordings">
+                      <ThemedText type="small" themeColor="text">
+                        Showing {formatDayLabel(dayFilter)}
+                      </ThemedText>
+                      <SymbolView name="xmark.circle.fill" size={16} tintColor={theme.textSecondary} />
+                    </Pressable>
+                  )}
                 </View>
               </View>
             )}
@@ -1563,21 +1547,17 @@ const styles = StyleSheet.create({
   listRegion: {
     flex: 1,
   },
-  // The pills + day chip float over the top of the list. `filterSolid` is an
-  // opaque cream block behind them; `CreamFade` continues the cream downward,
-  // fading to transparent, so list cards dissolve as they scroll up under it.
+  // The pills + day chip float over the top of the list, with a `ScrollFade`
+  // as `absoluteFill` behind them (opaque up top, fading from ~mid-pill down
+  // through this `paddingBottom`) so list cards dissolve as they scroll up
+  // under the row.
   filterZone: {
     position: 'absolute',
     top: 0,
     left: 0,
     right: 0,
     zIndex: 5,
-  },
-  filterSolid: {
-    backgroundColor: Palette.cream,
-  },
-  creamFade: {
-    height: 32,
+    paddingBottom: Spacing.three,
   },
   list: {
     // fill the space left under the header / search bar / toggle so the
@@ -1702,6 +1682,12 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'flex-start',
     gap: Spacing.two,
+  },
+  // v4 Epic K — tight star + 3-dot cluster, hugging the card's right edge.
+  headingActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.one,
   },
   titleFlex: {
     // grow to fill the row so the star + 3-dot menu are pinned to the right

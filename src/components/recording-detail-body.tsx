@@ -19,10 +19,9 @@ import { getRecordingAudioUrl, type RecordingDetail } from '@/lib/recordings';
 //   - `history/[id].tsx`: the editable title + favorite star + 3-dot menu
 //     header row, and a mode-pill / date meta row.
 //   - `history/chain/[rootId].tsx`: the shared question + mode pill + favorite
-//     star live once at the CHAIN header; each panel has its own collapse
-//     header (date + status only) and, when expanded, renders `<TitleSection>`
-//     + its own 3-dot menu on one row (v4 Epic K — moved off the collapse
-//     header) followed by this body.
+//     star live once at the CHAIN header; each panel's own header carries the
+//     expand chevron + that attempt's title/date + its 3-dot menu, and the
+//     expanded body renders the rename editor (when active) then this body.
 //
 // Everything below (`AudioSection`, `ScoresRow`, `ReportSection`) moved here
 // verbatim from `history/[id].tsx` — behaviour unchanged, only the file.

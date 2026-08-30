@@ -7,6 +7,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { AppHeader } from '@/components/app-header';
 import { Card } from '@/components/card';
 import { MiniLineGraph } from '@/components/mini-line-graph';
+import { ScrollFade, SCROLL_FADE_HEIGHT } from '@/components/scroll-fade';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { TrendReadout } from '@/components/trend-readout';
@@ -165,11 +166,18 @@ export default function StreaksScreen() {
             </ThemedText>
           </View>
         ) : (
+          <View style={styles.scrollArea}>
           <ScrollView
+            style={styles.scrollArea}
             contentContainerStyle={styles.scrollContent}
             showsVerticalScrollIndicator={false}
             refreshControl={
-              <RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor={theme.textSecondary} />
+              <RefreshControl
+                refreshing={refreshing}
+                onRefresh={refresh}
+                tintColor={theme.textSecondary}
+                progressViewOffset={SCROLL_FADE_HEIGHT}
+              />
             }>
             <StreakHeader recordings={recordings ?? []} />
 
@@ -184,6 +192,8 @@ export default function StreaksScreen() {
               />
             ))}
           </ScrollView>
+          <ScrollFade style={styles.topFade} />
+          </View>
         )}
 
         {Platform.OS === 'web' && <WebBadge />}
@@ -221,10 +231,20 @@ const styles = StyleSheet.create({
     marginHorizontal: Spacing.four,
     marginTop: Spacing.two,
   },
+  scrollArea: {
+    flex: 1,
+  },
+  topFade: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    height: SCROLL_FADE_HEIGHT,
+  },
   scrollContent: {
     gap: Theme.spacing.xl,
     paddingHorizontal: Spacing.four,
-    paddingTop: Spacing.three,
+    paddingTop: SCROLL_FADE_HEIGHT + Spacing.two,
     paddingBottom: BottomTabInset + Spacing.four,
   },
   streakHeader: {

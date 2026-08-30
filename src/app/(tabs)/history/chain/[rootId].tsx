@@ -9,6 +9,7 @@ import { Card } from '@/components/card';
 import { FavoriteStar } from '@/components/favorite-star';
 import { RecordingActionsMenu, type RecordingMenuAction } from '@/components/recording-actions-menu';
 import { RecordingDetailBody } from '@/components/recording-detail-body';
+import { ScrollFade, SCROLL_FADE_HEIGHT } from '@/components/scroll-fade';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { TitleSection } from '@/components/title-section';
@@ -165,10 +166,9 @@ function ChainPanel({
 }) {
   return (
     <Card style={styles.panel}>
-      {/* v4 Epic K — the 3-dot menu moved OUT of this collapse header and into
-          the expanded body (same row as the title), because it sat right where
-          people tap to expand and got hit by accident. The header is now
-          purely an expand/collapse target. */}
+      {/* v4 Epic K — header layout, left→right: expand arrow, title + date
+          (stacked), 3-dot menu (rightmost). No status label. The whole row
+          still toggles; the menu (nested Pressable) doesn't. */}
       <Pressable
         onPress={onToggle}
         style={({ pressed }) => [styles.panelHeader, pressed && styles.pressed]}
@@ -177,45 +177,52 @@ function ChainPanel({
         accessibilityLabel={`Attempt from ${formatRecordedAt(recording.created_at)}, ${panelStatusLabel(
           recording.status
         )}`}>
+        <SymbolView
+          name={expanded ? 'chevron.down' : 'chevron.right'}
+          size={15}
+          tintColor={Theme.colors.textSecondary}
+        />
         <View style={styles.panelHeaderText}>
-          <ThemedText type="smallBold">{formatRecordedAt(recording.created_at)}</ThemedText>
+          <ThemedText
+            style={styles.panelTitle}
+            themeColor={recording.title ? 'text' : 'textSecondary'}
+            numberOfLines={2}>
+            {recording.title ?? 'Untitled recording'}
+          </ThemedText>
           <ThemedText type="small" themeColor="textSecondary">
-            {panelStatusLabel(recording.status)}
+            {formatRecordedAt(recording.created_at)}
           </ThemedText>
         </View>
-        <SymbolView
-          name={expanded ? 'chevron.up' : 'chevron.down'}
-          size={16}
-          tintColor={Theme.colors.textSecondary}
+        <RecordingActionsMenu
+          canRePractice={canRePracticeRecording(recording)}
+          canRename
+          canDownload={!recording.audio_deleted && !!recording.audio_path}
+          canDeleteAudio={!recording.audio_deleted}
+          canRegenerate={recording.status === 'failed'}
+          busy={menuBusy}
+          onSelect={onMenuAction}
+          iconSize={18}
+          edgeAlign
         />
       </Pressable>
 
       {expanded && (
         <View style={styles.panelBody}>
-          {/* Title (flex) + this attempt's own 3-dot menu, right-aligned —
-              mirrors the List card / `[id].tsx` heading row. */}
-          <View style={styles.panelTitleRow}>
-            <TitleSection
-              title={recording.title}
-              editing={titleEditing}
-              onSave={onSaveTitle}
-              saving={savingTitle}
-              saveError={titleError}
-              onEndEdit={onEndTitleEdit}
-            />
-            <View style={styles.panelMenu}>
-              <RecordingActionsMenu
-                canRePractice={canRePracticeRecording(recording)}
-                canRename
-                canDownload={!recording.audio_deleted && !!recording.audio_path}
-                canDeleteAudio={!recording.audio_deleted}
-                canRegenerate={recording.status === 'failed'}
-                busy={menuBusy}
-                onSelect={onMenuAction}
-                iconSize={18}
+          {/* The title editor — only mounted while "Rename title" is active
+              (the title itself lives in the header above). */}
+          {titleEditing && (
+            <View style={styles.panelEditRow}>
+              <TitleSection
+                title={recording.title}
+                editing
+                hideWhenIdle
+                onSave={onSaveTitle}
+                saving={savingTitle}
+                saveError={titleError}
+                onEndEdit={onEndTitleEdit}
               />
             </View>
-          </View>
+          )}
           {(downloadError || deleteAudioError || deleteRecordingError) && (
             <View style={styles.panelErrors}>
               {downloadError && (
@@ -514,6 +521,8 @@ export default function ChainDetailScreen() {
       } else if (action === 'rename') {
         clearTitleError(id);
         addRenaming(id);
+        // The editor lives in the (expanded) body — make sure it's open.
+        setExpandedIds((prev) => (prev.has(id) ? prev : new Set(prev).add(id)));
       } else if (action === 'download') handleDownloadAudio(id);
       else if (action === 'delete-audio') handleDeleteAudio(id);
       else if (action === 'delete-recording') handleDeleteRecording(id);
@@ -576,7 +585,11 @@ export default function ChainDetailScreen() {
         )}
 
         {showChain && favoriteRef && modePill && (
-          <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+          <View style={styles.scrollArea}>
+          <ScrollView
+            style={styles.scrollArea}
+            contentContainerStyle={styles.scrollContent}
+            showsVerticalScrollIndicator={false}>
             <View style={styles.chainHeader}>
               <View style={styles.chainHeaderTop}>
                 <ThemedText type="smallBold" numberOfLines={3} style={styles.chainQuestion}>
@@ -630,6 +643,8 @@ export default function ChainDetailScreen() {
               />
             ))}
           </ScrollView>
+          <ScrollFade style={styles.topFade} />
+          </View>
         )}
 
         {Platform.OS === 'web' && <WebBadge />}
@@ -664,10 +679,23 @@ const styles = StyleSheet.create({
   errorText: {
     color: '#e5484d',
   },
+  // v4 Epic K — relative wrapper so the header `ScrollFade` can sit absolute
+  // over the top of the ScrollView (content dissolves under the header
+  // instead of ending at a rigid line).
+  scrollArea: {
+    flex: 1,
+  },
+  topFade: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    height: SCROLL_FADE_HEIGHT,
+  },
   scrollContent: {
     gap: Spacing.three,
     paddingHorizontal: Spacing.four,
-    paddingTop: Spacing.three,
+    paddingTop: SCROLL_FADE_HEIGHT + Spacing.two,
     paddingBottom: BottomTabInset + Spacing.four,
   },
   chainHeader: {
@@ -711,20 +739,19 @@ const styles = StyleSheet.create({
     flex: 1,
     gap: Spacing.half,
   },
+  panelTitle: {
+    fontFamily: Theme.typography.fontFamily.bold,
+    fontSize: 16,
+    lineHeight: 21,
+  },
   panelBody: {
     gap: Theme.spacing.lg,
     paddingHorizontal: Spacing.three,
     paddingBottom: Spacing.four,
     paddingTop: Spacing.one,
   },
-  panelTitleRow: {
+  panelEditRow: {
     flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: Spacing.two,
-  },
-  panelMenu: {
-    // nudge the 3-dot glyph onto the title's first-line optical centre
-    marginTop: Spacing.half,
   },
   panelErrors: {
     gap: Spacing.one,

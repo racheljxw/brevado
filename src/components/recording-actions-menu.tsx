@@ -58,6 +58,7 @@ export function RecordingActionsMenu({
   busy,
   onSelect,
   iconSize = 20,
+  edgeAlign = false,
 }: {
   /**
    * v4 Epic I — the recording is Interview/Story AND has a question (a pool
@@ -82,6 +83,13 @@ export function RecordingActionsMenu({
   busy: boolean;
   onSelect: (action: RecordingMenuAction) => void;
   iconSize?: number;
+  /**
+   * Hug the trigger's right edge instead of centring the glyph in its box —
+   * used where the menu is the last item in a row and should line up flush
+   * with the content edge (the History list card's date, the accordion
+   * header edge).
+   */
+  edgeAlign?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [anchor, setAnchor] = useState<Anchor | null>(null);
@@ -148,7 +156,11 @@ export function RecordingActionsMenu({
         onPress={openMenu}
         disabled={busy}
         hitSlop={8}
-        style={({ pressed }) => [styles.trigger, pressed && styles.triggerPressed]}
+        style={({ pressed }) => [
+          styles.trigger,
+          edgeAlign && styles.triggerEdge,
+          pressed && styles.triggerPressed,
+        ]}
         accessibilityRole="button"
         accessibilityLabel="Recording actions">
         {busy ? (
@@ -207,6 +219,15 @@ const styles = StyleSheet.create({
     height: 22,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  triggerEdge: {
+    // Hug the row's right edge. The trigger's glyph is a horizontal
+    // `ellipsis` rotated 90°, so its layout box stays wide/short and the
+    // visible dots sit optically inset from the box edge — `flex-end` plus a
+    // negative right margin pulls the dots out flush with the content edge
+    // (the card's date, the accordion header edge). Tune on device if needed.
+    alignItems: 'flex-end',
+    marginRight: -6,
   },
   triggerPressed: {
     opacity: 0.6,

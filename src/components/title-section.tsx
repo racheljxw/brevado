@@ -46,6 +46,7 @@ export function TitleSection({
   textStyle,
   numberOfLines = 3,
   compact = false,
+  hideWhenIdle = false,
 }: {
   title: string | null;
   editing: boolean;
@@ -59,6 +60,12 @@ export function TitleSection({
   numberOfLines?: number;
   /** Smaller input box + submit icon, for the History list card. */
   compact?: boolean;
+  /**
+   * Render nothing when not `editing` — for the chain accordion, where the
+   * title is shown in the (always-visible) panel header and this component is
+   * only the editor, mounted in the body when "Rename title" fires.
+   */
+  hideWhenIdle?: boolean;
 }) {
   const [draft, setDraft] = useState('');
   const [draftError, setDraftError] = useState<string | null>(null);
@@ -140,6 +147,8 @@ export function TitleSection({
       </View>
     );
   }
+
+  if (hideWhenIdle) return null;
 
   return (
     <ThemedText

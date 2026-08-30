@@ -722,9 +722,11 @@ chain detail screen's single header star both read/write the chain root's `favor
 while download / delete audio / delete recording / regenerate / **rename title** are
 **per-*attempt*** actions in an accordion panel's own 3-dot menu. **Epic K** then added a 3-dot
 menu to the **grouped card itself** (for visual consistency with single-recording cards) — it
-acts on the **most-recent attempt** and omits "Rename title"; and it moved each accordion
-panel's menu **off the collapse header into the expanded body** (it was getting mis-tapped). See
-[Re-practice chains](#re-practice-chains). This is also the first real consumer of the
+acts on the **most-recent attempt** and omits "Rename title". A follow-up pass also reworked the
+accordion panel header — left→right: **chevron, title + date (stacked), 3-dot menu** — dropped
+the status label, and made the chevron a dedicated left-side expand target so the menu (right)
+no longer gets mis-tapped. See [Re-practice chains](#re-practice-chains). This is also the first
+real consumer of the
 `favorite` flag, which had no behavior attached to it anywhere until now.
 
 **History filters (Epic K — done).** A **mode filter** (All / Interview / Storytelling /
@@ -1066,17 +1068,27 @@ Part-1 chain root id the grouped card passes.
   case. Toggling here writes the same `recordings.favorite` the List card reads (both screens
   refetch on focus).
 - **Accordion:** one `<Card>` panel per member, **most-recent first**, most-recent **expanded by
-  default** (multi-open — expanding one doesn't collapse others). Panel header (always visible):
-  that attempt's date + status label + a chevron — **just an expand/collapse target**. Expanded
-  body: a row of `<TitleSection>` (`flex: 1`) + that attempt's **own `RecordingActionsMenu`**
-  (Rename title / Download audio / Delete audio / Delete recording / Regenerate-when-failed —
-  **plus** "Re-practice this question" — but **NOT favorite**, which stays chain-level),
-  followed by `<RecordingDetailBody>` (Question → Audio → Scores/Feedback/Transcript, or the
-  failed/processing notice). **v4 Epic K moved the 3-dot menu OFF the collapse header** and into
-  the expanded body — it sat exactly where people tap to expand and was getting hit by mistake;
-  the menu is now only reachable once a panel is open. Per-panel in-flight/error/`renaming`
-  state is keyed by recording id, same shape as the History list's per-row state (two tiny local
-  hooks, `useIdSet` / `useIdErrors`, keep it DRY).
+  default** (multi-open — expanding one doesn't collapse others).
+  - **Panel header (always visible), v4 Epic K layout — left→right: the expand chevron
+    (`chevron.right`→`chevron.down`), then the attempt's `title` (16px bold, up to 2 lines — a
+    muted "Untitled recording" for a NULL title) with the **date stacked under it**, then that
+    attempt's **own `RecordingActionsMenu`** as the rightmost item (`edgeAlign`ed). **No status
+    label** — it was removed; a non-`done` attempt's state shows in the expanded body's
+    `<RecordingDetailBody>` notice, and the grouped-card "Last attempt failed / Processing…" line
+    still covers the most-recent one on the List. The whole header row still toggles expand
+    (the nested menu `Pressable` doesn't). *(This replaces the immediately-prior Epic K attempt
+    that moved the menu into the body — mis-tapping is now handled by the chevron being a
+    separate, dedicated left-side target instead.)*
+  - **Menu actions:** Rename title / Download audio / Delete audio / Delete recording /
+    Regenerate-when-failed / Re-practice this question — but **NOT favorite**, which stays
+    chain-level. "Rename title" opens the editor **in the expanded body** (`<TitleSection
+    hideWhenIdle editing>` — mounted only while renaming; the title itself lives in the header),
+    and auto-expands the panel if it was collapsed.
+  - **Expanded body:** the rename editor (only when active) → per-panel action errors →
+    `<RecordingDetailBody>` (Question → Audio → Scores/Feedback/Transcript, or the
+    failed/processing notice).
+  - Per-panel in-flight/error/`renaming` state is keyed by recording id (two tiny local hooks,
+    `useIdSet` / `useIdErrors`).
 - **Deletion edge cases:**
   - **Delete audio / regenerate / download / edit title** on a panel only touch that attempt's
     row — local state updates that one member.
@@ -1157,17 +1169,23 @@ glance from the highlighted chip(s).
   chips.
 
 **Overlay + fade (later UI pass).** The pill row is **not** in normal flow above the list — it's
-`position: absolute` over the top of the `FlatList` (in a shared relative `listRegion`), backed
-by an opaque cream block (`filterSolid`) and, just below the pills, a **cream→transparent
-vertical fade** (`CreamFade`) so History cards **scroll seamlessly under the pills**, dissolving
-into the background rather than hard-clipping at a list edge. The fade is a stack of ~14 thin
-non-overlapping `flex: 1` `View` bands at linearly-decreasing `opacity` (top band = solid
-`Palette.cream`, seamless with `filterSolid`; bottom band = 0) — **not** `expo-linear-gradient`,
-which this project deliberately doesn't depend on. The overlay's height is measured via
-`onLayout` (`filterZoneHeight`) and the `FlatList` `contentContainerStyle.paddingTop` +
-`RefreshControl` `progressViewOffset` are set to it, so the first card and the pull-to-refresh
-spinner both sit just below the fade. `pointerEvents="box-none"` on the overlay keeps the pills
-tappable while touches elsewhere pass through to the list.
+`position: absolute` over the top of the `FlatList` (in a shared relative `listRegion`), with a
+**`<ScrollFade>` as `StyleSheet.absoluteFill` BEHIND the pills**: `opaqueFraction={0.45}` keeps
+the top ~45% solid cream (so the top of the pill row cleanly hides cards), then it fades
+cream→transparent from **~mid-pill** down through the `filterZone`'s `paddingBottom`. So History
+cards **scroll seamlessly under the pills**, dissolving into the background, and the first card
+sits only a small gap below the row (the earlier version's separate opaque block + 32px tail
+left too big a gap). The overlay's height is measured via `onLayout` (`filterZoneHeight`) and
+the `FlatList` `contentContainerStyle.paddingTop` (+ `RefreshControl` `progressViewOffset`) are
+set to it. `pointerEvents="box-none"` on the overlay keeps the pills tappable while touches
+elsewhere pass through to the list.
+
+**`ScrollFade`** (`src/components/scroll-fade.tsx`) is the shared primitive for all of this — a
+cream→transparent stack of 16 thin non-overlapping `flex: 1` `View` bands at linearly-decreasing
+opacity (**not** `expo-linear-gradient`, which this project deliberately doesn't depend on).
+`opaqueFraction` keeps the first N% fully opaque before the fade starts; `SCROLL_FADE_HEIGHT`
+(22) is the standard strip height. See "[Header fades everywhere](#header-fades)" for its use on
+the other screens.
 
 **The filtering logic (`visibleChains` `useMemo`).** Operates on `allChains = buildChains(...)`,
 **not** raw recordings — filters whole chains:
@@ -1227,12 +1245,11 @@ filters — so tapping a day while "favorites only" is on shows that day's favor
    List → both filters still applied and highlighted. Tap a calendar day → lands in List still
    filtered by mode + favorites (search cleared if it was set).
 8. **Pill row + fade:** confirm all 5 chips sit on one line and scroll horizontally; scroll the
-   list and confirm cards pass **under** the pills, fading out (no hard cut-off line). Confirm
-   the first card isn't hidden behind the pills at rest, and pull-to-refresh spins below them.
-9. **Rename (3 places):** from a single-recording list card's 3-dot menu → "Rename title" → the
-   heading becomes an inline editor; save → the card shows the new title, Supabase row updated.
-   Repeat from the detail screen's menu and from an accordion panel's menu (panel must be
-   expanded first — the menu isn't on the collapsed header anymore).
+   list and confirm cards pass **under** the pills, fading out from ~mid-pill (no hard cut-off
+   line, and only a small gap between the pills and the first card at rest). Pull-to-refresh
+   spins below the pills.
+9. **Header fades:** on the recording detail, chain accordion, Streaks home and Streaks metric
+   screens, scroll up and confirm content dissolves into the header rather than ending abruptly.
 10. **Grouped card menu:** a multi-attempt card now shows a 3-dot menu in the same spot as every
     other card (no "Rename title" item). Run Download / Delete audio on it → affects only the
     most-recent attempt. "Delete recording" on a 2-attempt chain → it collapses to a normal
@@ -1240,6 +1257,38 @@ filters — so tapping a day while "favorites only" is on shows that day's favor
 11. **Streaks badge:** open a metric detail screen with a real trend, cycle Week/Month/Year/All
     Time → the top-right badge shows "%" over "Last N days" / "Last 30 days" / etc., always on
     **one line**, never wrapping.
+12. **Rename (3 places):** from a single-recording list card's 3-dot menu → "Rename title" → the
+    heading becomes an inline editor; save → the card shows the new title, Supabase row updated.
+    Repeat from the detail screen's menu and from an accordion panel's menu (the menu is on the
+    header, rightmost; choosing Rename expands the panel and shows the editor in the body).
+13. **3-dot / star alignment:** on the list cards, the 3-dot glyph lines up (roughly) with the
+    right edge of the date below it, and the star sits snug next to the menu.
+14. **Accordion header:** chevron on the left, title + date stacked in the middle, 3-dot menu on
+    the right; no "Done"/"Processing" label. Tapping the chevron or the title area toggles;
+    tapping the menu opens it.
+
+## Header fades
+
+<a id="header-fades"></a>
+v4 Epic K (later UI pass) — the same cream→transparent `<ScrollFade>` used behind the History
+filter pills is applied on **every screen with a fixed header above a scrollable region**, so
+content dissolves smoothly under the header when you scroll up instead of ending at a rigid
+line. The primitive is `src/components/scroll-fade.tsx` (see
+[History filters](#history-filters) for how it's built).
+
+**Pattern:** wrap the `ScrollView` in a relative `View style={{flex:1}}` (`scrollArea`), render
+`<ScrollFade style={styles.topFade} />` as an absolutely-positioned sibling pinned to the top
+(`height: SCROLL_FADE_HEIGHT`, 22), and bump the scroll content's `paddingTop` to
+`SCROLL_FADE_HEIGHT + Spacing.two` so nothing hides behind the fade at rest. `opaqueFraction`
+defaults to `0` here (fully opaque right under the header → transparent 22px down). A
+`RefreshControl`, where present, gets `progressViewOffset={SCROLL_FADE_HEIGHT}`.
+
+**Applied to:** `history/[id].tsx` (recording detail), `history/chain/[rootId].tsx` (chain
+accordion), `streaks/index.tsx` (Streaks home), `streaks/[metric].tsx` (metric detail). The
+**History list** already has its (richer, `opaqueFraction`'d, `onLayout`-measured) version
+behind the filter pills. **Not applied to:** the Record flow and Settings — neither has the
+"fixed header over a long scroll" shape (the Record screen's only `ScrollView` is the nested
+`QuestionArea` slot).
 
 ## v4 wrap-up
 
@@ -1268,15 +1317,19 @@ flagged below, not caused by any v4 change.
   a favorites-only toggle on the List view, client-side over the already-built chains,
   combining with the existing search + calendar day filter. New empty state + "Clear filters";
   filters persist across the Calendar/List toggle. First app-wide consumer of `recordings.favorite`.
-  See [History filters](#history-filters). **A follow-up UI pass then:** put the filter pills on
-  one horizontal-scroll row (order All → Favorites → modes) over a cream→transparent fade so
-  cards scroll under them; gave the **grouped chain card** its own 3-dot menu (acts on the most
-  recent attempt, no rename) + moved each **accordion panel's** menu into the expanded body;
-  **removed the standalone title-edit pencil everywhere** — "Rename title" is now a 3-dot menu
-  item opening the shared inline `TitleSection` editor (list card, detail screen, accordion
-  panel); and widened the Streaks metric-detail badge so its "Last N days" label fits on one
-  line. See [Recording titles](#recording-titles), [Re-practice chains](#re-practice-chains),
-  [Streaks detail screen](#streaks-detail-screen).
+  See [History filters](#history-filters). **Follow-up UI passes then:** filter pills on one
+  horizontal-scroll row (All → Favorites → modes); **removed the standalone title-edit pencil
+  everywhere** — "Rename title" is a 3-dot menu item opening the shared inline `TitleSection`
+  editor (list card / detail screen / accordion panel); gave the **grouped chain card** its own
+  3-dot menu (most-recent attempt, no rename); **reworked the accordion panel header** (chevron
+  left · title + date stacked · 3-dot menu right; no status label); the shared **`<ScrollFade>`**
+  primitive — a cream→transparent band stack — now sits behind the filter pills (fading from
+  ~mid-pill, tighter gap to the first card) **and under the header on every scroll screen**
+  (recording detail, chain accordion, Streaks home + metric detail) so content dissolves rather
+  than hard-cutting; tightened the list card's star/3-dot cluster + `edgeAlign`ed the menu; and
+  widened the Streaks metric-detail badge so its "Last N days" label fits on one line. See
+  [Recording titles](#recording-titles), [Re-practice chains](#re-practice-chains),
+  [Header fades](#header-fades), [Streaks detail screen](#streaks-detail-screen).
 
 **Built and internally consistent, confirmed by reading the code:**
 - The whole re-practice loop closes: Record (daily question, or a re-practice handoff) → upload
@@ -1309,14 +1362,24 @@ flagged below, not caused by any v4 change.
   `package.json`. It ran clean earlier in Epic K; the environment dropped it. `tsc` is the only
   static check currently passing. Re-add eslint (hand the install to the human per the
   [dependency convention](#dependency-installation-convention)) before relying on lint again.
-- **Epic K UI pass, unverified on device:** (a) the filter pills are an **`onLayout`-measured
-  absolute overlay** on the list with the list content inset by the measured height — a wrong
-  measurement (or a slow first layout) would briefly mis-inset the first card; the 70px default
-  keeps the mount jump small. (b) The **cream fade** is a 14-band stacked-`View` approximation,
-  not a real gradient — banding *shouldn't* be visible for a same-hue fade over 32px but hasn't
-  been eyeballed. (c) `TitleSection`'s inline editor now `autoFocus`es right as the
-  `RecordingActionsMenu` `Modal` fades out — iOS *usually* pops the keyboard fine through that,
-  but if it doesn't, defer the `'rename'` handler by a frame.
+- **Epic K UI passes, unverified on device:** (a) the filter pills are an **`onLayout`-measured
+  absolute overlay**; a wrong/slow first measurement briefly mis-insets the first card (56px
+  default keeps the jump small). (b) **`<ScrollFade>`** is a 16-band stacked-`View`
+  approximation, not a real gradient — banding *shouldn't* show for a same-hue cream fade over
+  22px but hasn't been eyeballed; `opaqueFraction={0.45}` behind the filter pills is a guess at
+  "starts fading mid-pill". (c) **`edgeAlign`** on the 3-dot menu right-aligns a *rotated*
+  `ellipsis` glyph whose layout box stays wide — the `marginRight: -6` compensation is a guess;
+  the dots may land a few px off the date edge and want a device tweak. (d) `TitleSection`'s
+  inline editor `autoFocus`es right as the `RecordingActionsMenu` `Modal` fades out — iOS
+  *usually* pops the keyboard fine, but if not, defer the `'rename'` handler by a frame.
+  (e) The header-fade wrap adds a `flex: 1` `View` + `flex: 1` on each `ScrollView` — the
+  screens rendered fine without explicit ScrollView flex before, so this is belt-and-suspenders,
+  but worth confirming nothing over/under-scrolls.
+- **Accordion header dropped the status label** (per request). A `failed`/`processing` *older*
+  attempt now only shows its state once expanded (the `RecordingDetailBody` notice); the
+  grouped-card "Last attempt failed / Processing…" line still covers the most-recent one. If
+  surfacing older-attempt failures at a glance matters, a small status dot could go back on the
+  collapsed header.
 - **Grouped chain card "Delete recording"** deletes only the **most-recent attempt** (the menu
   acts on `chain.members[0]`), not the whole group, despite the confirm dialog's singular
   "removes the recording…" wording. Coherent (the chain shrinks; at 1 member it becomes a normal
@@ -2240,8 +2303,8 @@ value is unchanged — display strings only.
   `Theme.colors.onAccent` label** (the same flip the mode-select pill and selected calendar day
   use), so a narrowed list is obvious at a glance. The pill row is **overlaid** on the top of
   the `FlatList` (`position: absolute` in a shared `listRegion`) with a cream→transparent
-  `CreamFade` beneath it so cards scroll *under* the pills — see the "Overlay + fade" note in
-  [History filters](#history-filters).
+  `<ScrollFade opaqueFraction={0.45}>` behind it (fading from ~mid-pill down) so cards scroll
+  *under* the pills — see the "Overlay + fade" note in [History filters](#history-filters).
   - **Mode chips:** `All` / `Interview` / `Storytelling` / `Miscellaneous`, single-select
     (`ModeFilter = 'all' | RecordingMode`; `MODE_FILTER_OPTIONS` a local const since it carries
     the `'all'` option `MODE_LABELS` doesn't).
@@ -2323,12 +2386,14 @@ value is unchanged — display strings only.
     (`formatRecordedAt`, `textSecondary`) **right-aligned opposite it**. **No status badge** —
     it was dropped from the list card in this pass; only the detail screen still shows one
     (`getStatusPresentation`).
-  - **Heading-line actions (as of Epic D Part 4):** the title has `flex: 1` so the
-    `FavoriteStar` (active tint `Theme.colors.favoriteGold`) and the **`RecordingActionsMenu`**
-    vertical-3-dot button sit as a fixed cluster pinned to the card's right edge regardless of
-    title length. The old separate "audio actions row" (`DownloadAudioButton` /
-    `DeleteAudioButton`) is **gone** — those two components were deleted and their actions moved
-    into the menu. See the "3-dot actions menu" bullet below.
+  - **Heading-line actions (Epic D Part 4; tightened v4 Epic K):** the title (`flex: 1`) shares
+    the line with a **tight `FavoriteStar` + `RecordingActionsMenu` cluster** (`headingActions`,
+    `gap: Spacing.one`) pinned to the card's right edge. The menu is passed **`edgeAlign`** so
+    its 3-dot glyph lines up flush with the right edge of the date/time in the meta row below
+    (`edgeAlign` right-aligns the trigger's glyph — the rotated `ellipsis` is optically inset,
+    so it also carries a negative right margin; **may need an on-device px nudge**). The old
+    separate "audio actions row" (`DownloadAudioButton` / `DeleteAudioButton`) was deleted back
+    in Part 4. See the "3-dot actions menu" bullet below.
   - Error text for a menu action that failed (`downloadAudioError` / `deleteAudioError` /
     `deleteRecordingError` / `regenerateError`) renders as a small red line at the bottom of
     the card. Same per-row keyed-by-id in-flight/error state as before, now with
