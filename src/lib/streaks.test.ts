@@ -17,10 +17,12 @@ import { describe, test } from 'node:test';
 
 import { localDayKey } from './format-time';
 import {
+  averageClaritySupportingMetrics,
   buildDailyAverages,
   buildGraphPoints,
   calculateStreak,
   calculateTrend,
+  type ClaritySupportingRecording,
   type DailyAverage,
   type StreakRecording,
 } from './streaks';
@@ -214,6 +216,20 @@ describe('calculateTrend', () => {
     assert.equal(result.status === 'ok' && result.percentChange, 50);
   });
 
+  test('falls back to the earliest day when practice only started within the window', () => {
+    // Both days are inside the last 7 — nothing on/before today−7 — so instead
+    // of 'insufficient-history' it compares against the earliest day (a real
+    // trend over a 3-day span; the UI labels it "Last 3 days").
+    const da: DailyAverage[] = [
+      { date: '2026-08-26', average: 40 },
+      { date: '2026-08-29', average: 60 },
+    ];
+    const result = calculateTrend(da, 7);
+    assert.equal(result.status, 'ok');
+    assert.equal(result.status === 'ok' && result.comparisonDate, '2026-08-26');
+    assert.equal(result.status === 'ok' && result.percentChange, 50);
+  });
+
   test('insufficient history when only today has data', () => {
     assert.deepEqual(calculateTrend([{ date: '2026-08-29', average: 80 }], 7), {
       status: 'insufficient-history',
@@ -303,5 +319,86 @@ describe('buildGraphPoints', () => {
 
   test('all-time: [] when there is no data', () => {
     assert.deepEqual(buildGraphPoints([], 'all-time'), []);
+  });
+});
+
+describe('averageClaritySupportingMetrics', () => {
+  function support(
+    created_at: string,
+    metrics: { filler_word_rate?: number | null; repetition_count?: number | null } | null,
+    grammar_issue_count: number | null,
+    status = 'done',
+  ): ClaritySupportingRecording {
+    return {
+      status,
+      created_at,
+      metrics:
+        metrics === null
+          ? null
+          : {
+              filler_word_rate: metrics.filler_word_rate ?? null,
+              repetition_count: metrics.repetition_count ?? null,
+            },
+      grammar_issue_count,
+    };
+  }
+
+  test('averages each field independently over done recordings in the window', () => {
+    const result = averageClaritySupportingMetrics(
+      [
+        support(daysAgoIso(1), { filler_word_rate: 0.1, repetition_count: 2 }, 3),
+        support(daysAgoIso(3), { filler_word_rate: 0.2, repetition_count: 4 }, 5),
+      ],
+      7,
+    );
+    assert.deepEqual(result, {
+      fillerWordRate: 0.15000000000000002,
+      repetitionCount: 3,
+      grammarIssueCount: 4,
+    });
+  });
+
+  test('excludes recordings outside the window (but all-time keeps them)', () => {
+    const recs = [
+      support(daysAgoIso(2), { filler_word_rate: 0.1, repetition_count: 1 }, 1),
+      support(daysAgoIso(40), { filler_word_rate: 0.5, repetition_count: 9 }, 9),
+    ];
+    assert.deepEqual(averageClaritySupportingMetrics(recs, 7), {
+      fillerWordRate: 0.1,
+      repetitionCount: 1,
+      grammarIssueCount: 1,
+    });
+    assert.deepEqual(averageClaritySupportingMetrics(recs, 'all-time'), {
+      fillerWordRate: 0.3,
+      repetitionCount: 5,
+      grammarIssueCount: 5,
+    });
+  });
+
+  test('non-done recordings never contribute', () => {
+    const result = averageClaritySupportingMetrics(
+      [support(daysAgoIso(1), { filler_word_rate: 0.9, repetition_count: 9 }, 9, 'processing')],
+      7,
+    );
+    assert.deepEqual(result, { fillerWordRate: null, repetitionCount: null, grammarIssueCount: null });
+  });
+
+  test('a field with no data anywhere is null; others still average', () => {
+    const result = averageClaritySupportingMetrics(
+      [
+        support(daysAgoIso(1), { filler_word_rate: 0.1, repetition_count: null }, null),
+        support(daysAgoIso(2), null, 4),
+      ],
+      30,
+    );
+    assert.deepEqual(result, { fillerWordRate: 0.1, repetitionCount: null, grammarIssueCount: 4 });
+  });
+
+  test('returns all null for no data', () => {
+    assert.deepEqual(averageClaritySupportingMetrics([], 7), {
+      fillerWordRate: null,
+      repetitionCount: null,
+      grammarIssueCount: null,
+    });
   });
 });

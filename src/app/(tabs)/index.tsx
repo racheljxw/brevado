@@ -234,7 +234,6 @@ function RecordingPlayback({
   onDiscard,
   onRetryKickoff,
   onSeeDetails,
-  onChangeMode,
 }: {
   uri: string;
   uploadState: UploadState;
@@ -245,7 +244,6 @@ function RecordingPlayback({
   onDiscard: () => void;
   onRetryKickoff: () => void;
   onSeeDetails: () => void;
-  onChangeMode: () => void;
 }) {
   const theme = useTheme();
   const isUploading = uploadState === 'uploading';
@@ -308,16 +306,17 @@ function RecordingPlayback({
           </Pressable>
         </>
       ) : (
-        <>
-          <Pressable
-            style={({ pressed }) => [styles.discardButton, pressed && styles.pressed]}
-            onPress={onDiscard}>
-            <ThemedText type="smallBold" themeColor="textSecondary">
-              Record another
-            </ThemedText>
-          </Pressable>
-          <BackLink label="Change mode" onPress={onChangeMode} style={styles.discardButton} />
-        </>
+        // Once the recording is done, "Record another" is the only reset
+        // affordance — "Change mode" was removed here (it doesn't make sense
+        // to offer switching mode after a take is already recorded/uploaded;
+        // leaving the screen and coming back resets to mode-select anyway).
+        <Pressable
+          style={({ pressed }) => [styles.discardButton, pressed && styles.pressed]}
+          onPress={onDiscard}>
+          <ThemedText type="smallBold" themeColor="textSecondary">
+            Record another
+          </ThemedText>
+        </Pressable>
       )}
     </Card>
   );
@@ -1232,7 +1231,6 @@ export default function RecordScreen() {
                     uploadedRecordingId &&
                     router.push({ pathname: '/history/[id]', params: { id: uploadedRecordingId } })
                   }
-                  onChangeMode={handleBackToModeSelect}
                 />
               )}
             </>

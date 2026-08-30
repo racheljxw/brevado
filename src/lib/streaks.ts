@@ -22,6 +22,22 @@ import { addLocalDays, dayKeyToDate, localDayKey } from './format-time';
 // trend metric, just a Clarity grounding input.
 export type ScoreMetric = 'impact_score' | 'clarity_score' | 'structure_score';
 
+// The three scored metrics, in display order, with the short slug used in the
+// Streaks detail route (`/streaks/[metric]`) and the UI copy shared by the
+// home cards (Part 2) and the detail screens (Part 3). Kept here — next to
+// `ScoreMetric` — so the two screens can't drift on label/description/slug.
+// Plain string data, no React, consistent with the rest of this module.
+export const SCORE_METRICS: {
+  key: ScoreMetric;
+  slug: 'impact' | 'clarity' | 'structure';
+  label: string;
+  description: string;
+}[] = [
+  { key: 'impact_score', slug: 'impact', label: 'Impact', description: 'Relevance & engagement' },
+  { key: 'clarity_score', slug: 'clarity', label: 'Clarity', description: 'Brevity & grammar' },
+  { key: 'structure_score', slug: 'structure', label: 'Structure', description: 'Speaking frameworks' },
+];
+
 // The minimal shape these functions need off a `recordings` row. `RecordingRow`
 // (once Part 2 widens `fetchRecordings`) is assignable to this; extra fields
 // are ignored.
@@ -194,12 +210,16 @@ export function calculateStreak(recordings: StreakRecording[]): StreakResult {
  *     `{ status: 'no-data' }`.
  *   - Windowed: the comparison target is `today − windowDays`. If that exact
  *     day has no data, OR its value is exactly 0, walk further back day by
- *     day to the most recent earlier day that has real, non-zero data. None
- *     exists → `{ status: 'insufficient-history', ... }` (never a
- *     divide-by-zero).
+ *     day to the most recent earlier day that has real, non-zero data. If
+ *     nothing is that old — practice only *started* within the window — fall
+ *     back to the **earliest** non-zero day instead, so a real trend still
+ *     shows over the shorter span (the UI surfaces "Last N days" rather than
+ *     the nominal window). Only a lone day of data, or an all-zero history,
+ *     stays `{ status: 'insufficient-history', ... }`.
  *   - `'all-time'`: the comparison is the earliest dated entry with a
  *     non-zero value.
- *   - `percentChange = ((today − comparison) / comparison) * 100`.
+ *   - `percentChange = ((today − comparison) / comparison) * 100` (never a
+ *     divide-by-zero — every comparison path excludes `0`).
  */
 export function calculateTrend(
   dailyAverages: DailyAverage[],
@@ -224,6 +244,12 @@ export function calculateTrend(
     comparison = [...earlier]
       .reverse()
       .find((d) => d.date <= targetKey && d.average !== 0);
+    // Nothing that far back — practice started within the window. Compare
+    // against the earliest non-zero day so a real trend still shows; the
+    // span is shorter than `windowDays` and the UI reflects that.
+    if (!comparison) {
+      comparison = earlier.find((d) => d.average !== 0);
+    }
   }
 
   if (!comparison) {
@@ -370,4 +396,84 @@ export function buildGraphPoints(dailyAverages: DailyAverage[], tab: GraphTab): 
     cursor = new Date(qYear, qStartMonth + 3, 1);
   }
   return points;
+}
+
+// ---------------------------------------------------------------------------
+// 5. averageClaritySupportingMetrics
+// ---------------------------------------------------------------------------
+
+// The raw metrics behind the Clarity detail screen's three supporting badges
+// (v3 Epic G Part 3). These are NOT a trend metric — they never feed
+// `calculateTrend` / `buildGraphPoints`; they're a windowed read-out of the
+// deterministic signals (from `metrics.py`) plus the model's grammar-issue
+// count that ground the Clarity *score*. Only surfaced on `/streaks/clarity`.
+//
+// Structural input shape (not importing `RecordingMetrics` from
+// `recordings.ts`, to keep this module dependency-free). A widened
+// `RecordingRow` — which now selects `metrics` + `grammar_issue_count` (Part
+// 3) — is assignable to this.
+export type ClaritySupportingRecording = {
+  status: string;
+  created_at: string;
+  metrics: { filler_word_rate: number | null; repetition_count: number | null } | null;
+  grammar_issue_count: number | null;
+};
+
+export type ClaritySupportingAverages = {
+  /** Mean filler-word rate as a FRACTION (0–1), same convention as
+   *  `metrics.filler_word_rate`. `null` if nothing in the window has it. */
+  fillerWordRate: number | null;
+  /** Mean immediate-repetition count per recording. `null` if none. */
+  repetitionCount: number | null;
+  /** Mean model-assessed grammar-issue count per recording. `null` if none. */
+  grammarIssueCount: number | null;
+};
+
+/**
+ * Averages the three Clarity supporting metrics over the detail screen's
+ * currently-selected tab window — `7` (Week) / `30` (Month) / `365` (Year) /
+ * `'all-time'`, the same window numbers `calculateTrend` takes, so these
+ * badges move in lockstep with the headline % and the graph.
+ *
+ * Only `status === 'done'` recordings whose local day is within the last
+ * `window` days count (`'all-time'` = no lower bound). Each field averages
+ * independently over just the recordings that have a finite value for it — a
+ * pre-v3 row with no `metrics` / `grammar_issue_count` simply doesn't
+ * contribute to that field. A field with nothing to average is `null`.
+ *
+ * Averages are NOT rounded — the UI formats each (filler rate as a %,
+ * repetition / grammar as one-decimal counts).
+ */
+export function averageClaritySupportingMetrics(
+  recordings: ClaritySupportingRecording[],
+  window: TrendWindow,
+): ClaritySupportingAverages {
+  const startKey =
+    window === 'all-time'
+      ? null
+      : localDayKey(addLocalDays(startOfLocalToday(), -(window - 1)));
+
+  const filler: number[] = [];
+  const repetition: number[] = [];
+  const grammar: number[] = [];
+
+  for (const recording of recordings) {
+    if (recording.status !== 'done') continue;
+    if (startKey !== null && localDayKey(new Date(recording.created_at)) < startKey) continue;
+
+    const rate = recording.metrics?.filler_word_rate;
+    if (typeof rate === 'number' && Number.isFinite(rate)) filler.push(rate);
+
+    const reps = recording.metrics?.repetition_count;
+    if (typeof reps === 'number' && Number.isFinite(reps)) repetition.push(reps);
+
+    const issues = recording.grammar_issue_count;
+    if (typeof issues === 'number' && Number.isFinite(issues)) grammar.push(issues);
+  }
+
+  return {
+    fillerWordRate: filler.length ? mean(filler) : null,
+    repetitionCount: repetition.length ? mean(repetition) : null,
+    grammarIssueCount: grammar.length ? mean(grammar) : null,
+  };
 }

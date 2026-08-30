@@ -78,6 +78,12 @@ export class RecordingUploadError extends Error {
 // from every Streaks aggregation. This makes `RecordingRow` structurally a
 // `StreakRecording` (src/lib/streaks.ts). The History screens don't read
 // these — they just ride along on the widened select.
+// `metrics` / `grammar_issue_count` were added in v3 Epic G Part 3 — the
+// Streaks → Clarity detail screen (`/streaks/clarity`) averages the raw
+// filler-rate / repetition / grammar-issue signals over the selected window
+// as supporting badges (`averageClaritySupportingMetrics` in streaks.ts).
+// Same "ride along on one query" approach — the History screens and the
+// other two Streaks detail screens don't read them.
 export type RecordingRow = {
   id: string;
   mode: string;
@@ -91,13 +97,15 @@ export type RecordingRow = {
   impact_score: number | null;
   clarity_score: number | null;
   structure_score: number | null;
+  grammar_issue_count: number | null;
+  metrics: RecordingMetrics | null;
 };
 
 export async function fetchRecordings(userId: string): Promise<RecordingRow[]> {
   const { data, error } = await supabase
     .from('recordings')
     .select(
-      'id, mode, question, title, status, created_at, favorite, audio_deleted, audio_path, impact_score, clarity_score, structure_score'
+      'id, mode, question, title, status, created_at, favorite, audio_deleted, audio_path, impact_score, clarity_score, structure_score, grammar_issue_count, metrics'
     )
     .eq('user_id', userId)
     .order('created_at', { ascending: false });
@@ -194,9 +202,11 @@ export async function getActiveRecordingCount(userId: string): Promise<number> {
 // (the raw filler/WPM/repetition numbers were replaced by the three score
 // badges — see `RecordingDetail` below), so `fetchRecordingById` stopped
 // selecting `metrics`. The metrics still compute and store on every
-// recording; this type stays for v3 Epic G, where Streaks → Clarity's
-// detail screen surfaces them again as supporting badges (over the list
-// query, which will widen for scores + metrics there).
+// recording; as of v3 Epic G Part 3 `fetchRecordings` selects `metrics`
+// again (it rides along on the one Streaks/History query) and the Streaks →
+// Clarity detail screen (`/streaks/clarity`) surfaces filler-rate /
+// repetition (from here) + `grammar_issue_count` as windowed supporting
+// badges — see `averageClaritySupportingMetrics` in `src/lib/streaks.ts`.
 export type RecordingMetrics = {
   filler_word_rate: number | null;
   words_per_minute: number | null;
