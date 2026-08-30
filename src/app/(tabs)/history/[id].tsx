@@ -1,24 +1,15 @@
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
-import { SymbolView } from 'expo-symbols';
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
-import {
-  ActivityIndicator,
-  Platform,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  TextInput,
-  View,
-} from 'react-native';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { ActivityIndicator, Platform, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { HeaderBackLink } from '@/components/app-header';
-import { AudioPlaybackControls } from '@/components/audio-playback-controls';
-import { Card } from '@/components/card';
 import { FavoriteStar } from '@/components/favorite-star';
 import { RecordingActionsMenu, type RecordingMenuAction } from '@/components/recording-actions-menu';
+import { RecordingDetailBody } from '@/components/recording-detail-body';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
+import { TitleSection } from '@/components/title-section';
 import { WebBadge } from '@/components/web-badge';
 import { BottomTabInset, MaxContentWidth, Spacing, Theme } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
@@ -29,7 +20,6 @@ import { TERMINAL_STATUSES } from '@/lib/recording-status';
 import {
   canRePracticeRecording,
   fetchRecordingById,
-  getRecordingAudioUrl,
   rePracticeNavParams,
   setFavorite,
   shareRecordingAudio,
@@ -38,361 +28,6 @@ import {
 } from '@/lib/recordings';
 
 type ScreenState = 'loading' | 'not-found' | 'error' | 'loaded';
-type AudioState = 'idle' | 'loading' | 'ready' | 'error';
-
-// v2 Epic D Part 2 — inline title editing. Mirrors the custom-question
-// pencil-edit in `src/app/(tabs)/index.tsx`'s `QuestionArea` (Epic C Part 3):
-// display state = the text + a pencil; tapping the pencil opens a bordered
-// input box (Theme tokens, icon submit) pre-filled with the current value;
-// confirm saves, "Cancel" reverts. That pattern isn't extracted into a shared
-// component (it lives inline in `QuestionArea`), so this mirrors its
-// behaviour rather than importing it.
-//
-// `title` is nullable — a recording from before Part 1, or one where
-// generation returned nothing usable. Editing then just starts from an empty
-// field (display shows a muted "Untitled recording"), so a user can set a
-// title on an older recording for the first time. Validation matches custom
-// questions exactly: non-empty after trim, nothing else.
-//
-// The component owns the in-progress `draft` + its local validation error and
-// whether the box is open (`editing`); the parent owns the persisted `title`
-// and the async save (`saving` / `saveError`). `onSave` resolves `true` once
-// the write has actually persisted, which is the signal to close the editor —
-// so a failed save keeps the box open with the error shown, and the displayed
-// title only ever changes after Supabase confirms.
-//
-// v2 Epic D Part 7 — restyled as the screen's main heading: bigger, bolder
-// text (was the `subtitle` `ThemedText` type; now a dedicated style closer
-// to the design's large-title treatment). Purely visual — the interaction
-// and validation above are unchanged from Part 2.
-function TitleSection({
-  title,
-  onSave,
-  saving,
-  saveError,
-  onCancelEdit,
-}: {
-  title: string | null;
-  onSave: (next: string) => Promise<boolean>;
-  saving: boolean;
-  saveError: string | null;
-  onCancelEdit: () => void;
-}) {
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState('');
-  const [draftError, setDraftError] = useState<string | null>(null);
-
-  function beginEditing() {
-    setDraft(title ?? '');
-    setDraftError(null);
-    setEditing(true);
-  }
-
-  async function submitDraft() {
-    const trimmed = draft.trim();
-    if (!trimmed) {
-      setDraftError('Enter a title.');
-      return;
-    }
-    setDraftError(null);
-    const ok = await onSave(trimmed);
-    if (ok) setEditing(false);
-  }
-
-  function cancelEditing() {
-    setEditing(false);
-    setDraft('');
-    setDraftError(null);
-    onCancelEdit();
-  }
-
-  if (editing) {
-    return (
-      <View style={styles.titleEditSection}>
-        <View style={styles.titleInputBox}>
-          <TextInput
-            style={styles.titleInputField}
-            placeholder="Recording title"
-            placeholderTextColor="#56453D80"
-            value={draft}
-            onChangeText={(t) => {
-              setDraft(t);
-              if (draftError) setDraftError(null);
-            }}
-            autoFocus
-            returnKeyType="done"
-            onSubmitEditing={submitDraft}
-            editable={!saving}
-          />
-          {saving ? (
-            <ActivityIndicator style={styles.titleSubmit} color={Theme.colors.accent} />
-          ) : (
-            <Pressable
-              onPress={submitDraft}
-              hitSlop={8}
-              style={({ pressed }) => [styles.titleSubmit, pressed && styles.pressed]}
-              accessibilityRole="button"
-              accessibilityLabel="Save title">
-              <SymbolView name="arrow.up.circle.fill" size={26} tintColor={Theme.colors.accent} />
-            </Pressable>
-          )}
-        </View>
-        {(draftError || saveError) && (
-          <ThemedText type="small" style={styles.errorText}>
-            {draftError ?? saveError}
-          </ThemedText>
-        )}
-        <Pressable
-          onPress={cancelEditing}
-          hitSlop={8}
-          disabled={saving}
-          style={({ pressed }) => pressed && styles.pressed}>
-          <ThemedText type="link">Cancel</ThemedText>
-        </Pressable>
-      </View>
-    );
-  }
-
-  return (
-    <View style={styles.titleRow}>
-      <ThemedText
-        themeColor={title ? 'text' : 'textSecondary'}
-        numberOfLines={3}
-        style={[styles.titleText, styles.titleFlex]}>
-        {title ?? 'Untitled recording'}
-      </ThemedText>
-      <Pressable
-        onPress={beginEditing}
-        hitSlop={8}
-        style={({ pressed }) => [styles.titleEditPencil, pressed && styles.pressed]}
-        accessibilityRole="button"
-        accessibilityLabel="Edit title">
-        <SymbolView name="pencil" size={18} tintColor={Theme.colors.textSecondary} />
-      </Pressable>
-    </View>
-  );
-}
-
-// Audio playback section: reused as-is regardless of the recording's
-// `status` — audio finishes uploading (and the row is created) *before*
-// backend processing ever starts, so it exists for a pending/processing/
-// failed recording just as much as a done one. Only `audio_deleted` changes
-// what this renders.
-//
-// v2 Epic D Part 4 — the "Download audio" / "Delete audio" rows that used to
-// live here are gone; those actions (plus "Delete recording" and, when
-// failed, "Regenerate report") now live in the header's `RecordingActionsMenu`.
-// This section is purely playback again.
-//
-// v2 Epic D Part 7 — every branch now renders inside the same `<Card>`
-// treatment (previously only the deleted/missing/error branches did; the
-// "ready" branch rendered `AudioPlaybackControls` bare) so the audio section
-// always reads as one consistent playback panel, matching the design's
-// pill-button-in-a-panel look.
-function AudioSection({ recording }: { recording: RecordingDetail }) {
-  const theme = useTheme();
-  const [audioState, setAudioState] = useState<AudioState>('idle');
-  const [audioUrl, setAudioUrl] = useState<string | null>(null);
-  const [audioError, setAudioError] = useState<string | null>(null);
-
-  const loadAudioUrl = useCallback(() => {
-    if (!recording.audio_path) return;
-    setAudioState('loading');
-    setAudioError(null);
-    getRecordingAudioUrl(recording.audio_path)
-      .then((url) => {
-        setAudioUrl(url);
-        setAudioState('ready');
-      })
-      .catch((err) => {
-        setAudioError(err instanceof Error ? err.message : 'Could not load audio.');
-        setAudioState('error');
-      });
-  }, [recording.audio_path]);
-
-  useEffect(() => {
-    if (recording.audio_deleted || !recording.audio_path) return;
-    loadAudioUrl();
-  }, [recording.audio_deleted, recording.audio_path, loadAudioUrl]);
-
-  if (recording.audio_deleted) {
-    return (
-      <ThemedText type="small" themeColor="textSecondary">
-        Audio deleted — this recording&apos;s audio file has been removed to free up space. Its transcript and
-        feedback below aren&apos;t affected.
-      </ThemedText>
-    );
-  }
-
-  if (!recording.audio_path) {
-    // Shouldn't happen — a row is only ever created after a successful
-    // upload (see src/lib/recordings.ts) — but don't let a missing path
-    // crash the screen.
-    return (
-      <ThemedText type="small" themeColor="textSecondary">
-        No audio is available for this recording.
-      </ThemedText>
-    );
-  }
-
-  if (audioState === 'loading' || audioState === 'idle') {
-    return (
-      <View style={styles.centerRow}>
-        <ActivityIndicator color={theme.textSecondary} />
-      </View>
-    );
-  }
-
-  if (audioState === 'error') {
-    return (
-      <View style={styles.audioErrorWrap}>
-        <ThemedText type="small">{audioError ?? 'Could not load audio.'}</ThemedText>
-        <Pressable onPress={loadAudioUrl}>
-          <ThemedText type="link">Retry</ThemedText>
-        </Pressable>
-      </View>
-    );
-  }
-
-  return <AudioPlaybackControls uri={audioUrl!} />;
-}
-
-// v3 Epic F Step 1 — the three per-recording scores (Impact / Clarity /
-// Structure, that display order), shown as compact badges in one Card,
-// separated by hairline dividers: a bold value on top, a muted label
-// underneath. This REPLACES the old raw-metrics stat blocks (filler rate /
-// WPM / repetition) — those numbers no longer appear anywhere on this
-// screen; they still compute and store internally and resurface only inside
-// Streaks → Clarity's detail screen (Epic G). Plain percentages, no trend
-// arrows — a single recording has no history to trend against.
-function ScoresRow({ recording }: { recording: RecordingDetail }) {
-  const scores = [
-    { label: 'Impact', value: recording.impact_score },
-    { label: 'Clarity', value: recording.clarity_score },
-    { label: 'Structure', value: recording.structure_score },
-  ];
-
-  // A pre-v3 recording (or one where every score missed generation) has all
-  // three null — show one plain line rather than a card of dashes.
-  if (scores.every((s) => s.value == null)) {
-    return (
-      <ThemedText type="small" themeColor="textSecondary">
-        Scores aren&apos;t available for this recording.
-      </ThemedText>
-    );
-  }
-
-  const nodes: ReactNode[] = [];
-  scores.forEach((score, i) => {
-    if (i > 0) nodes.push(<View key={`divider-${score.label}`} style={styles.scoreDivider} />);
-    nodes.push(
-      <View key={score.label} style={styles.scoreStat}>
-        <ThemedText style={styles.scoreValue}>{score.value != null ? `${score.value}%` : '—'}</ThemedText>
-        <ThemedText type="small" themeColor="textSecondary">
-          {score.label}
-        </ThemedText>
-      </View>
-    );
-  });
-
-  return <Card style={styles.scoresCard}>{nodes}</Card>;
-}
-
-// The scores/feedback/transcript section — only meaningful once the
-// pipeline has actually run (see docs/CLAUDE.md's "AI processing endpoint"
-// section). `failed` shows its own explanation instead (there's genuinely
-// nothing to show — a transcription failure marks the row failed with
-// nothing else attempted); `pending`/`processing` shows a plain "still
-// working" notice since a row can be tapped into straight from History
-// before the pipeline finishes.
-//
-// v2 Epic D Part 7 — reordered to a quick glance first, then the coaching
-// prose, then the raw transcript last as reference; restyled with bold
-// section headers, `Theme.typography` body copy, generous spacing, and the
-// failed/processing notices in one consistent look.
-// v3 Epic F Step 1 — the leading section is now the three score badges
-// (Impact / Clarity / Structure), replacing the old raw-metrics stat blocks.
-function ReportSection({
-  recording,
-  onRegenerate,
-  regenerating,
-  regenerateError,
-}: {
-  recording: RecordingDetail;
-  onRegenerate: () => void;
-  regenerating: boolean;
-  regenerateError: string | null;
-}) {
-  if (recording.status === 'failed') {
-    return (
-      <Card style={styles.noticeCard}>
-        <ThemedText type="smallBold" style={styles.failedHeading}>
-          Processing failed
-        </ThemedText>
-        <ThemedText type="small" themeColor="textSecondary">
-          This recording has no transcript, scores, or feedback — generating its report failed even after an
-          automatic retry.
-        </ThemedText>
-        {regenerateError && (
-          <ThemedText type="small" style={styles.errorText}>
-            {regenerateError}
-          </ThemedText>
-        )}
-        <Pressable
-          style={({ pressed }) => [styles.regenerateButton, (pressed || regenerating) && styles.pressed]}
-          disabled={regenerating}
-          onPress={onRegenerate}>
-          {regenerating ? (
-            <ActivityIndicator size="small" color={Theme.colors.onAccent} />
-          ) : (
-            <ThemedText type="smallBold" style={styles.regenerateButtonLabel}>
-              Regenerate report
-            </ThemedText>
-          )}
-        </Pressable>
-      </Card>
-    );
-  }
-
-  if (recording.status === 'pending' || recording.status === 'processing') {
-    return (
-      <Card style={styles.noticeCard}>
-        <ThemedText type="small" themeColor="textSecondary">
-          Still processing — scores, feedback, and transcript will appear here once it&apos;s done.
-        </ThemedText>
-      </Card>
-    );
-  }
-
-  return (
-    <>
-      <View style={styles.section}>
-        <ThemedText type="smallBold" style={styles.sectionHeading}>
-          Scores
-        </ThemedText>
-        <ScoresRow recording={recording} />
-      </View>
-
-      <View style={styles.section}>
-        <ThemedText type="smallBold" style={styles.sectionHeading}>
-          Feedback
-        </ThemedText>
-        <ThemedText type="default" style={styles.bodyText}>
-          {recording.feedback ?? 'Not available.'}
-        </ThemedText>
-      </View>
-
-      <View style={styles.section}>
-        <ThemedText type="smallBold" style={styles.sectionHeading}>
-          Transcript
-        </ThemedText>
-        <ThemedText type="default" style={styles.bodyText}>
-          {recording.transcript ?? 'Not available.'}
-        </ThemedText>
-      </View>
-    </>
-  );
-}
 
 export default function RecordingDetailScreen() {
   const params = useLocalSearchParams<{ id: string }>();
@@ -743,25 +378,10 @@ export default function RecordingDetailScreen() {
               </View>
             )}
 
-            {/* Question, always shown — a full-text mirror of the List
-                card's Part 3 "No prompt" pattern: a null question
-                (miscellaneous, or an interview/story lookup edge case)
-                reads as the literal "No prompt" rather than being omitted,
-                so the section never silently disappears depending on mode. */}
-            <View style={styles.section}>
-              <ThemedText type="smallBold" style={styles.sectionHeading}>
-                Question
-              </ThemedText>
-              <ThemedText type="default" style={styles.bodyText}>
-                {recording.question ?? 'No prompt'}
-              </ThemedText>
-            </View>
-
-            <Card style={styles.audioCard}>
-              <AudioSection recording={recording} />
-            </Card>
-
-            <ReportSection
+            {/* Question -> Audio -> Scores/Feedback/Transcript. Shared with
+                each accordion panel on the re-practice chain screen via
+                `RecordingDetailBody` (v4 Epic J Part 2). */}
+            <RecordingDetailBody
               recording={recording}
               onRegenerate={handleRegenerate}
               regenerating={regenerating}
@@ -797,11 +417,6 @@ const styles = StyleSheet.create({
     gap: Spacing.two,
     paddingHorizontal: Spacing.four,
   },
-  centerRow: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: Spacing.four,
-  },
   actionErrors: {
     gap: Spacing.one,
   },
@@ -831,55 +446,6 @@ const styles = StyleSheet.create({
     // nudge onto the title's optical centre on its first line
     marginTop: Spacing.half,
   },
-  titleRow: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: Spacing.two,
-    flex: 1,
-  },
-  titleFlex: {
-    flexShrink: 1,
-  },
-  titleText: {
-    fontFamily: Theme.typography.fontFamily.bold,
-    fontSize: 24,
-    lineHeight: 30,
-  },
-  titleEditPencil: {
-    // nudge the pencil onto the first line's optical centre, same as
-    // QuestionArea's `editPencil`.
-    marginTop: Spacing.one,
-  },
-  titleEditSection: {
-    flex: 1,
-    gap: Spacing.two,
-    alignItems: 'flex-start',
-  },
-  titleInputBox: {
-    alignSelf: 'stretch',
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: Theme.spacing.sm,
-    backgroundColor: Theme.colors.card,
-    borderWidth: 1,
-    borderColor: Theme.colors.border,
-    borderRadius: Theme.radius.lg,
-    paddingLeft: Theme.spacing.lg,
-    paddingRight: Theme.spacing.sm,
-    paddingVertical: Theme.spacing.sm,
-  },
-  titleInputField: {
-    flex: 1,
-    minHeight: 32,
-    paddingVertical: Theme.spacing.xs,
-    fontFamily: Theme.typography.fontFamily.regular,
-    fontSize: 20,
-    lineHeight: 26,
-    color: Theme.colors.textPrimary,
-  },
-  titleSubmit: {
-    paddingVertical: Theme.spacing.xs,
-  },
   // Meta row: mode pill on the left, date right-aligned — matching the List
   // card's `metaRow` layout (Part 3). No status badge (see the JSX comment
   // above where this renders).
@@ -897,66 +463,5 @@ const styles = StyleSheet.create({
   modePillText: {
     fontSize: 12,
     lineHeight: 16,
-  },
-  section: {
-    gap: Spacing.two,
-  },
-  sectionHeading: {
-    fontSize: 16,
-  },
-  bodyText: {
-    ...Theme.typography.variants.body,
-    color: Theme.colors.textPrimary,
-  },
-  audioCard: {
-    padding: Spacing.four,
-    alignItems: 'center',
-  },
-  audioErrorWrap: {
-    gap: Spacing.two,
-    alignItems: 'center',
-  },
-  // Shared "notice" card treatment for the failed / still-processing states.
-  noticeCard: {
-    gap: Spacing.two,
-    padding: Spacing.three,
-  },
-  failedHeading: {
-    color: Theme.colors.recordRed,
-  },
-  scoresCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    padding: Spacing.three,
-  },
-  scoreStat: {
-    flex: 1,
-    alignItems: 'center',
-    gap: Spacing.half,
-  },
-  scoreValue: {
-    fontFamily: Theme.typography.fontFamily.bold,
-    fontSize: 18,
-    lineHeight: 22,
-    color: Theme.colors.textPrimary,
-  },
-  scoreDivider: {
-    width: StyleSheet.hairlineWidth,
-    alignSelf: 'stretch',
-    backgroundColor: Theme.colors.border,
-  },
-  regenerateButton: {
-    alignSelf: 'flex-start',
-    marginTop: Spacing.one,
-    paddingHorizontal: Spacing.four,
-    paddingVertical: Spacing.two,
-    borderRadius: Theme.radius.pill,
-    backgroundColor: Theme.colors.recordRed,
-  },
-  regenerateButtonLabel: {
-    color: Theme.colors.onAccent,
-  },
-  pressed: {
-    opacity: 0.7,
   },
 });

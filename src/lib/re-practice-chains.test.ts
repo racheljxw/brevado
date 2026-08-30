@@ -8,7 +8,7 @@
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 
-import { buildChains, type ChainRecording } from './re-practice-chains';
+import { buildChains, chainQuestion, type ChainRecording } from './re-practice-chains';
 
 // A recording with an explicit created_at (ISO) and re_practice_of.
 function rec(id: string, createdAt: string, rePracticeOf: string | null = null): ChainRecording {
@@ -131,6 +131,15 @@ describe('buildChains', () => {
 
   test('empty input returns []', () => {
     assert.deepEqual(buildChains([]), []);
+  });
+
+  test('chainQuestion picks the first member with question text, else "No prompt"', () => {
+    assert.equal(
+      chainQuestion([{ question: null }, { question: 'What drives you?' }, { question: 'x' }]),
+      'What drives you?'
+    );
+    assert.equal(chainQuestion([{ question: null }, { question: null }]), 'No prompt');
+    assert.equal(chainQuestion([]), 'No prompt');
   });
 
   test('extra fields on a recording are carried through to members untouched', () => {

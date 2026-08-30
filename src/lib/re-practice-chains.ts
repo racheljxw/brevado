@@ -111,3 +111,17 @@ export function buildChains<T extends ChainRecording>(recordings: T[]): RePracti
     }),
   }));
 }
+
+/**
+ * The one shared question a chain's attempts all answer — the first member
+ * that actually carries `question` text, else the literal `'No prompt'`
+ * (re-practice requires a question, so the fallback shouldn't be hit).
+ * Shared by the grouped History List card and the chain detail screen's
+ * header so the two never show a different heading for the same group.
+ */
+export function chainQuestion(members: { question: string | null }[]): string {
+  for (const member of members) {
+    if (member.question) return member.question;
+  }
+  return 'No prompt';
+}

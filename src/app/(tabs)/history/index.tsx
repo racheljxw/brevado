@@ -27,7 +27,7 @@ import { useAuth } from '@/lib/auth-context';
 import { dayKeyToDate, formatRecordedAt, localDayKey as dayKey } from '@/lib/format-time';
 import { formatMode, modePillColors } from '@/lib/modes';
 import { TERMINAL_STATUSES } from '@/lib/recording-status';
-import { buildChains, type RePracticeChain } from '@/lib/re-practice-chains';
+import { buildChains, chainQuestion, type RePracticeChain } from '@/lib/re-practice-chains';
 import {
   canRePracticeRecording,
   fetchRecordings,
@@ -208,11 +208,10 @@ function RecordingListItem({
 // `done`. The favorite star reflects/toggles the CHAIN ROOT's `favorite`
 // flag (the confirmed group-level design).
 //
-// Interim behaviour (Part 1): tapping the card opens the MOST RECENT
-// attempt's existing (ungrouped) detail screen. Part 2 replaces this with a
-// real accordion detail screen + per-attempt 3-dot menus — which is also why
-// this card has NO 3-dot menu yet (per-attempt actions like download / delete
-// / regenerate stay reachable only once a single attempt is open).
+// Tapping the card opens the chain detail screen
+// (`history/chain/[rootId].tsx`, v4 Epic J Part 2) — a per-attempt accordion.
+// This card has no 3-dot menu; per-attempt actions (download / delete audio /
+// delete recording / regenerate) live in each accordion panel's own menu.
 function GroupedRecordingListItem({
   chain,
   onPress,
@@ -229,11 +228,9 @@ function GroupedRecordingListItem({
   const modePill = modePillColors(mostRecent.mode);
   const count = chain.members.length;
 
-  // Every attempt answers the same question — that's what a chain is. Prefer
-  // a member that actually carries the question text, falling back to the
-  // root and then a literal "No prompt" (re-practice requires a question, so
-  // this last fallback shouldn't be hit in practice).
-  const question = chain.members.find((m) => m.question)?.question ?? root.question ?? 'No prompt';
+  // Every attempt answers the same question — that's what a chain is. Shared
+  // with the chain detail screen's header via `chainQuestion`.
+  const question = chainQuestion(chain.members);
 
   const statusNote =
     mostRecent.status === 'failed'
@@ -1002,8 +999,8 @@ export default function HistoryScreen() {
                     data={visibleChains}
                     keyExtractor={(chain) => chain.rootId}
                     renderItem={({ item: chain }) => {
-                      // Multi-attempt chain -> one grouped card (interim tap
-                      // opens the most recent attempt; Part 2 = accordion).
+                      // Multi-attempt chain -> one grouped card that opens the
+                      // accordion chain detail screen (v4 Epic J Part 2).
                       if (chain.members.length > 1) {
                         const root = chain.members.find((m) => m.id === chain.rootId) ?? chain.members[0];
                         return (
@@ -1011,8 +1008,8 @@ export default function HistoryScreen() {
                             chain={chain}
                             onPress={() =>
                               router.push({
-                                pathname: '/history/[id]',
-                                params: { id: chain.members[0].id },
+                                pathname: '/history/chain/[rootId]',
+                                params: { rootId: chain.rootId },
                               })
                             }
                             onToggleFavorite={() => handleToggleFavorite(chain.rootId, !root.favorite)}

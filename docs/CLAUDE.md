@@ -113,8 +113,9 @@ the Streaks tab — home screen + three per-metric detail screens — aggregates
 client-side (Epic G). See [v3 scope](#v3-scope) and the [v3 wrap-up](#v3-wrap-up) below.
 
 **v4 (Phase 7) — the global daily-question system + re-practice mode — is now the current
-phase.** Scope summary in [v4 scope](#v4-scope) below. **Epic H is complete — Step 1 (backend)
-and Step 2 (frontend wiring). Epic I (re-practice mode) is complete.**
+phase.** Scope summary in [v4 scope](#v4-scope) below; assessment in the [v4 wrap-up](#v4-wrap-up).
+**Epics H, I, and J are all complete — only Epic K (History filters) is left.** Epic H
+(daily-question system):
 - **Step 1 (done):** the schema (migration `0008_daily_questions.sql` + seed
   `0009_seed_question_pool.sql`), the lazy daily-question assignment logic
   (`backend/app/services/daily_questions.py`), the `GET /questions/daily` endpoint, and unit
@@ -130,12 +131,13 @@ and Step 2 (frontend wiring). Epic I (re-practice mode) is complete.**
   standing caveat (shared with every Phase 3/4 and Epic C/D/F/G step).
 
 `recordings.re_practice_of` **is now set** — by a re-practice recording's upload (**Epic I**,
-done). Full detail in [Re-practice mode](#re-practice-mode). **Epic J Part 1 is done** — the pure
-chain-building logic (`src/lib/re-practice-chains.ts`, unit-tested) plus grouping applied to
-History's **List** view (a question's re-practice attempts render as one card). The real
-**accordion detail screen + per-attempt 3-dot menus is Epic J Part 2** (next). See
-[Re-practice chains](#re-practice-chains). Additional modes beyond interview/story stay **out of
-scope** for v4.
+done). Full detail in [Re-practice mode](#re-practice-mode). **Epic J is complete** — Part 1
+(chain-building logic `src/lib/re-practice-chains.ts` + the grouped History **List** card) and
+Part 2 (the **chain detail screen** — an accordion, one panel per attempt, each with its own
+3-dot menu — plus extracting the shared `TitleSection` / `RecordingDetailBody` out of
+`history/[id].tsx`). See [Re-practice chains](#re-practice-chains). **Epic K** (History
+filters — a mode filter + favorites-only toggle) is next and last for v4. Additional modes
+beyond interview/story stay **out of scope** for v4.
 
 **Terminology note:** docs/PROJECT_PLAN.md's original "v2" scope was renamed **v3** to free up
 "v2" for the UI-redesign release. That v3 list has since been **narrowed**: criteria-based scoring
@@ -665,10 +667,12 @@ v4 (Phase 7) is **two features** — a global daily-question system and re-pract
 small client-side History-filters addition. Full plan detail in docs/PROJECT_PLAN.md Sections 2
 and 5. **Epic H** (the global daily-question system) is **complete** — Step 1 (backend) + Step 2
 (frontend wiring). **Epic I** (re-practice mode) is **complete** — see
-[Re-practice mode](#re-practice-mode). **Epic J Part 1** (chain-building logic + grouped History
-**List** card) is **complete** — see [Re-practice chains](#re-practice-chains); **Epic J Part 2**
-(the accordion detail screen + per-attempt 3-dot menus) is next. Detailed step writeups land in
-their own sections below as each is built, same as every prior epic; this is the reference summary.
+[Re-practice mode](#re-practice-mode). **Epic J** (chain-building logic + grouped History **List**
+card + the accordion **chain detail screen** with per-attempt 3-dot menus) is **complete** — see
+[Re-practice chains](#re-practice-chains). **Epic K** (History filters — a mode filter +
+favorites-only toggle, both client-side) is **next and last** for v4. Detailed step writeups land
+in their own sections below as each is built, same as every prior epic; this is the reference
+summary.
 
 **Global daily-question system (replaces v1's per-user random-pick pool).**
 - Interview and Story each get exactly **one "question of the day," identical for every user**.
@@ -702,19 +706,15 @@ re-practice, so following the `re_practice_of` chain to its root fully groups th
 (no need to also group by `question_id`). Epic I built the entry point (a "Re-practice this
 question" item in History's 3-dot menu → the Record screen in a read-only re-practice state) and
 the write (`re_practice_of` set on upload). Full detail in [Re-practice mode](#re-practice-mode).
-The **grouped** History **List** view over these links landed in **Epic J Part 1** (see
-[Re-practice chains](#re-practice-chains)); the **accordion detail screen + per-attempt 3-dot
-menus** is **Epic J Part 2** (next). Until Part 2, tapping a grouped card opens the most recent
-attempt's existing detail screen.
+The **grouped** History **List** view + the **accordion chain detail screen** over these links
+are **Epic J** (complete) — see [Re-practice chains](#re-practice-chains).
 
-**Favorite / per-attempt actions in grouped History cards.** With re-practice groups, the
-3-dot menu splits: **favorite becomes a per-question-group concept** (the group card's star
-reads/writes the chain root's `favorite` flag — **done in Epic J Part 1**), while **download
-audio / delete audio / delete recording / regenerate report all become per-*attempt* actions**
-inside each accordion panel's own 3-dot menu (**Part 2** — the grouped card has no 3-dot menu
-yet; per-attempt actions stay reachable via the interim tap-through to a single attempt's detail
-screen). This is also the first real consumer of the `favorite` flag, which has had no behavior
-attached to it anywhere until now.
+**Favorite / per-attempt actions in grouped History cards (Epic J — done).** With re-practice
+groups, the 3-dot menu splits: **favorite is a per-question-group concept** (the group card's
+star, and the chain detail screen's single header star, both read/write the chain root's
+`favorite` flag), while **download audio / delete audio / delete recording / regenerate report
+are per-*attempt* actions** in each accordion panel's own 3-dot menu. This is also the first
+real consumer of the `favorite` flag, which had no behavior attached to it anywhere until now.
 
 **History filters (small addition).** A **mode filter** and a **favorites-only toggle**, both
 client-side over the already-loaded list (same approach as v2's search / calendar — see
@@ -866,9 +866,9 @@ feature at the data level. **No migration** — the column has existed since
 (Epic H). **Type-check + `eslint` clean; no on-device pass yet** — same standing caveat as every
 Phase 3/4 and Epic C/D/F/G step.
 
-The **grouped History view** that makes re-practice attempts *visible as a group* is
-**Epic J** — Part 1 (the List card) is done, see [Re-practice chains](#re-practice-chains); the
-accordion detail screen is Part 2. This section covers only the Epic I write path.
+The **grouped History view** that makes re-practice attempts *visible as a group* (the List card
++ the accordion chain detail screen) is **[Re-practice chains](#re-practice-chains)** (Epic J,
+done). This section covers only the Epic I write path.
 
 **Entry point — a 3-dot menu item.** `RecordingActionsMenu`
 (`src/components/recording-actions-menu.tsx`) gained a **"Re-practice this question"** action
@@ -916,12 +916,14 @@ re-focusing the tab later doesn't re-fire; re-practising the same recording twic
 passed a new **`rePracticeOf: rePractice.sourceId`** arg → inserted as `recordings.re_practice_of`.
 It always points at **the exact recording the menu was opened from** — if that recording is
 itself a re-practice of something else, this still points at it directly, not at a deeper
-ancestor. Walking the chain to a root is Epic J's job. A normal (non-re-practice) recording
-passes `rePracticeOf: null` and is unchanged.
+ancestor. Walking the chain to a root is [Re-practice chains](#re-practice-chains)' job
+(`buildChains`). A normal (non-re-practice) recording passes `rePracticeOf: null` and is
+unchanged.
 
 **Post-recording behaviour is unchanged** — after upload the screen stays on Record with inline
 `ProcessingStatus` and "See more details" (v2 Epic C Part 4). No re-practice-specific
-post-recording UI; the visible comparison is Epic J.
+post-recording UI; the grouped view + per-attempt comparison is
+[Re-practice chains](#re-practice-chains) (Epic J).
 
 **Test plan (hand-off, no on-device pass yet):** from an Interview recording's 3-dot menu (list
 *and* detail), tap "Re-practice this question" → land directly on the record screen with the
@@ -934,12 +936,18 @@ still blocks at 30 (the `CapBlockedCard` appears instead of the record screen).
 ## Re-practice chains
 
 v4 Epic J — grouping a question's re-practice attempts (linked by `recordings.re_practice_of`,
-written by Epic I) into one History entry. **Part 1 is done** — the chain-building logic + the
-grouped **List** card. **Part 2** (next) is the real accordion detail screen with per-attempt
-3-dot menus. **No migration, no backend change** — this is entirely client-side over the
-already-fetched recordings list (same approach as v2's History search / calendar and v3's
-Streaks aggregation). Type-check / `eslint` / `npm run test:chains` (11 cases) clean; no
-on-device pass yet — same standing caveat as every Phase 3/4 and Epic C/D/F/G/I step.
+written by Epic I) into one History entry. **Both parts are done — Epic J is complete.**
+- **Part 1:** the chain-building logic (`buildChains`) + the grouped **List** card.
+- **Part 2:** the **chain detail screen** — an accordion, one expandable panel per attempt,
+  each with its own 3-dot menu — replacing Part 1's interim "tap → most recent attempt's normal
+  detail screen". Also extracted the shared `TitleSection` / `RecordingDetailBody` components
+  out of `history/[id].tsx` so the single-recording screen and each accordion panel render the
+  same content.
+
+**No migration, no backend change** — entirely client-side over the already-fetched recordings
+list (same approach as v2's History search / calendar and v3's Streaks aggregation). Type-check /
+`eslint` / `npm run test:chains` (12 cases) clean; no on-device pass yet — same standing caveat
+as every Phase 3/4 and Epic C/D/F/G/I step.
 
 ### `buildChains` (`src/lib/re-practice-chains.ts`)
 
@@ -973,6 +981,10 @@ Because a freshly-assigned daily-pool question is retired on assignment (Epic H)
 two recordings relate to one question is a deliberate re-practice — so `re_practice_of` alone
 fully groups a question's attempts; there's **no need to also group by `question_id`**.
 
+`chainQuestion(members)` (same module) — the one shared question a chain's attempts all answer:
+the first member with `question` text, else `'No prompt'`. Shared by the grouped List card and
+the chain detail screen's header so they never show a different heading for the same group.
+
 ### Grouped List card (`GroupedRecordingListItem` in `src/app/(tabs)/history/index.tsx`)
 
 `HistoryScreen` now builds `allChains = buildChains(recordings)` and filters **whole chains**:
@@ -992,20 +1004,155 @@ chain. `keyExtractor` is `chain.rootId`; the empty-state checks key off `visible
     meta row;
   - the **favorite star**, reflecting/toggling the **chain root's** `favorite` (via the
     existing `handleToggleFavorite(chain.rootId, …)` — optimistic, keyed by root id).
-  - **No 3-dot menu** — per-attempt actions (download / delete audio / delete recording /
-    regenerate) are Part 2's per-panel menus. Until then they're reachable by tapping through.
-- **Interim tap-through:** tapping a grouped card `router.push`es the **most recent** member's
-  existing (ungrouped) `history/[id]` detail screen. **Part 2 replaces this** with the accordion.
+  - **No 3-dot menu** — per-attempt actions live in each accordion panel's own menu (below).
+- **Tap-through:** tapping a grouped card `router.push`es
+  `/history/chain/[rootId]` — the chain detail screen (below). A **single-member** chain still
+  pushes the unchanged `/history/[id]`; the two branches are chosen right in the `FlatList`
+  `renderItem` (`chain.members.length > 1`).
 
-### Part 1 test plan (hand-off, no on-device pass yet)
+### Chain detail screen (`src/app/(tabs)/history/chain/[rootId].tsx`)
 
-With ≥1 re-practiced recording from Epic I testing: open History → **List** and confirm the
-question shows as **one** card (not two), with **×2 attempts** (or however many), the right mode
-pill, and the **most recent** date. Confirm every non-re-practiced recording looks **exactly**
-as before. Tap the grouped card → confirm it opens the **most recent** attempt's detail screen.
-Toggle the grouped card's favorite star → confirm in Supabase that it's the **root** recording's
-`favorite` that flipped. Search for text that only one attempt's question/title contains →
-confirm the group still appears.
+Route `/history/chain/[rootId]` — nested under `history/_layout.tsx`'s headerless `Stack`
+alongside `[id].tsx` (`chain/` is a static segment, no collision with `[id]`). `rootId` is the
+Part-1 chain root id the grouped card passes.
+
+- **Data:** `fetchRecordings(user.id)` + `buildChains` to resolve which recordings are in this
+  chain (client-side, the same query the List runs), then **`fetchRecordingDetailsByIds`**
+  (new in `recordings.ts` — one `.in('id', …)` query) for every member's full transcript /
+  feedback / scores. `RecordingDetail` gained `re_practice_of` (selected via a shared
+  `RECORDING_DETAIL_COLUMNS` const) so the screen can re-run `buildChains` over the member
+  details after a deletion. Re-derives on **focus** (`useFocusEffect`), and a lighter
+  `refreshDetails` (re-pull just the known ids) polls every 1.5s while any member is
+  non-terminal — a just-uploaded re-practice attempt or a regenerating one folds in without a
+  manual refresh. Loading / not-found / error(+Retry) states explicit.
+- **Chain header:** the shared `chainQuestion(members)` as a large bold heading (matches the
+  grouped card), the mode pill, an "N attempts" line, and **one** `FavoriteStar`. The star
+  reads/writes the **favorite reference** recording — `favoriteReference(members)` =
+  `buildChains(members)`'s primary (largest) sub-chain's `rootId`, resolved to the actual row.
+  For a linear chain that's the earliest attempt; **if the root is deleted, the FK's
+  `on delete set null` (migration 0010) promotes the next attempt to root, so the star simply
+  follows the earliest surviving attempt** — `buildChains` handles this naturally, no special
+  case. Toggling here writes the same `recordings.favorite` the List card reads (both screens
+  refetch on focus).
+- **Accordion:** one `<Card>` panel per member, **most-recent first**, most-recent **expanded by
+  default** (multi-open — expanding one doesn't collapse others). Panel header (always visible):
+  that attempt's date + status label + its **own `RecordingActionsMenu`** (Download audio /
+  Delete audio / Delete recording / Regenerate-when-failed — **plus** "Re-practice this
+  question" — but **NOT favorite**, which stays chain-level) + a chevron. Expanded body:
+  `<TitleSection>` (editable **per attempt**) + `<RecordingDetailBody>` (Question → Audio →
+  Scores/Feedback/Transcript, or the failed/processing notice). Per-panel in-flight/error state
+  is keyed by recording id, same shape as the History list's per-row state (two tiny local
+  hooks, `useIdSet` / `useIdErrors`, keep it DRY).
+- **Deletion edge cases:**
+  - **Delete audio / regenerate / download / edit title** on a panel only touch that attempt's
+    row — local state updates that one member.
+  - **Delete recording** (`Alert.alert`-gated in the menu, as everywhere) removes that member
+    from local state, then `refreshDetails` re-pulls the survivors (so a middle-attempt delete's
+    `on delete set null` on its children is reflected). A collapse-navigation `useEffect` then
+    handles the count:
+    - **0 left** → `router.back()` to the History List.
+    - **1 left** → `router.replace('/history/[id]', { id })` — **auto-navigate to the normal
+      single-recording detail screen.** Chosen (the user's lean) for UI consistency: a
+      genuinely single recording should look the way every other single recording does in
+      History, not a one-panel "chain".
+    - **2+ left** → the panel just disappears, the accordion continues.
+  - **Root deleted, others remain** → the favorite reference recomputes automatically (see the
+    chain-header bullet) — `buildChains` promotes the next attempt.
+
+### Shared components extracted (Part 2)
+
+`history/[id].tsx` was refactored, not rewritten — its layout is unchanged. Two pieces moved to
+`src/components/` so the chain screen's panels reuse them verbatim:
+- **`TitleSection`** (`title-section.tsx`) — the pencil-edit title widget. Behaviour identical
+  to the Epic D Part 2/7 version; `history/[id].tsx` and each accordion panel both render it
+  (the panel wraps it in a `flexDirection: 'row'` `View` so its `flex: 1` fills horizontally).
+- **`RecordingDetailBody`** (`recording-detail-body.tsx`) — the Question section, the audio
+  `<Card>` (`AudioSection`), and `ReportSection` (`ScoresRow` / feedback / transcript, or the
+  failed/processing notice), all moved verbatim. Props: `recording`, `onRegenerate`,
+  `regenerating`, `regenerateError`. Everything a parent composes *around* this (title row,
+  favorite star, mode pill, meta) stays with the parent.
+
+### Epic J test plan (hand-off, no on-device pass yet)
+
+With ≥1 re-practiced recording from Epic I testing:
+1. **List:** the question shows as **one** card (not two), `×N attempts`, right mode pill, most
+   recent date. Every non-re-practiced recording looks **exactly** as before.
+2. **Tap the grouped card** → the chain screen opens: accordion with the **most recent** attempt
+   **expanded**, others collapsed. Expand a collapsed one → its own transcript / feedback /
+   scores render correctly.
+3. **One panel's 3-dot menu** → Download / Delete audio → confirm it affects **only that
+   attempt** (the other panels' audio/status unchanged).
+4. **Toggle favorite at the chain header** → confirm in Supabase it's the same underlying
+   `recordings.favorite` the Part-1 List card reads (the chain root's, unless the root was
+   deleted).
+5. **Delete a non-root panel** → it disappears, the accordion continues with the rest.
+6. **Delete down to one attempt** → confirm it auto-navigates to the normal `/history/[id]`
+   screen for that recording. **Delete the last one** → back to the History List.
+7. **Search** for text only one attempt's question/title contains → the group still appears in
+   the List.
+
+## v4 wrap-up
+
+Same spirit as the [Phase 3 assessment](#phase-3-assessment), [Phase 4 exit
+checkpoint](#phase-4-exit-checkpoint), [Epic D wrap-up](#epic-d-wrap-up), and
+[v3 wrap-up](#v3-wrap-up): does v4's scope hold together end-to-end, and what's shaky?
+**Epic K (History filters — a mode filter + favorites-only toggle) is the one piece still
+unbuilt**; Epics H, I, J are complete.
+
+**Scope-complete (H, I, J).** Type-check, `expo lint`, backend `pytest`, `npm run test:streaks`
+(31), and `npm run test:chains` (12) are all clean.
+- **Epic H** — the global daily-question system: `daily_questions` table, lazy US-Eastern-day
+  assignment, structural no-repeat (a pool question retired on assignment), synchronous batch
+  top-up on exhaustion, `GET /questions/daily`, and the frontend wired to it (old client-side
+  pool deleted). See [Daily questions](#daily-questions).
+- **Epic I** — re-practice mode: a "Re-practice this question" 3-dot item → the Record screen in
+  a read-only re-practice state → `recordings.re_practice_of` written on upload. See
+  [Re-practice mode](#re-practice-mode).
+- **Epic J** — grouping: `buildChains` (pure, unit-tested) + the grouped List card + the
+  accordion chain detail screen (per-attempt panels, per-panel 3-dot menus, chain-level
+  favorite). Shared `TitleSection` / `RecordingDetailBody` extracted from `history/[id].tsx`.
+  See [Re-practice chains](#re-practice-chains).
+
+**Built and internally consistent, confirmed by reading the code:**
+- The whole re-practice loop closes: Record (daily question, or a re-practice handoff) → upload
+  writing `question_id` + `re_practice_of` → History List `buildChains` grouping → chain detail
+  accordion → per-attempt actions, all over the **same** `fetchRecordings()` query the List and
+  Streaks already share, plus one batched `fetchRecordingDetailsByIds()` for the accordion.
+- `buildChains` is the single grouping authority — the List card, the chain screen's chain
+  resolution, and the chain screen's favorite-reference calc all call it; there's no second
+  place that decides "what's in this group".
+- Deletion is coherent: the chain screen removes a member locally, `refreshDetails` re-pulls the
+  survivors (catching `on delete set null` on a middle attempt's children), and a
+  collapse-navigation effect resolves 0 → back to List, 1 → `router.replace` into the normal
+  single-recording screen, 2+ → accordion continues. The favorite reference re-derives through
+  `buildChains` with no special-casing for a deleted root.
+- Nothing new in the backend for Epic J — it's client-side over existing queries + endpoints,
+  same as v2's search/calendar and v3's Streaks.
+
+**Shaky / worth knowing before Epic K:**
+- **No on-device pass yet across any of v4** — type-check + lint + unit tests only, the same
+  standing caveat carried since Phase 3. Epic H's live-Supabase/Gemini pass, Epic I's upload
+  pass, and Epic J's accordion pass are all still hand-off test plans, not done runs.
+- **`.expo/types/router.d.ts` was hand-edited** to add `/history/chain/[rootId]` (a gitignored
+  build artifact — `expo start` regenerates it). Same situation as the `/streaks/[metric]` note
+  in the [v3 wrap-up](#v3-wrap-up): a fresh clone's `tsc` may complain about that route until
+  Metro has run once.
+- **The chain screen re-runs `fetchRecordings()` on every focus** (to re-resolve the chain), on
+  top of the batched detail fetch — two queries per focus. Fine at 30-rows/user scale, but it's
+  more than the single-recording screen does. The 1.5s poll while non-terminal uses only the
+  lighter `refreshDetails`.
+- **A branched chain** (an attempt re-practised from a *middle* attempt, then that middle
+  attempt deleted) can leave `buildChains` returning several sub-chains for one accordion. The
+  screen still shows every surviving attempt as a panel; the favorite star just binds to the
+  largest sub-chain's root. Rare, and not incorrect — just noted.
+- **`getStatusPresentation` / raw error-hex (`#e5484d`)** flagged since Epic C/D are still
+  unaddressed — the chain screen's per-panel error text and status labels use the same
+  raw literals as the rest of History. Out of Epic J's scope, same as before.
+- **Day-boundary interpretation for the daily question (US Eastern)** is still flagged for the
+  human to confirm — see [Daily questions](#daily-questions).
+
+**Nothing found that blocks calling v4 feature-complete once Epic K lands** — the shakiness is
+"unverified on device", not "known-broken".
 
 ## Database
 
@@ -1837,12 +1984,13 @@ value is unchanged — display strings only.
   `structure_score` (v3 Epic G Part 2) and `metrics`, `grammar_issue_count` (v3 Epic G Part 3),
   for the current user ordered by `created_at desc`. `question` was added in the Phase 4 Step 5
   exit-checkpoint review (see [Phase 4 exit checkpoint](#phase-4-exit-checkpoint)); `title` in
-  v2 Epic D Part 3 (the restyled card's heading); `re_practice_of` in v4 Epic J Part 1 (the List
+  v2 Epic D Part 3 (the restyled card's heading); `re_practice_of` in v4 Epic J (the List
   view groups a question's re-practice attempts into one card via `buildChains` — see
   [Re-practice chains](#re-practice-chains)). The **History** screens still only read the
   first set — the score/metrics columns are there purely so Streaks doesn't need a second query.
-  The detail screen (below) widens to the full row with its own separate query,
-  `fetchRecordingById()`, rather than this one growing a `select('*')`.
+  The detail screens widen to the full row with their own queries — `fetchRecordingById()` for
+  a single recording, `fetchRecordingDetailsByIds()` for a whole chain's members (Epic J) —
+  rather than this one growing a `select('*')`.
 - **Screen layout / card drop shadow (Epic D Part 4 tweak):** the horizontal gutter is on the
   `FlatList`'s `contentContainerStyle` (and on `headerRow` / `centerFill` / `errorCard`
   individually), **not** on the `safeArea` container — a `FlatList`/`ScrollView` clips its
@@ -2072,12 +2220,18 @@ value is unchanged — display strings only.
   screen** and shows live processing status inline (`ProcessingStatus` component), with a "See
   more details" link to *this* recording's detail screen once done. See
   [Mode selection](#mode-selection)'s "Post-recording flow" bullet for the full behaviour.
-- **Detail screen (Phase 3 Step 1, done; visually restyled in v2 Epic D Part 7):** tapping a row
-  pushes `src/app/(tabs)/history/[id].tsx` (`router.push({ pathname: '/history/[id]', params: { id
-  } })` from `RecordingListItem`), a dynamic Expo Router route sitting alongside `index.tsx` in the
+- **Detail screen (Phase 3 Step 1, done; visually restyled in v2 Epic D Part 7):** tapping a
+  **single-member** row pushes `src/app/(tabs)/history/[id].tsx` (`router.push({ pathname:
+  '/history/[id]', params: { id } })` from `RecordingListItem`), a dynamic Expo Router route
+  sitting alongside `index.tsx` in the
   same `history/` directory — `history/_layout.tsx` wraps both in a headerless `Stack` (matching
   every other screen's no-native-header convention) rather than letting the default nested-stack
-  header appear only here. It fetches the full row with `fetchRecordingById()`
+  header appear only here. (A **multi-member re-practice group** row pushes
+  `/history/chain/[rootId]` instead — the accordion chain screen, v4 Epic J; see
+  [Re-practice chains](#re-practice-chains). As of Epic J this screen's Question/Audio/
+  Scores/Feedback/Transcript body and its editable title are the shared `RecordingDetailBody` /
+  `TitleSection` components, which each accordion panel also renders — `history/[id].tsx`'s own
+  layout is otherwise unchanged.) It fetches the full row with `fetchRecordingById()`
   (`src/lib/recordings.ts`; relies on the existing `recordings` select RLS policy to make a bad id
   or another user's id come back as `null` instead of a 403 the frontend has to special-case).
   Loading and not-found/error states (bad id, RLS-blocked id, or a genuine fetch failure) are all
