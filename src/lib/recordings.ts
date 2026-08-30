@@ -93,6 +93,12 @@ export type RecordingRow = {
   // original pool question_id onto the new attempt.
   question_id: string | null;
   title: string | null;
+  // v4 Epic I: set on a re-practice recording's upload — the id of the
+  // recording its 3-dot menu was opened from. v4 Epic J Part 1 reads it to
+  // group a question's attempts into one History list card (`buildChains` in
+  // src/lib/re-practice-chains.ts). Null for every normal recording and every
+  // pre-Epic-I row.
+  re_practice_of: string | null;
   status: string;
   created_at: string;
   favorite: boolean;
@@ -144,7 +150,7 @@ export async function fetchRecordings(userId: string): Promise<RecordingRow[]> {
   const { data, error } = await supabase
     .from('recordings')
     .select(
-      'id, mode, question, question_id, title, status, created_at, favorite, audio_deleted, audio_path, impact_score, clarity_score, structure_score, grammar_issue_count, metrics'
+      'id, mode, question, question_id, title, re_practice_of, status, created_at, favorite, audio_deleted, audio_path, impact_score, clarity_score, structure_score, grammar_issue_count, metrics'
     )
     .eq('user_id', userId)
     .order('created_at', { ascending: false });

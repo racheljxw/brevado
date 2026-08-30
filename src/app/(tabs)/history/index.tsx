@@ -27,6 +27,7 @@ import { useAuth } from '@/lib/auth-context';
 import { dayKeyToDate, formatRecordedAt, localDayKey as dayKey } from '@/lib/format-time';
 import { formatMode, modePillColors } from '@/lib/modes';
 import { TERMINAL_STATUSES } from '@/lib/recording-status';
+import { buildChains, type RePracticeChain } from '@/lib/re-practice-chains';
 import {
   canRePracticeRecording,
   fetchRecordings,
@@ -190,6 +191,89 @@ function RecordingListItem({
             {regenerateError}
           </ThemedText>
         )}
+      </Card>
+    </Pressable>
+  );
+}
+
+// v4 Epic J Part 1 — a chain of re-practice attempts for one question,
+// rendered as a SINGLE card. `buildChains` (src/lib/re-practice-chains.ts)
+// groups the flat list by following `re_practice_of` links; a single-member
+// chain still renders as the ordinary `RecordingListItem` above (no visual
+// change), only a multi-member chain reaches this component.
+//
+// What it shows: the shared question as the heading (never an individual
+// attempt's title), an "×N attempts" line, the mode pill (all members share
+// a mode), and the most-recent attempt's date + a status note if it isn't
+// `done`. The favorite star reflects/toggles the CHAIN ROOT's `favorite`
+// flag (the confirmed group-level design).
+//
+// Interim behaviour (Part 1): tapping the card opens the MOST RECENT
+// attempt's existing (ungrouped) detail screen. Part 2 replaces this with a
+// real accordion detail screen + per-attempt 3-dot menus — which is also why
+// this card has NO 3-dot menu yet (per-attempt actions like download / delete
+// / regenerate stay reachable only once a single attempt is open).
+function GroupedRecordingListItem({
+  chain,
+  onPress,
+  onToggleFavorite,
+  favoritePending,
+}: {
+  chain: RePracticeChain<RecordingRow>;
+  onPress: () => void;
+  onToggleFavorite: () => void;
+  favoritePending: boolean;
+}) {
+  const mostRecent = chain.members[0];
+  const root = chain.members.find((m) => m.id === chain.rootId) ?? mostRecent;
+  const modePill = modePillColors(mostRecent.mode);
+  const count = chain.members.length;
+
+  // Every attempt answers the same question — that's what a chain is. Prefer
+  // a member that actually carries the question text, falling back to the
+  // root and then a literal "No prompt" (re-practice requires a question, so
+  // this last fallback shouldn't be hit in practice).
+  const question = chain.members.find((m) => m.question)?.question ?? root.question ?? 'No prompt';
+
+  const statusNote =
+    mostRecent.status === 'failed'
+      ? 'Last attempt failed'
+      : !TERMINAL_STATUSES.has(mostRecent.status)
+        ? 'Processing…'
+        : null;
+
+  return (
+    <Pressable onPress={onPress} style={({ pressed }) => pressed && styles.pressed}>
+      <Card style={styles.row}>
+        <View style={styles.titleRow}>
+          <ThemedText
+            type="smallBold"
+            numberOfLines={2}
+            style={[styles.cardTitle, styles.titleFlex]}>
+            {question}
+          </ThemedText>
+          <FavoriteStar
+            favorite={root.favorite}
+            onToggle={onToggleFavorite}
+            disabled={favoritePending}
+            size={20}
+          />
+        </View>
+
+        <ThemedText type="small" themeColor="textSecondary" numberOfLines={1} style={styles.promptLine}>
+          ×{count} attempts{statusNote ? ` · ${statusNote}` : ''}
+        </ThemedText>
+
+        <View style={styles.metaRow}>
+          <View style={[styles.modePill, { backgroundColor: modePill.backgroundColor }]}>
+            <ThemedText type="small" style={[styles.modePillText, { color: modePill.color }]}>
+              {formatMode(mostRecent.mode)}
+            </ThemedText>
+          </View>
+          <ThemedText type="small" themeColor="textSecondary" style={styles.metaDate}>
+            {formatRecordedAt(mostRecent.created_at)}
+          </ThemedText>
+        </View>
       </Card>
     </Pressable>
   );
@@ -797,15 +881,28 @@ export default function HistoryScreen() {
   }
 
   const query = search.trim().toLowerCase();
-  const filteredRecordings = useMemo(() => {
-    if (!recordings) return [];
-    let rows = recordings;
+
+  // v4 Epic J Part 1 — group the full list into re-practice chains first,
+  // then filter whole chains: a chain stays visible if ANY of its attempts
+  // matches the search / day filter (so a group appears whenever any attempt
+  // would have appeared individually), and the card then shows the whole
+  // chain. A single-member chain is just an ordinary recording.
+  const allChains = useMemo(() => buildChains(recordings ?? []), [recordings]);
+
+  const visibleChains = useMemo(() => {
+    let chains = allChains;
     // Day filter and search are mutually exclusive in the UI, but applying
     // both here is harmless and keeps this robust if that ever changes.
-    if (dayFilter) rows = rows.filter((row) => dayKey(new Date(row.created_at)) === dayFilter);
-    if (query) rows = rows.filter((row) => matchesSearch(row, query));
-    return rows;
-  }, [recordings, query, dayFilter]);
+    if (dayFilter) {
+      chains = chains.filter((chain) =>
+        chain.members.some((m) => dayKey(new Date(m.created_at)) === dayFilter)
+      );
+    }
+    if (query) {
+      chains = chains.filter((chain) => chain.members.some((m) => matchesSearch(m, query)));
+    }
+    return chains;
+  }, [allChains, query, dayFilter]);
 
   // v2 Epic D Part 6 — recording counts grouped by local calendar day, for
   // the month grid's per-day dots. Computed from the full already-loaded
@@ -826,11 +923,11 @@ export default function HistoryScreen() {
   const showErrorOnly = !!error && !hasRecordings && !showInitialLoading;
   const showEmpty = !loading && !error && recordings?.length === 0;
   // A search that matched nothing — distinct from "no recordings at all".
-  const showNoResults = view === 'list' && hasRecordings && query.length > 0 && filteredRecordings.length === 0;
+  const showNoResults = view === 'list' && hasRecordings && query.length > 0 && visibleChains.length === 0;
   // A day filter that now matches nothing (e.g. the day's last recording was
   // just deleted) — the "Showing {date}" chip is still the way back.
   const showEmptyDayFilter =
-    view === 'list' && hasRecordings && !!dayFilter && query.length === 0 && filteredRecordings.length === 0;
+    view === 'list' && hasRecordings && !!dayFilter && query.length === 0 && visibleChains.length === 0;
 
   return (
     <ThemedView style={styles.container}>
@@ -902,29 +999,51 @@ export default function HistoryScreen() {
                 ) : (
                   <FlatList
                     style={styles.list}
-                    data={filteredRecordings}
-                    keyExtractor={(item) => item.id}
-                    renderItem={({ item }) => (
-                      <RecordingListItem
-                        recording={item}
-                        onPress={() => router.push({ pathname: '/history/[id]', params: { id: item.id } })}
-                        onToggleFavorite={() => handleToggleFavorite(item.id, !item.favorite)}
-                        favoritePending={favoritingIds.has(item.id)}
-                        onRegenerate={() => handleRegenerate(item.id)}
-                        regenerating={regeneratingIds.has(item.id)}
-                        regenerateError={regenerateErrors[item.id]}
-                        onDeleteAudio={() => handleDeleteAudio(item.id)}
-                        deletingAudio={deletingAudioIds.has(item.id)}
-                        deleteAudioError={deleteAudioErrors[item.id]}
-                        onDeleteRecording={() => handleDeleteRecording(item.id)}
-                        deletingRecording={deletingRecordingIds.has(item.id)}
-                        deleteRecordingError={deleteRecordingErrors[item.id]}
-                        onDownloadAudio={() => handleDownloadAudio(item.id, item.audio_path)}
-                        downloadingAudio={downloadingAudioIds.has(item.id)}
-                        downloadAudioError={downloadAudioErrors[item.id]}
-                        onRePractice={() => handleRePractice(item)}
-                      />
-                    )}
+                    data={visibleChains}
+                    keyExtractor={(chain) => chain.rootId}
+                    renderItem={({ item: chain }) => {
+                      // Multi-attempt chain -> one grouped card (interim tap
+                      // opens the most recent attempt; Part 2 = accordion).
+                      if (chain.members.length > 1) {
+                        const root = chain.members.find((m) => m.id === chain.rootId) ?? chain.members[0];
+                        return (
+                          <GroupedRecordingListItem
+                            chain={chain}
+                            onPress={() =>
+                              router.push({
+                                pathname: '/history/[id]',
+                                params: { id: chain.members[0].id },
+                              })
+                            }
+                            onToggleFavorite={() => handleToggleFavorite(chain.rootId, !root.favorite)}
+                            favoritePending={favoritingIds.has(chain.rootId)}
+                          />
+                        );
+                      }
+                      // Single-member chain -> exactly the pre-Epic-J card.
+                      const item = chain.members[0];
+                      return (
+                        <RecordingListItem
+                          recording={item}
+                          onPress={() => router.push({ pathname: '/history/[id]', params: { id: item.id } })}
+                          onToggleFavorite={() => handleToggleFavorite(item.id, !item.favorite)}
+                          favoritePending={favoritingIds.has(item.id)}
+                          onRegenerate={() => handleRegenerate(item.id)}
+                          regenerating={regeneratingIds.has(item.id)}
+                          regenerateError={regenerateErrors[item.id]}
+                          onDeleteAudio={() => handleDeleteAudio(item.id)}
+                          deletingAudio={deletingAudioIds.has(item.id)}
+                          deleteAudioError={deleteAudioErrors[item.id]}
+                          onDeleteRecording={() => handleDeleteRecording(item.id)}
+                          deletingRecording={deletingRecordingIds.has(item.id)}
+                          deleteRecordingError={deleteRecordingErrors[item.id]}
+                          onDownloadAudio={() => handleDownloadAudio(item.id, item.audio_path)}
+                          downloadingAudio={downloadingAudioIds.has(item.id)}
+                          downloadAudioError={downloadAudioErrors[item.id]}
+                          onRePractice={() => handleRePractice(item)}
+                        />
+                      );
+                    }}
                     contentContainerStyle={styles.listContent}
                     showsVerticalScrollIndicator={false}
                     refreshControl={
