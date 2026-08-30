@@ -20,8 +20,9 @@ import { getRecordingAudioUrl, type RecordingDetail } from '@/lib/recordings';
 //     header row, and a mode-pill / date meta row.
 //   - `history/chain/[rootId].tsx`: the shared question + mode pill + favorite
 //     star live once at the CHAIN header; each panel has its own collapse
-//     header (date + status + its own 3-dot menu) and renders `<TitleSection>`
-//     + this body when expanded.
+//     header (date + status only) and, when expanded, renders `<TitleSection>`
+//     + its own 3-dot menu on one row (v4 Epic K — moved off the collapse
+//     header) followed by this body.
 //
 // Everything below (`AudioSection`, `ScoresRow`, `ReportSection`) moved here
 // verbatim from `history/[id].tsx` — behaviour unchanged, only the file.

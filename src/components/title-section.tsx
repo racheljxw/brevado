@@ -1,15 +1,23 @@
 import { SymbolView } from 'expo-symbols';
-import { useState } from 'react';
-import { ActivityIndicator, Pressable, StyleSheet, TextInput, View } from 'react-native';
+import { useEffect, useState } from 'react';
+import {
+  ActivityIndicator,
+  Pressable,
+  StyleSheet,
+  TextInput,
+  View,
+  type StyleProp,
+  type TextStyle,
+} from 'react-native';
 
 import { ThemedText } from '@/components/themed-text';
 import { Spacing, Theme } from '@/constants/theme';
 
-// v2 Epic D Part 2 — inline recording-title editing. Mirrors the
-// custom-question pencil-edit in `src/app/(tabs)/index.tsx`'s `QuestionArea`
-// (Epic C Part 3): display state = the text + a pencil; tapping the pencil
-// opens a bordered input box (Theme tokens, icon submit) pre-filled with the
-// current value; confirm saves, "Cancel" reverts.
+// v2 Epic D Part 2 — recording-title editing. Originally a display state with
+// its own pencil trigger; as of v4 Epic K the pencil is GONE — "Rename title"
+// is now an item in the `RecordingActionsMenu` (3-dot menu), so the parent
+// controls the editing flag and this component is purely: show the title, or
+// (when `editing`) show the inline editor.
 //
 // `title` is nullable — a recording from before Part 1, or one where
 // generation returned nothing usable. Editing then just starts from an empty
@@ -17,44 +25,53 @@ import { Spacing, Theme } from '@/constants/theme';
 // title on an older recording for the first time. Validation matches custom
 // questions exactly: non-empty after trim, nothing else.
 //
-// The component owns the in-progress `draft` + its local validation error and
-// whether the box is open (`editing`); the parent owns the persisted `title`
-// and the async save (`saving` / `saveError`). `onSave` resolves `true` once
-// the write has actually persisted, which is the signal to close the editor —
-// so a failed save keeps the box open with the error shown, and the displayed
-// title only ever changes after Supabase confirms.
+// The component owns the in-progress `draft` + its local validation error;
+// the parent owns `editing`, the persisted `title`, and the async save
+// (`saving` / `saveError`). `onSave` resolves `true` once the write has
+// actually persisted, which is the signal to leave edit mode (via
+// `onEndEdit`) — so a failed save keeps the box open with the error shown,
+// and the displayed title only ever changes after Supabase confirms.
 //
-// v2 Epic D Part 7 — restyled as a large bold heading (was the `subtitle`
-// `ThemedText` type). Purely visual — the interaction/validation are
-// unchanged from Part 2.
-//
-// v4 Epic J Part 2 — pulled out of `history/[id].tsx` into this shared
-// component so the re-practice chain detail screen
-// (`history/chain/[rootId].tsx`) can render an editable title per accordion
-// panel using the exact same widget. Behaviour is identical to the Part 2/7
-// version; only its home moved.
+// v2 Epic D Part 7 — restyled as a large bold heading. v4 Epic J Part 2 —
+// pulled out of `history/[id].tsx` into this shared component. v4 Epic K —
+// pencil removed (see above); `textStyle` / `compact` let the History LIST
+// card reuse it at its smaller heading size.
 export function TitleSection({
   title,
+  editing,
   onSave,
   saving,
   saveError,
-  onCancelEdit,
+  onEndEdit,
+  textStyle,
+  numberOfLines = 3,
+  compact = false,
 }: {
   title: string | null;
+  editing: boolean;
   onSave: (next: string) => Promise<boolean>;
   saving: boolean;
   saveError: string | null;
-  onCancelEdit: () => void;
+  /** Leave edit mode — called both after a successful save and on Cancel. */
+  onEndEdit: () => void;
+  /** Override the display-text style (the List card passes its 17px heading). */
+  textStyle?: StyleProp<TextStyle>;
+  numberOfLines?: number;
+  /** Smaller input box + submit icon, for the History list card. */
+  compact?: boolean;
 }) {
-  const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState('');
   const [draftError, setDraftError] = useState<string | null>(null);
 
-  function beginEditing() {
-    setDraft(title ?? '');
-    setDraftError(null);
-    setEditing(true);
-  }
+  // Seed the draft from the current title whenever editing turns on.
+  useEffect(() => {
+    if (editing) {
+      setDraft(title ?? '');
+      setDraftError(null);
+    }
+    // Only re-seed on the editing transition, not on every `title` change.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editing]);
 
   async function submitDraft() {
     const trimmed = draft.trim();
@@ -64,22 +81,21 @@ export function TitleSection({
     }
     setDraftError(null);
     const ok = await onSave(trimmed);
-    if (ok) setEditing(false);
+    if (ok) onEndEdit();
   }
 
   function cancelEditing() {
-    setEditing(false);
     setDraft('');
     setDraftError(null);
-    onCancelEdit();
+    onEndEdit();
   }
 
   if (editing) {
     return (
       <View style={styles.titleEditSection}>
-        <View style={styles.titleInputBox}>
+        <View style={[styles.titleInputBox, compact && styles.titleInputBoxCompact]}>
           <TextInput
-            style={styles.titleInputField}
+            style={[styles.titleInputField, compact && styles.titleInputFieldCompact]}
             placeholder="Recording title"
             placeholderTextColor="#56453D80"
             value={draft}
@@ -101,7 +117,11 @@ export function TitleSection({
               style={({ pressed }) => [styles.titleSubmit, pressed && styles.pressed]}
               accessibilityRole="button"
               accessibilityLabel="Save title">
-              <SymbolView name="arrow.up.circle.fill" size={26} tintColor={Theme.colors.accent} />
+              <SymbolView
+                name="arrow.up.circle.fill"
+                size={compact ? 22 : 26}
+                tintColor={Theme.colors.accent}
+              />
             </Pressable>
           )}
         </View>
@@ -122,44 +142,23 @@ export function TitleSection({
   }
 
   return (
-    <View style={styles.titleRow}>
-      <ThemedText
-        themeColor={title ? 'text' : 'textSecondary'}
-        numberOfLines={3}
-        style={[styles.titleText, styles.titleFlex]}>
-        {title ?? 'Untitled recording'}
-      </ThemedText>
-      <Pressable
-        onPress={beginEditing}
-        hitSlop={8}
-        style={({ pressed }) => [styles.titleEditPencil, pressed && styles.pressed]}
-        accessibilityRole="button"
-        accessibilityLabel="Edit title">
-        <SymbolView name="pencil" size={18} tintColor={Theme.colors.textSecondary} />
-      </Pressable>
-    </View>
+    <ThemedText
+      themeColor={title ? 'text' : 'textSecondary'}
+      numberOfLines={numberOfLines}
+      style={[styles.titleText, styles.titleFlex, textStyle]}>
+      {title ?? 'Untitled recording'}
+    </ThemedText>
   );
 }
 
 const styles = StyleSheet.create({
-  titleRow: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: Spacing.two,
-    flex: 1,
-  },
   titleFlex: {
-    flexShrink: 1,
+    flex: 1,
   },
   titleText: {
     fontFamily: Theme.typography.fontFamily.bold,
     fontSize: 24,
     lineHeight: 30,
-  },
-  titleEditPencil: {
-    // nudge the pencil onto the first line's optical centre, same as
-    // QuestionArea's `editPencil`.
-    marginTop: Spacing.one,
   },
   titleEditSection: {
     flex: 1,
@@ -179,6 +178,11 @@ const styles = StyleSheet.create({
     paddingRight: Theme.spacing.sm,
     paddingVertical: Theme.spacing.sm,
   },
+  titleInputBoxCompact: {
+    borderRadius: Theme.radius.card,
+    paddingLeft: Theme.spacing.md,
+    paddingVertical: Theme.spacing.xs,
+  },
   titleInputField: {
     flex: 1,
     minHeight: 32,
@@ -187,6 +191,11 @@ const styles = StyleSheet.create({
     fontSize: 20,
     lineHeight: 26,
     color: Theme.colors.textPrimary,
+  },
+  titleInputFieldCompact: {
+    minHeight: 24,
+    fontSize: 15,
+    lineHeight: 20,
   },
   titleSubmit: {
     paddingVertical: Theme.spacing.xs,

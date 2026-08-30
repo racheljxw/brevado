@@ -7,6 +7,7 @@ import {
   Platform,
   Pressable,
   RefreshControl,
+  ScrollView,
   StyleSheet,
   TextInput,
   View,
@@ -19,21 +20,29 @@ import { FavoriteStar } from '@/components/favorite-star';
 import { RecordingActionsMenu, type RecordingMenuAction } from '@/components/recording-actions-menu';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
+import { TitleSection } from '@/components/title-section';
 import { WebBadge } from '@/components/web-badge';
-import { BottomTabInset, MaxContentWidth, NotoSans, Spacing, Theme } from '@/constants/theme';
+import { BottomTabInset, MaxContentWidth, NotoSans, Palette, Spacing, Theme } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import { deleteRecording, deleteRecordingAudio, regenerateReport } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
 import { dayKeyToDate, formatRecordedAt, localDayKey as dayKey } from '@/lib/format-time';
 import { formatMode, modePillColors } from '@/lib/modes';
 import { TERMINAL_STATUSES } from '@/lib/recording-status';
-import { buildChains, chainQuestion, type RePracticeChain } from '@/lib/re-practice-chains';
+import {
+  buildChains,
+  chainFavoriteReference,
+  chainQuestion,
+  type RePracticeChain,
+} from '@/lib/re-practice-chains';
 import {
   canRePracticeRecording,
   fetchRecordings,
   rePracticeNavParams,
   setFavorite,
   shareRecordingAudio,
+  updateRecordingTitle,
+  type RecordingMode,
   type RecordingRow,
 } from '@/lib/recordings';
 
@@ -76,6 +85,12 @@ function RecordingListItem({
   onPress,
   onToggleFavorite,
   favoritePending,
+  renaming,
+  onRename,
+  onEndRename,
+  onSaveTitle,
+  savingTitle,
+  titleError,
   onRegenerate,
   regenerating,
   regenerateError,
@@ -95,6 +110,12 @@ function RecordingListItem({
   onRePractice: () => void;
   onToggleFavorite: () => void;
   favoritePending: boolean;
+  renaming: boolean;
+  onRename: () => void;
+  onEndRename: () => void;
+  onSaveTitle: (next: string) => Promise<boolean>;
+  savingTitle: boolean;
+  titleError?: string;
   onRegenerate: () => void;
   regenerating: boolean;
   regenerateError?: string;
@@ -112,6 +133,7 @@ function RecordingListItem({
 
   function handleMenuAction(action: RecordingMenuAction) {
     if (action === 're-practice') onRePractice();
+    else if (action === 'rename') onRename();
     else if (action === 'download') onDownloadAudio();
     else if (action === 'delete-audio') onDeleteAudio();
     else if (action === 'delete-recording') onDeleteRecording();
@@ -119,23 +141,31 @@ function RecordingListItem({
   }
 
   return (
-    <Pressable onPress={onPress} style={({ pressed }) => pressed && styles.pressed}>
+    <Pressable
+      onPress={renaming ? undefined : onPress}
+      style={({ pressed }) => pressed && !renaming && styles.pressed}>
       <Card style={styles.row}>
         {/* Heading: the recording title (or a muted fallback for a NULL
-            title — a legacy row, or one where generation returned nothing),
-            with the favorite star and the 3-dot actions menu sharing the
-            line. */}
+            title), with the favorite star and the 3-dot actions menu sharing
+            the line. v4 Epic K — the title is a `<TitleSection>` (shared with
+            the detail screens) so "Rename title" from the 3-dot menu can open
+            an inline editor right here; there's no pencil. */}
         <View style={styles.titleRow}>
-          <ThemedText
-            type="smallBold"
-            themeColor={recording.title ? 'text' : 'textSecondary'}
+          <TitleSection
+            title={recording.title}
+            editing={renaming}
+            onSave={onSaveTitle}
+            saving={savingTitle}
+            saveError={titleError ?? null}
+            onEndEdit={onEndRename}
+            textStyle={styles.cardTitle}
             numberOfLines={2}
-            style={[styles.cardTitle, styles.titleFlex]}>
-            {recording.title ?? UNTITLED_LABEL}
-          </ThemedText>
+            compact
+          />
           <FavoriteStar favorite={recording.favorite} onToggle={onToggleFavorite} disabled={favoritePending} size={20} />
           <RecordingActionsMenu
             canRePractice={canRePracticeRecording(recording)}
+            canRename
             canDownload={!recording.audio_deleted && !!recording.audio_path}
             canDeleteAudio={!recording.audio_deleted}
             canRegenerate={recording.status === 'failed'}
@@ -210,18 +240,51 @@ function RecordingListItem({
 //
 // Tapping the card opens the chain detail screen
 // (`history/chain/[rootId].tsx`, v4 Epic J Part 2) — a per-attempt accordion.
-// This card has no 3-dot menu; per-attempt actions (download / delete audio /
-// delete recording / regenerate) live in each accordion panel's own menu.
+//
+// v4 Epic K — this card now DOES carry a 3-dot menu (+ the favorite star) in
+// the exact same heading-row position as every single-recording card, so the
+// list reads consistently. The menu operates on the MOST RECENT attempt
+// (`chain.members[0]` — the one whose date/status the card already shows):
+// Re-practice / Download audio / Delete audio / Delete recording / Regenerate.
+// It has NO "Rename title" — the card's heading is the shared question, not a
+// per-attempt title; renaming individual attempts lives in the accordion.
+// Full per-attempt management (older attempts) is still the accordion screen.
 function GroupedRecordingListItem({
   chain,
   onPress,
   onToggleFavorite,
   favoritePending,
+  onRegenerate,
+  regenerating,
+  regenerateError,
+  onDeleteAudio,
+  deletingAudio,
+  deleteAudioError,
+  onDeleteRecording,
+  deletingRecording,
+  deleteRecordingError,
+  onDownloadAudio,
+  downloadingAudio,
+  downloadAudioError,
+  onRePractice,
 }: {
   chain: RePracticeChain<RecordingRow>;
   onPress: () => void;
   onToggleFavorite: () => void;
   favoritePending: boolean;
+  onRegenerate: () => void;
+  regenerating: boolean;
+  regenerateError?: string;
+  onDeleteAudio: () => void;
+  deletingAudio: boolean;
+  deleteAudioError?: string;
+  onDeleteRecording: () => void;
+  deletingRecording: boolean;
+  deleteRecordingError?: string;
+  onDownloadAudio: () => void;
+  downloadingAudio: boolean;
+  downloadAudioError?: string;
+  onRePractice: () => void;
 }) {
   const mostRecent = chain.members[0];
   const root = chain.members.find((m) => m.id === chain.rootId) ?? mostRecent;
@@ -239,6 +302,14 @@ function GroupedRecordingListItem({
         ? 'Processing…'
         : null;
 
+  function handleMenuAction(action: RecordingMenuAction) {
+    if (action === 're-practice') onRePractice();
+    else if (action === 'download') onDownloadAudio();
+    else if (action === 'delete-audio') onDeleteAudio();
+    else if (action === 'delete-recording') onDeleteRecording();
+    else if (action === 'regenerate') onRegenerate();
+  }
+
   return (
     <Pressable onPress={onPress} style={({ pressed }) => pressed && styles.pressed}>
       <Card style={styles.row}>
@@ -254,6 +325,14 @@ function GroupedRecordingListItem({
             onToggle={onToggleFavorite}
             disabled={favoritePending}
             size={20}
+          />
+          <RecordingActionsMenu
+            canRePractice={canRePracticeRecording(mostRecent)}
+            canDownload={!mostRecent.audio_deleted && !!mostRecent.audio_path}
+            canDeleteAudio={!mostRecent.audio_deleted}
+            canRegenerate={mostRecent.status === 'failed'}
+            busy={downloadingAudio || deletingAudio || deletingRecording || regenerating}
+            onSelect={handleMenuAction}
           />
         </View>
 
@@ -271,6 +350,27 @@ function GroupedRecordingListItem({
             {formatRecordedAt(mostRecent.created_at)}
           </ThemedText>
         </View>
+
+        {downloadAudioError && (
+          <ThemedText type="small" style={styles.actionError}>
+            {downloadAudioError}
+          </ThemedText>
+        )}
+        {deleteAudioError && (
+          <ThemedText type="small" style={styles.actionError}>
+            {deleteAudioError}
+          </ThemedText>
+        )}
+        {deleteRecordingError && (
+          <ThemedText type="small" style={styles.actionError}>
+            {deleteRecordingError}
+          </ThemedText>
+        )}
+        {regenerateError && (
+          <ThemedText type="small" style={styles.actionError}>
+            {regenerateError}
+          </ThemedText>
+        )}
       </Card>
     </Pressable>
   );
@@ -397,6 +497,132 @@ function ViewToggle({ view, onChange }: { view: HistoryView; onChange: (next: Hi
           </Pressable>
         );
       })}
+    </View>
+  );
+}
+
+// v4 Epic K — the History filter bar (mode + favorites-only). Client-side,
+// same spirit as the Epic D Part 5 search: it narrows the already-built
+// chains (from `buildChains`), no new backend query. Sits below the
+// Calendar/List toggle, above the list, and renders only in List view (it's
+// a list-refinement control) — but its STATE persists across a
+// Calendar/List switch, consistent with how the search term already
+// persists (Epic D Part 5).
+//
+// A single horizontal-scrolling row — All, then the Favorites toggle, then
+// the three modes — so every chip keeps its shape and stays reachable on a
+// narrow screen. `flexGrow: 0` on the ScrollView keeps it content-height (a
+// horizontal ScrollView in a flex column would otherwise try to fill the
+// remaining vertical space and push the list off screen).
+//
+// Mode: one of interview / story / miscellaneous, or `'all'` for "no mode
+// filter". A chain's members always share one mode (a re-practice keeps the
+// original's mode — v4 Epic I), so `members[0].mode` is unambiguous.
+//
+// Favorites-only: a toggle, independent of the mode selection. "Favorited"
+// means the chain's favorite-reference recording (`chainFavoriteReference`
+// — the chain root, exactly what the grouped card's star reads) has
+// `favorite === true`.
+//
+// Both combine with each other AND with an active search term / day filter —
+// every active constraint narrows the same list together (see
+// `visibleChains`).
+type ModeFilter = 'all' | RecordingMode;
+
+const MODE_FILTER_OPTIONS: { key: ModeFilter; label: string }[] = [
+  { key: 'all', label: 'All' },
+  { key: 'interview', label: 'Interview' },
+  { key: 'story', label: 'Storytelling' },
+  { key: 'miscellaneous', label: 'Miscellaneous' },
+];
+
+function FilterBar({
+  modeFilter,
+  favoritesOnly,
+  onChangeMode,
+  onToggleFavorites,
+}: {
+  modeFilter: ModeFilter;
+  favoritesOnly: boolean;
+  onChangeMode: (next: ModeFilter) => void;
+  onToggleFavorites: () => void;
+}) {
+  const modeChip = (opt: { key: ModeFilter; label: string }) => {
+    const active = modeFilter === opt.key;
+    return (
+      <Pressable
+        key={opt.key}
+        onPress={() => onChangeMode(opt.key)}
+        style={[styles.filterChip, active && styles.filterChipActive]}
+        accessibilityRole="button"
+        accessibilityState={{ selected: active }}
+        accessibilityLabel={`Filter by ${opt.label}`}>
+        <ThemedText
+          type="small"
+          style={[styles.filterChipText, active && styles.filterChipTextActive]}>
+          {opt.label}
+        </ThemedText>
+      </Pressable>
+    );
+  };
+
+  return (
+    <ScrollView
+      horizontal
+      showsHorizontalScrollIndicator={false}
+      style={styles.filterScroll}
+      contentContainerStyle={styles.filterBar}
+      keyboardShouldPersistTaps="handled">
+      {/* All */}
+      {modeChip(MODE_FILTER_OPTIONS[0])}
+
+      {/* Favorites — sits between "All" and the mode chips */}
+      <Pressable
+        onPress={onToggleFavorites}
+        style={[styles.filterChip, favoritesOnly && styles.filterChipActive]}
+        accessibilityRole="button"
+        accessibilityState={{ selected: favoritesOnly }}
+        accessibilityLabel="Show favorites only">
+        <SymbolView
+          name={favoritesOnly ? 'star.fill' : 'star'}
+          size={13}
+          tintColor={favoritesOnly ? Theme.colors.onAccent : Theme.colors.favoriteGold}
+        />
+        <ThemedText
+          type="small"
+          style={[styles.filterChipText, favoritesOnly && styles.filterChipTextActive]}>
+          Favorites
+        </ThemedText>
+      </Pressable>
+
+      {/* Interview / Storytelling / Miscellaneous */}
+      {MODE_FILTER_OPTIONS.slice(1).map(modeChip)}
+    </ScrollView>
+  );
+}
+
+// v4 Epic K — a cream→transparent vertical fade rendered just below the
+// filter pills so History cards scrolling up *under* the pills dissolve into
+// the background instead of hard-clipping at the list edge. This project has
+// no `expo-linear-gradient` (and deliberately avoids adding gradient deps —
+// see the design-system notes), so it's a stack of thin non-overlapping
+// bands, each `flex: 1`, cream at full opacity up top (seamless with the
+// solid pill background above) fading to 0 at the bottom.
+const FADE_BAND_COUNT = 14;
+
+function CreamFade() {
+  return (
+    <View style={styles.creamFade} pointerEvents="none">
+      {Array.from({ length: FADE_BAND_COUNT }).map((_, i) => (
+        <View
+          key={i}
+          style={{
+            flex: 1,
+            backgroundColor: Palette.cream,
+            opacity: 1 - i / (FADE_BAND_COUNT - 1),
+          }}
+        />
+      ))}
     </View>
   );
 }
@@ -539,6 +765,22 @@ export default function HistoryScreen() {
   const [search, setSearch] = useState('');
   const [view, setView] = useState<HistoryView>('list');
 
+  // v4 Epic K — client-side mode + favorites-only filters. State lives here
+  // (not in `FilterBar`) so it survives a Calendar/List toggle, same as the
+  // search term. `'all'` = no mode filter applied.
+  const [modeFilter, setModeFilter] = useState<ModeFilter>('all');
+  const [favoritesOnly, setFavoritesOnly] = useState(false);
+  const filtersActive = modeFilter !== 'all' || favoritesOnly;
+  // v4 Epic K — measured height of the overlaid filter-pill zone (pills +
+  // day chip + the cream→transparent fade tail). The list content is inset
+  // by this so its first card starts just below the fade, and cards scroll
+  // *under* the pills (fading out via `CreamFade`) rather than hard-clipping.
+  const [filterZoneHeight, setFilterZoneHeight] = useState(70);
+  const handleClearFilters = useCallback(() => {
+    setModeFilter('all');
+    setFavoritesOnly(false);
+  }, []);
+
   // v2 Epic D Part 6 — Calendar state. `calendar` is the month currently
   // shown in the grid (defaults to the current month). `dayFilter` is the
   // selected day's `dayKey`, which — when set — narrows the List view to
@@ -625,6 +867,14 @@ export default function HistoryScreen() {
   // in-flight/error state, same shape as the audio-delete state above.
   const [deletingRecordingIds, setDeletingRecordingIds] = useState<Set<string>>(new Set());
   const [deleteRecordingErrors, setDeleteRecordingErrors] = useState<Record<string, string>>({});
+
+  // v4 Epic K — per-row title editing. `renamingIds` = which rows have their
+  // inline title editor open (opened from the 3-dot menu's "Rename title" —
+  // the pencil is gone); `titleSavingIds` / `titleErrors` mirror the other
+  // per-row in-flight/error state.
+  const [renamingIds, setRenamingIds] = useState<Set<string>>(new Set());
+  const [titleSavingIds, setTitleSavingIds] = useState<Set<string>>(new Set());
+  const [titleErrors, setTitleErrors] = useState<Record<string, string>>({});
 
   // Step 7: monotonically-increasing id for each `load()` call, so a
   // response can tell whether a *newer* request has been issued since it
@@ -877,6 +1127,62 @@ export default function HistoryScreen() {
     router.navigate({ pathname: '/', params: rePracticeNavParams(recording) });
   }
 
+  // v4 Epic K — title editing, opened from the 3-dot menu's "Rename title".
+  // Same shape as `history/[id].tsx`'s handler: a direct `updateRecordingTitle`
+  // Supabase update, NOT optimistic (the row's `title` only changes once the
+  // write lands), returning whether it persisted so `TitleSection` knows
+  // whether to close.
+  function handleStartRename(id: string) {
+    setTitleErrors((prev) => {
+      if (!(id in prev)) return prev;
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
+    setRenamingIds((prev) => new Set(prev).add(id));
+  }
+
+  function handleEndRename(id: string) {
+    setRenamingIds((prev) => {
+      const next = new Set(prev);
+      next.delete(id);
+      return next;
+    });
+    setTitleErrors((prev) => {
+      if (!(id in prev)) return prev;
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
+  }
+
+  async function handleSaveTitle(id: string, nextTitle: string): Promise<boolean> {
+    setTitleSavingIds((prev) => new Set(prev).add(id));
+    setTitleErrors((prev) => {
+      if (!(id in prev)) return prev;
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
+    try {
+      await updateRecordingTitle(id, nextTitle);
+      setRecordings((prev) => prev?.map((row) => (row.id === id ? { ...row, title: nextTitle } : row)) ?? prev);
+      return true;
+    } catch (err) {
+      setTitleErrors((prev) => ({
+        ...prev,
+        [id]: err instanceof Error ? err.message : 'Could not save title — try again.',
+      }));
+      return false;
+    } finally {
+      setTitleSavingIds((prev) => {
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
+    }
+  }
+
   const query = search.trim().toLowerCase();
 
   // v4 Epic J Part 1 — group the full list into re-practice chains first,
@@ -888,8 +1194,18 @@ export default function HistoryScreen() {
 
   const visibleChains = useMemo(() => {
     let chains = allChains;
+    // v4 Epic K — mode + favorites-only. A chain's members share a mode, so
+    // `members[0].mode` is the chain's mode. "Favorited" keys off the same
+    // recording the grouped card's star reads (`chainFavoriteReference`).
+    if (modeFilter !== 'all') {
+      chains = chains.filter((chain) => chain.members[0].mode === modeFilter);
+    }
+    if (favoritesOnly) {
+      chains = chains.filter((chain) => chainFavoriteReference(chain).favorite);
+    }
     // Day filter and search are mutually exclusive in the UI, but applying
-    // both here is harmless and keeps this robust if that ever changes.
+    // both here is harmless and keeps this robust if that ever changes. The
+    // Epic K filters above combine freely with either.
     if (dayFilter) {
       chains = chains.filter((chain) =>
         chain.members.some((m) => dayKey(new Date(m.created_at)) === dayFilter)
@@ -899,7 +1215,7 @@ export default function HistoryScreen() {
       chains = chains.filter((chain) => chain.members.some((m) => matchesSearch(m, query)));
     }
     return chains;
-  }, [allChains, query, dayFilter]);
+  }, [allChains, query, dayFilter, modeFilter, favoritesOnly]);
 
   // v2 Epic D Part 6 — recording counts grouped by local calendar day, for
   // the month grid's per-day dots. Computed from the full already-loaded
@@ -919,12 +1235,19 @@ export default function HistoryScreen() {
   // error card, no search bar / toggle / list.
   const showErrorOnly = !!error && !hasRecordings && !showInitialLoading;
   const showEmpty = !loading && !error && recordings?.length === 0;
-  // A search that matched nothing — distinct from "no recordings at all".
-  const showNoResults = view === 'list' && hasRecordings && query.length > 0 && visibleChains.length === 0;
-  // A day filter that now matches nothing (e.g. the day's last recording was
-  // just deleted) — the "Showing {date}" chip is still the way back.
+  // Three visually-distinct "nothing to show" states for List view, in
+  // priority order (mutually exclusive by construction):
+  const noVisible = view === 'list' && hasRecordings && visibleChains.length === 0;
+  // 1. An Epic K mode/favorites filter combo (possibly + a search term)
+  //    matched nothing — distinct from a bare search miss or a bare day
+  //    filter miss, and offers a "Clear filters" reset.
+  const showNoFilterMatches = noVisible && filtersActive;
+  // 2. A search that matched nothing, no filters — the Epic D Part 5 state.
+  const showNoResults = noVisible && !filtersActive && query.length > 0 && !dayFilter;
+  // 3. A day filter that now matches nothing (e.g. the day's last recording
+  //    was just deleted) — the "Showing {date}" chip is still the way back.
   const showEmptyDayFilter =
-    view === 'list' && hasRecordings && !!dayFilter && query.length === 0 && visibleChains.length === 0;
+    noVisible && !filtersActive && !!dayFilter && query.length === 0;
 
   return (
     <ThemedView style={styles.container}>
@@ -972,26 +1295,23 @@ export default function HistoryScreen() {
                 )}
               </View>
             ) : (
-              <>
-                {dayFilter && (
-                  <Pressable
-                    onPress={() => setDayFilter(null)}
-                    style={styles.dayFilterChip}
-                    accessibilityRole="button"
-                    accessibilityLabel="Show all recordings">
-                    <ThemedText type="small" themeColor="text">
-                      Showing {formatDayLabel(dayFilter)}
-                    </ThemedText>
-                    <SymbolView name="xmark.circle.fill" size={16} tintColor={theme.textSecondary} />
-                  </Pressable>
-                )}
-                {showNoResults || showEmptyDayFilter ? (
-                  <View style={styles.centerFill}>
+              <View style={styles.listRegion}>
+                {showNoFilterMatches || showNoResults || showEmptyDayFilter ? (
+                  <View style={[styles.centerFill, { paddingTop: filterZoneHeight }]}>
                     <ThemedText type="small" themeColor="textSecondary" style={styles.emptyText}>
-                      {showEmptyDayFilter
-                        ? `No recordings on ${formatDayLabel(dayFilter!)}.`
-                        : `No recordings match “${search.trim()}”. Try a different search.`}
+                      {showNoFilterMatches
+                        ? query.length > 0
+                          ? `Nothing matches your filters and “${search.trim()}”.`
+                          : 'No recordings match your filters.'
+                        : showEmptyDayFilter
+                          ? `No recordings on ${formatDayLabel(dayFilter!)}.`
+                          : `No recordings match “${search.trim()}”. Try a different search.`}
                     </ThemedText>
+                    {showNoFilterMatches && (
+                      <Pressable onPress={handleClearFilters} accessibilityRole="button">
+                        <ThemedText type="link">Clear filters</ThemedText>
+                      </Pressable>
+                    )}
                   </View>
                 ) : (
                   <FlatList
@@ -1000,9 +1320,11 @@ export default function HistoryScreen() {
                     keyExtractor={(chain) => chain.rootId}
                     renderItem={({ item: chain }) => {
                       // Multi-attempt chain -> one grouped card that opens the
-                      // accordion chain detail screen (v4 Epic J Part 2).
+                      // accordion chain detail screen (v4 Epic J Part 2). Its
+                      // 3-dot menu (v4 Epic K) acts on the most-recent attempt.
                       if (chain.members.length > 1) {
                         const root = chain.members.find((m) => m.id === chain.rootId) ?? chain.members[0];
+                        const latest = chain.members[0];
                         return (
                           <GroupedRecordingListItem
                             chain={chain}
@@ -1014,10 +1336,23 @@ export default function HistoryScreen() {
                             }
                             onToggleFavorite={() => handleToggleFavorite(chain.rootId, !root.favorite)}
                             favoritePending={favoritingIds.has(chain.rootId)}
+                            onRegenerate={() => handleRegenerate(latest.id)}
+                            regenerating={regeneratingIds.has(latest.id)}
+                            regenerateError={regenerateErrors[latest.id]}
+                            onDeleteAudio={() => handleDeleteAudio(latest.id)}
+                            deletingAudio={deletingAudioIds.has(latest.id)}
+                            deleteAudioError={deleteAudioErrors[latest.id]}
+                            onDeleteRecording={() => handleDeleteRecording(latest.id)}
+                            deletingRecording={deletingRecordingIds.has(latest.id)}
+                            deleteRecordingError={deleteRecordingErrors[latest.id]}
+                            onDownloadAudio={() => handleDownloadAudio(latest.id, latest.audio_path)}
+                            downloadingAudio={downloadingAudioIds.has(latest.id)}
+                            downloadAudioError={downloadAudioErrors[latest.id]}
+                            onRePractice={() => handleRePractice(latest)}
                           />
                         );
                       }
-                      // Single-member chain -> exactly the pre-Epic-J card.
+                      // Single-member chain -> the ordinary recording card.
                       const item = chain.members[0];
                       return (
                         <RecordingListItem
@@ -1025,6 +1360,12 @@ export default function HistoryScreen() {
                           onPress={() => router.push({ pathname: '/history/[id]', params: { id: item.id } })}
                           onToggleFavorite={() => handleToggleFavorite(item.id, !item.favorite)}
                           favoritePending={favoritingIds.has(item.id)}
+                          renaming={renamingIds.has(item.id)}
+                          onRename={() => handleStartRename(item.id)}
+                          onEndRename={() => handleEndRename(item.id)}
+                          onSaveTitle={(next) => handleSaveTitle(item.id, next)}
+                          savingTitle={titleSavingIds.has(item.id)}
+                          titleError={titleErrors[item.id]}
                           onRegenerate={() => handleRegenerate(item.id)}
                           regenerating={regeneratingIds.has(item.id)}
                           regenerateError={regenerateErrors[item.id]}
@@ -1041,18 +1382,53 @@ export default function HistoryScreen() {
                         />
                       );
                     }}
-                    contentContainerStyle={styles.listContent}
+                    contentContainerStyle={[
+                      styles.listContent,
+                      { paddingTop: filterZoneHeight + Spacing.three },
+                    ]}
                     showsVerticalScrollIndicator={false}
                     refreshControl={
                       <RefreshControl
                         refreshing={refreshing}
                         onRefresh={handleRefresh}
                         tintColor={theme.textSecondary}
+                        progressViewOffset={filterZoneHeight}
                       />
                     }
                   />
                 )}
-              </>
+
+                {/* v4 Epic K — the filter pills + day chip, overlaid on the
+                    list and backed by a cream→transparent fade so cards flow
+                    seamlessly under them while scrolling. Measured so the
+                    list content can be inset by exactly its height. */}
+                <View
+                  style={styles.filterZone}
+                  pointerEvents="box-none"
+                  onLayout={(e) => setFilterZoneHeight(e.nativeEvent.layout.height)}>
+                  <View style={styles.filterSolid}>
+                    <FilterBar
+                      modeFilter={modeFilter}
+                      favoritesOnly={favoritesOnly}
+                      onChangeMode={setModeFilter}
+                      onToggleFavorites={() => setFavoritesOnly((v) => !v)}
+                    />
+                    {dayFilter && (
+                      <Pressable
+                        onPress={() => setDayFilter(null)}
+                        style={styles.dayFilterChip}
+                        accessibilityRole="button"
+                        accessibilityLabel="Show all recordings">
+                        <ThemedText type="small" themeColor="text">
+                          Showing {formatDayLabel(dayFilter)}
+                        </ThemedText>
+                        <SymbolView name="xmark.circle.fill" size={16} tintColor={theme.textSecondary} />
+                      </Pressable>
+                    )}
+                  </View>
+                  <CreamFade />
+                </View>
+              </View>
             )}
           </>
         )}
@@ -1141,6 +1517,67 @@ const styles = StyleSheet.create({
   toggleLabel: {
     fontSize: 16,
     lineHeight: 22,
+  },
+  // v4 Epic K — the mode + favorites filter row. Pill chips in the app's
+  // standard "unselected control" treatment (card fill + hairline border),
+  // flipping to the `accent` fill + `onAccent` text of every other active
+  // control (mode-select pill, selected calendar day) when narrowing.
+  // `flexGrow: 0` so the horizontal ScrollView stays content-height instead
+  // of trying to fill the column's remaining vertical space.
+  filterScroll: {
+    flexGrow: 0,
+    marginTop: Spacing.two,
+    marginBottom: Spacing.one,
+  },
+  filterBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.two,
+    paddingHorizontal: Spacing.four,
+  },
+  filterChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.one,
+    paddingHorizontal: Spacing.three,
+    paddingVertical: Spacing.one,
+    borderRadius: Theme.radius.pill,
+    borderWidth: 1,
+    borderColor: Theme.colors.border,
+    backgroundColor: Theme.colors.card,
+  },
+  filterChipActive: {
+    backgroundColor: Theme.colors.accent,
+    borderColor: Theme.colors.accent,
+  },
+  filterChipText: {
+    fontSize: 13,
+    lineHeight: 18,
+    color: Theme.colors.textSecondary,
+  },
+  filterChipTextActive: {
+    color: Theme.colors.onAccent,
+  },
+  // v4 Epic K — the list + the overlaid filter zone share this relative box
+  // so the pills can sit `position: absolute` on top of the scrolling list.
+  listRegion: {
+    flex: 1,
+  },
+  // The pills + day chip float over the top of the list. `filterSolid` is an
+  // opaque cream block behind them; `CreamFade` continues the cream downward,
+  // fading to transparent, so list cards dissolve as they scroll up under it.
+  filterZone: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    zIndex: 5,
+  },
+  filterSolid: {
+    backgroundColor: Palette.cream,
+  },
+  creamFade: {
+    height: 32,
   },
   list: {
     // fill the space left under the header / search bar / toggle so the

@@ -113,6 +113,23 @@ export function buildChains<T extends ChainRecording>(recordings: T[]): RePracti
 }
 
 /**
+ * The recording whose `favorite` flag stands in for the whole chain — the
+ * chain root, i.e. the exact same recording the grouped History List card's
+ * star reads from and toggles (v4 Epic J Part 1). For a single-member chain
+ * that's just the recording itself.
+ *
+ * v4 Epic K uses this for History's favorites-only filter, so "a chain is
+ * favorited" means precisely what the star on its card shows. (The chain
+ * *detail* screen's header star uses a slightly richer rule — the largest
+ * sub-chain's root — to stay sensible for a branched chain whose root was
+ * deleted; for a linear chain the two agree, and the List only ever has the
+ * root's flag to key off anyway.)
+ */
+export function chainFavoriteReference<T extends ChainRecording>(chain: RePracticeChain<T>): T {
+  return chain.members.find((m) => m.id === chain.rootId) ?? chain.members[0];
+}
+
+/**
  * The one shared question a chain's attempts all answer — the first member
  * that actually carries `question` text, else the literal `'No prompt'`
  * (re-practice requires a question, so the fallback shouldn't be hit).

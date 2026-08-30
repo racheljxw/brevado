@@ -8,7 +8,12 @@
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 
-import { buildChains, chainQuestion, type ChainRecording } from './re-practice-chains';
+import {
+  buildChains,
+  chainFavoriteReference,
+  chainQuestion,
+  type ChainRecording,
+} from './re-practice-chains';
 
 // A recording with an explicit created_at (ISO) and re_practice_of.
 function rec(id: string, createdAt: string, rePracticeOf: string | null = null): ChainRecording {
@@ -140,6 +145,23 @@ describe('buildChains', () => {
     );
     assert.equal(chainQuestion([{ question: null }, { question: null }]), 'No prompt');
     assert.equal(chainQuestion([]), 'No prompt');
+  });
+
+  test('chainFavoriteReference returns the chain root (what the List card star reads)', () => {
+    const chains = buildChains([
+      { id: 'a2', created_at: '2026-08-12T12:00:00Z', re_practice_of: 'a1', favorite: false },
+      { id: 'a1', created_at: '2026-08-10T12:00:00Z', re_practice_of: null, favorite: true },
+    ]);
+    const refd = chainFavoriteReference(chains[0]);
+    assert.equal(refd.id, 'a1');
+    assert.equal(refd.favorite, true);
+  });
+
+  test('chainFavoriteReference on a single-member chain returns that recording', () => {
+    const chains = buildChains([
+      { id: 'solo', created_at: '2026-08-10T12:00:00Z', re_practice_of: null, favorite: false },
+    ]);
+    assert.equal(chainFavoriteReference(chains[0]).id, 'solo');
   });
 
   test('extra fields on a recording are carried through to members untouched', () => {

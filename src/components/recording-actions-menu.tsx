@@ -28,6 +28,7 @@ import { Spacing, Theme } from '@/constants/theme';
 
 export type RecordingMenuAction =
   | 're-practice'
+  | 'rename'
   | 'download'
   | 'delete-audio'
   | 'delete-recording'
@@ -50,6 +51,7 @@ const ROW_HEIGHT_ESTIMATE = 44;
 
 export function RecordingActionsMenu({
   canRePractice = false,
+  canRename = false,
   canDownload,
   canDeleteAudio,
   canRegenerate,
@@ -63,6 +65,13 @@ export function RecordingActionsMenu({
    * navigates to the Record screen pre-set to re-record that same question.
    */
   canRePractice?: boolean;
+  /**
+   * v4 Epic K — "Rename title" is available. The parent flips its own
+   * title-editing flag when this fires (the inline editor replaced the old
+   * pencil trigger). Not shown on the grouped re-practice chain card (its
+   * heading is the shared question, not a per-attempt title).
+   */
+  canRename?: boolean;
   /** audio still present (audio_path set and not audio_deleted). */
   canDownload: boolean;
   /** audio still present (not audio_deleted). */
@@ -85,6 +94,7 @@ export function RecordingActionsMenu({
       label: 'Re-practice this question',
       icon: 'arrow.counterclockwise',
     },
+    canRename && { action: 'rename', label: 'Rename title', icon: 'pencil' },
     canDownload && { action: 'download', label: 'Download audio', icon: 'square.and.arrow.down' },
     canDeleteAudio && { action: 'delete-audio', label: 'Delete audio', icon: 'trash' },
     { action: 'delete-recording', label: 'Delete recording', icon: 'trash.fill', destructive: true },

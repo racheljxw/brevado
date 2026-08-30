@@ -172,9 +172,10 @@ export default function MetricDetailScreen() {
         ) : (
           <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
             {/* Heading + subheading on the left; the selected window's % change
-                as a small square badge (shared card UI) top-right. Shown only
-                for a real trend (`'ok'`) — with no data, or only one day of
-                it (nothing to compare against), the corner is just empty. */}
+                + its "Last N days" label as a badge (shared card UI) top-right.
+                Shown only for a real trend (`'ok'`) — with no data, or only one
+                day of it (nothing to compare against), the corner is just
+                empty. */}
             <View style={styles.headerRow}>
               <View style={styles.headerTitleBlock}>
                 <ThemedText style={styles.metricHeading}>{config.label}</ThemedText>
@@ -266,11 +267,14 @@ const styles = StyleSheet.create({
     flex: 1,
     gap: Spacing.one,
   },
-  // Small square badge in the header's top-right — just the % (+ triangle).
+  // Badge in the header's top-right — the % (+ triangle) with the "Last N
+  // days" window label on ONE line beneath it. v4 Epic K widened this past a
+  // square so the label never wraps.
   statCard: {
-    width: 76,
-    height: 76,
-    padding: Spacing.two,
+    width: 116,
+    minHeight: 76,
+    paddingHorizontal: Spacing.two,
+    paddingVertical: Spacing.two,
     alignItems: 'center',
     justifyContent: 'center',
   },

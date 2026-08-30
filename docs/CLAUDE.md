@@ -112,9 +112,11 @@ scores (Impact / Clarity / Structure) come from the *existing* Gemini feedback c
 the Streaks tab — home screen + three per-metric detail screens — aggregates them entirely
 client-side (Epic G). See [v3 scope](#v3-scope) and the [v3 wrap-up](#v3-wrap-up) below.
 
-**v4 (Phase 7) — the global daily-question system + re-practice mode — is now the current
-phase.** Scope summary in [v4 scope](#v4-scope) below; assessment in the [v4 wrap-up](#v4-wrap-up).
-**Epics H, I, and J are all complete — only Epic K (History filters) is left.** Epic H
+**v4 (Phase 7) — the global daily-question system + re-practice mode + History filters — is
+complete.** Scope summary in [v4 scope](#v4-scope) below; assessment in the
+[v4 wrap-up](#v4-wrap-up). **All four epics (H, I, J, K) are done.** Type-check / `expo lint` /
+backend `pytest` / `npm run test:streaks` / `npm run test:chains` all clean; the on-device pass
+is the one standing caveat, shared with every Phase 3/4 and Epic C/D/F/G step. Epic H
 (daily-question system):
 - **Step 1 (done):** the schema (migration `0008_daily_questions.sql` + seed
   `0009_seed_question_pool.sql`), the lazy daily-question assignment logic
@@ -135,9 +137,12 @@ done). Full detail in [Re-practice mode](#re-practice-mode). **Epic J is complet
 (chain-building logic `src/lib/re-practice-chains.ts` + the grouped History **List** card) and
 Part 2 (the **chain detail screen** — an accordion, one panel per attempt, each with its own
 3-dot menu — plus extracting the shared `TitleSection` / `RecordingDetailBody` out of
-`history/[id].tsx`). See [Re-practice chains](#re-practice-chains). **Epic K** (History
-filters — a mode filter + favorites-only toggle) is next and last for v4. Additional modes
-beyond interview/story stay **out of scope** for v4.
+`history/[id].tsx`). See [Re-practice chains](#re-practice-chains). **Epic K is complete** — the
+History **List** view now has a mode filter (All / Interview / Storytelling / Miscellaneous) + a
+favorites-only toggle, both client-side over the already-built chains, combining freely with the
+existing search and the calendar day filter. This is the first app-wide consumer of the
+`favorite` flag beyond the re-practice chain card. See [History filters](#history-filters).
+Additional modes beyond interview/story stay **out of scope** for v4.
 
 **Terminology note:** docs/PROJECT_PLAN.md's original "v2" scope was renamed **v3** to free up
 "v2" for the UI-redesign release. That v3 list has since been **narrowed**: criteria-based scoring
@@ -496,8 +501,8 @@ search / calendar.
     **`TrendReadout`** — `src/components/trend-readout.tsx` (with `TrendTriangle`), shared with the
     detail screen. Props: `trend`, `windowLabel` (nominal — "Last 7 days"), `windowDays` (`7`
     here), and a `variant` (`'card'` here — 30px + sublabel; `'compact'` on the detail badge —
-    ~17px, number + triangle only). It maps `calculateTrend`'s discriminated union so the card can
-    never show `NaN%`:
+    ~17px number + triangle, **plus the "Last N days" sublabel on one line** as of v4 Epic K).
+    It maps `calculateTrend`'s discriminated union so the card can never show `NaN%`:
     - `status: 'ok'` → signed `{+/-}{Math.round(percentChange)}%` in **`Theme.colors.positive`**
       (the green — up) or **`Theme.colors.recordRed`** (down), with a matching `TrendTriangle`;
       a rounded value of exactly `0` shows a plain grey "0%", no triangle. Sublabel = `windowLabel`
@@ -550,12 +555,14 @@ unchanged, same as History.
   1. **`HeaderBackLink` "‹ Back to Streaks"** → `router.back()` (the shared header back-link
      component, same as History detail's "Back to History").
   2. **Header row:** the metric name as a large bold heading (28px) with its short description
-     under it on the left, and — top-**right**, in the same row — a **small square `<Card>` badge**
-     (76×76, shared card UI) showing the **currently-selected tab's** % change via
-     `TrendReadout variant="compact"` (~17px number + up/down triangle, **no sublabel** — the tab
-     row already names the period). The badge is rendered **only for a real trend**
-     (`trend.status === 'ok'`, i.e. 2+ days of scored data) — with no data, or just one day of it
-     (nothing to compare against), the badge is omitted and the corner is simply empty.
+     under it on the left, and — top-**right**, in the same row — a **`<Card>` badge** (shared
+     card UI, `width: 116` / `minHeight: 76` — v4 Epic K widened it past a square) showing the
+     **currently-selected tab's** % change via `TrendReadout variant="compact"` (~17px number +
+     up/down triangle, **with the "Last N days" window label on ONE line beneath it** — v4
+     Epic K; the label auto-shrinks a touch (`adjustsFontSizeToFit`) and the box is sized so it
+     never wraps). The badge is rendered **only for a real trend** (`trend.status === 'ok'`, i.e.
+     2+ days of scored data) — with no data, or just one day of it (nothing to compare against),
+     the badge is omitted and the corner is simply empty.
   3. **Week / Month / Year / All Time tab row** — the minimalist underline style, matching
      History's Calendar/List toggle (v2 Epic D Part 5) for visual consistency. Switching a tab
      recalculates the **stat badge**, the graph, and — on Clarity — the supporting badges, all
@@ -670,9 +677,9 @@ and 5. **Epic H** (the global daily-question system) is **complete** — Step 1 
 [Re-practice mode](#re-practice-mode). **Epic J** (chain-building logic + grouped History **List**
 card + the accordion **chain detail screen** with per-attempt 3-dot menus) is **complete** — see
 [Re-practice chains](#re-practice-chains). **Epic K** (History filters — a mode filter +
-favorites-only toggle, both client-side) is **next and last** for v4. Detailed step writeups land
-in their own sections below as each is built, same as every prior epic; this is the reference
-summary.
+favorites-only toggle, both client-side) is **complete** — see [History filters](#history-filters).
+Detailed step writeups land in their own sections below as each is built, same as every prior
+epic; this is the reference summary.
 
 **Global daily-question system (replaces v1's per-user random-pick pool).**
 - Interview and Story each get exactly **one "question of the day," identical for every user**.
@@ -709,16 +716,23 @@ the write (`re_practice_of` set on upload). Full detail in [Re-practice mode](#r
 The **grouped** History **List** view + the **accordion chain detail screen** over these links
 are **Epic J** (complete) — see [Re-practice chains](#re-practice-chains).
 
-**Favorite / per-attempt actions in grouped History cards (Epic J — done).** With re-practice
-groups, the 3-dot menu splits: **favorite is a per-question-group concept** (the group card's
-star, and the chain detail screen's single header star, both read/write the chain root's
-`favorite` flag), while **download audio / delete audio / delete recording / regenerate report
-are per-*attempt* actions** in each accordion panel's own 3-dot menu. This is also the first
-real consumer of the `favorite` flag, which had no behavior attached to it anywhere until now.
+**Favorite / per-attempt actions in grouped History cards (Epic J; refined in Epic K).** With
+re-practice groups, favorite is a **per-question-group concept** (the group card's star and the
+chain detail screen's single header star both read/write the chain root's `favorite` flag),
+while download / delete audio / delete recording / regenerate / **rename title** are
+**per-*attempt*** actions in an accordion panel's own 3-dot menu. **Epic K** then added a 3-dot
+menu to the **grouped card itself** (for visual consistency with single-recording cards) — it
+acts on the **most-recent attempt** and omits "Rename title"; and it moved each accordion
+panel's menu **off the collapse header into the expanded body** (it was getting mis-tapped). See
+[Re-practice chains](#re-practice-chains). This is also the first real consumer of the
+`favorite` flag, which had no behavior attached to it anywhere until now.
 
-**History filters (small addition).** A **mode filter** and a **favorites-only toggle**, both
-client-side over the already-loaded list (same approach as v2's search / calendar — see
-[History](#history)), alongside the existing search bar.
+**History filters (Epic K — done).** A **mode filter** (All / Interview / Storytelling /
+Miscellaneous) and a **favorites-only toggle**, both client-side over the already-built
+re-practice chains (not raw recordings), combining freely with the existing search bar and the
+calendar day filter. Same "no new backend query" approach as v2's search / calendar. First
+app-wide consumer of the `favorite` flag beyond Epic J's chain card. Full detail in
+[History filters](#history-filters).
 
 **Not in v4 — do not build:** additional modes beyond interview/story.
 
@@ -946,7 +960,8 @@ written by Epic I) into one History entry. **Both parts are done — Epic J is c
 
 **No migration, no backend change** — entirely client-side over the already-fetched recordings
 list (same approach as v2's History search / calendar and v3's Streaks aggregation). Type-check /
-`eslint` / `npm run test:chains` (12 cases) clean; no on-device pass yet — same standing caveat
+`eslint` / `npm run test:chains` (12 cases at Epic J; 14 after Epic K added two
+`chainFavoriteReference` cases) clean; no on-device pass yet — same standing caveat
 as every Phase 3/4 and Epic C/D/F/G/I step.
 
 ### `buildChains` (`src/lib/re-practice-chains.ts`)
@@ -985,6 +1000,14 @@ fully groups a question's attempts; there's **no need to also group by `question
 the first member with `question` text, else `'No prompt'`. Shared by the grouped List card and
 the chain detail screen's header so they never show a different heading for the same group.
 
+`chainFavoriteReference(chain)` (same module, added v4 Epic K) — the recording whose `favorite`
+flag stands in for the whole chain: the **chain root**, i.e. the exact recording the grouped
+List card's star reads from and toggles. For a single-member chain that's just the recording
+itself. Used by [History filters](#history-filters)' favorites-only filter so "this chain is
+favorited" means precisely what the card's star shows. (The chain *detail* screen's header star
+uses a richer largest-sub-chain rule for a branched chain with a deleted root; for a linear
+chain they agree.)
+
 ### Grouped List card (`GroupedRecordingListItem` in `src/app/(tabs)/history/index.tsx`)
 
 `HistoryScreen` now builds `allChains = buildChains(recordings)` and filters **whole chains**:
@@ -992,9 +1015,10 @@ a chain stays visible if **any** member matches the search term / day filter (so
 appears whenever any attempt would have appeared individually), and the card shows the whole
 chain. `keyExtractor` is `chain.rootId`; the empty-state checks key off `visibleChains.length`.
 
-- A **single-member chain** renders **exactly** the pre-Epic-J `RecordingListItem` — no visual
-  change, all existing per-row actions (favorite / 3-dot menu / regenerate / delete / download /
-  re-practice) unchanged.
+- A **single-member chain** renders the ordinary `RecordingListItem` — visually unchanged, all
+  per-row actions (favorite / 3-dot menu / regenerate / delete / download / re-practice)
+  unchanged; v4 Epic K added **Rename title** to its menu (opens an inline editor right in the
+  card heading — see [Recording titles](#recording-titles)).
 - A **multi-member chain** renders one `<Card>` showing:
   - the **shared question** as the bold heading (a member's `question` text, not any attempt's
     `title`);
@@ -1004,7 +1028,14 @@ chain. `keyExtractor` is `chain.rootId`; the empty-state checks key off `visible
     meta row;
   - the **favorite star**, reflecting/toggling the **chain root's** `favorite` (via the
     existing `handleToggleFavorite(chain.rootId, …)` — optimistic, keyed by root id).
-  - **No 3-dot menu** — per-attempt actions live in each accordion panel's own menu (below).
+  - a **3-dot menu** (v4 Epic K — added for visual consistency; the star + menu now sit in the
+    exact same heading-row position as every single-recording card). It operates on the
+    **most-recent attempt** (`chain.members[0]` — the one whose date/status the card shows):
+    Re-practice / Download audio / Delete audio / Delete recording / Regenerate. It has **no
+    "Rename title"** (the card's heading is the shared question, not a per-attempt title).
+    Deleting the most-recent attempt from here shrinks the chain — at one member left it renders
+    as an ordinary `RecordingListItem` again. Full per-attempt management of *older* attempts is
+    still the accordion screen.
 - **Tap-through:** tapping a grouped card `router.push`es
   `/history/chain/[rootId]` — the chain detail screen (below). A **single-member** chain still
   pushes the unchanged `/history/[id]`; the two branches are chosen right in the `FlatList`
@@ -1036,12 +1067,15 @@ Part-1 chain root id the grouped card passes.
   refetch on focus).
 - **Accordion:** one `<Card>` panel per member, **most-recent first**, most-recent **expanded by
   default** (multi-open — expanding one doesn't collapse others). Panel header (always visible):
-  that attempt's date + status label + its **own `RecordingActionsMenu`** (Download audio /
-  Delete audio / Delete recording / Regenerate-when-failed — **plus** "Re-practice this
-  question" — but **NOT favorite**, which stays chain-level) + a chevron. Expanded body:
-  `<TitleSection>` (editable **per attempt**) + `<RecordingDetailBody>` (Question → Audio →
-  Scores/Feedback/Transcript, or the failed/processing notice). Per-panel in-flight/error state
-  is keyed by recording id, same shape as the History list's per-row state (two tiny local
+  that attempt's date + status label + a chevron — **just an expand/collapse target**. Expanded
+  body: a row of `<TitleSection>` (`flex: 1`) + that attempt's **own `RecordingActionsMenu`**
+  (Rename title / Download audio / Delete audio / Delete recording / Regenerate-when-failed —
+  **plus** "Re-practice this question" — but **NOT favorite**, which stays chain-level),
+  followed by `<RecordingDetailBody>` (Question → Audio → Scores/Feedback/Transcript, or the
+  failed/processing notice). **v4 Epic K moved the 3-dot menu OFF the collapse header** and into
+  the expanded body — it sat exactly where people tap to expand and was getting hit by mistake;
+  the menu is now only reachable once a panel is open. Per-panel in-flight/error/`renaming`
+  state is keyed by recording id, same shape as the History list's per-row state (two tiny local
   hooks, `useIdSet` / `useIdErrors`, keep it DRY).
 - **Deletion edge cases:**
   - **Delete audio / regenerate / download / edit title** on a panel only touch that attempt's
@@ -1063,9 +1097,11 @@ Part-1 chain root id the grouped card passes.
 
 `history/[id].tsx` was refactored, not rewritten — its layout is unchanged. Two pieces moved to
 `src/components/` so the chain screen's panels reuse them verbatim:
-- **`TitleSection`** (`title-section.tsx`) — the pencil-edit title widget. Behaviour identical
-  to the Epic D Part 2/7 version; `history/[id].tsx` and each accordion panel both render it
-  (the panel wraps it in a `flexDirection: 'row'` `View` so its `flex: 1` fills horizontally).
+- **`TitleSection`** (`title-section.tsx`) — the inline title editor. Since **v4 Epic K** it has
+  no pencil trigger; the parent opens it via the 3-dot menu's "Rename title" (see
+  [Recording titles](#recording-titles)'s "Editing" subsection). `history/[id].tsx`, each chain
+  accordion panel, and the History **list card** all render it; the panel/list wrap it in a
+  `flexDirection: 'row'` `View` alongside the 3-dot menu so its `flex: 1` fills horizontally.
 - **`RecordingDetailBody`** (`recording-detail-body.tsx`) — the Question section, the audio
   `<Card>` (`AudioSection`), and `ReportSection` (`ScoresRow` / feedback / transcript, or the
   failed/processing notice), all moved verbatim. Props: `recording`, `onRegenerate`,
@@ -1091,16 +1127,132 @@ With ≥1 re-practiced recording from Epic I testing:
 7. **Search** for text only one attempt's question/title contains → the group still appears in
    the List.
 
+## History filters
+
+v4 Epic K — the last epic of v4. A **mode filter** + a **favorites-only toggle** on History's
+**List** view, both purely client-side over the already-built re-practice chains — no new
+backend query, same spirit as v2's search / calendar and v3's Streaks aggregation. This is the
+**first real app-wide consumer of `recordings.favorite`** — before Epic J's chain card, nothing
+anywhere read that flag. **Type-check / `expo lint` / `npm run test:chains` (14 cases) clean; no
+on-device pass yet** — same standing caveat as every Phase 3/4 and Epic C/D/F/G/I/J step.
+
+**The UI (`FilterBar` in `src/app/(tabs)/history/index.tsx`).** A **single horizontal-scrolling
+row** of pill chips (a `ScrollView horizontal`, `flexGrow: 0` so it stays content-height and
+doesn't push the list off screen) — every chip keeps its shape and stays reachable on a narrow
+screen. Order: **All → Favorites → Interview → Storytelling → Miscellaneous**. Sits **below the
+Calendar/List toggle, above the list** (and above the "Showing {date}" day chip), rendered
+**only in List view** — it's a list-refinement control, and Calendar's per-day dots deliberately
+ignore all filtering (they always reflect every recording, same as they already ignore search).
+The chips use the app's standard control treatment: unselected = `Theme.colors.card` fill +
+`Theme.colors.border` hairline + `textSecondary` label; **active = `Theme.colors.accent` fill +
+`Theme.colors.onAccent` label** — the exact flip every other active control in the app uses (the
+mode-select pill, the selected calendar day). So "the list isn't showing everything" reads at a
+glance from the highlighted chip(s).
+- **Mode:** four chips — **All / Interview / Storytelling / Miscellaneous** (`ModeFilter =
+  'all' | RecordingMode`; `'all'` = no mode filter). Single-select. Labels via the same
+  "Storytelling" convention (`MODE_FILTER_OPTIONS` is a local const, not `MODE_LABELS`, because
+  it also carries the `'all'` option).
+- **Favorites:** one toggle chip with a star icon (`star` outline → `star.fill` when on),
+  independent of the mode selection, positioned right after **All** and before the three mode
+  chips.
+
+**Overlay + fade (later UI pass).** The pill row is **not** in normal flow above the list — it's
+`position: absolute` over the top of the `FlatList` (in a shared relative `listRegion`), backed
+by an opaque cream block (`filterSolid`) and, just below the pills, a **cream→transparent
+vertical fade** (`CreamFade`) so History cards **scroll seamlessly under the pills**, dissolving
+into the background rather than hard-clipping at a list edge. The fade is a stack of ~14 thin
+non-overlapping `flex: 1` `View` bands at linearly-decreasing `opacity` (top band = solid
+`Palette.cream`, seamless with `filterSolid`; bottom band = 0) — **not** `expo-linear-gradient`,
+which this project deliberately doesn't depend on. The overlay's height is measured via
+`onLayout` (`filterZoneHeight`) and the `FlatList` `contentContainerStyle.paddingTop` +
+`RefreshControl` `progressViewOffset` are set to it, so the first card and the pull-to-refresh
+spinner both sit just below the fade. `pointerEvents="box-none"` on the overlay keeps the pills
+tappable while touches elsewhere pass through to the list.
+
+**The filtering logic (`visibleChains` `useMemo`).** Operates on `allChains = buildChains(...)`,
+**not** raw recordings — filters whole chains:
+- **Mode:** `chain.members[0].mode === modeFilter`. All members of a chain share one mode (a
+  re-practice keeps the original's mode, v4 Epic I), so any member's mode is the chain's mode.
+- **Favorites:** `chainFavoriteReference(chain).favorite`. `chainFavoriteReference` is a new
+  helper in `src/lib/re-practice-chains.ts` (unit-tested) returning the **chain root** — the
+  exact recording the grouped List card's star reads from and toggles. So "this chain is
+  favorited" means precisely what its card's star shows. (The chain *detail* screen's header
+  star uses a slightly richer rule — largest sub-chain's root — for a branched chain whose root
+  was deleted; for a linear chain the two agree, and the List only has the root's flag anyway.)
+- **Combination:** mode + favorites + the existing day filter + the existing search term all
+  **AND** together in one `useMemo` — every active constraint narrows the same list. (Search and
+  the day filter stay mutually exclusive *in the UI* as before; the mode/favorites filters
+  combine freely with whichever of those is active.)
+
+**Empty state — a new, third distinct state** (I did *not* reuse the search-miss wording).
+List view now has three visually-distinct "nothing to show" states, in priority order:
+1. **`showNoFilterMatches`** (NEW) — a mode/favorites filter combo matched nothing (with or
+   without a search term also active): *"No recordings match your filters."* (or *"Nothing
+   matches your filters and "{term}"."* when a search is also active), **plus a "Clear filters"
+   link** that resets mode → All and favorites → off (leaving any search term alone).
+2. **`showNoResults`** — the Epic D Part 5 search-miss state, shown only when **no** mode/
+   favorites filter is active: *"No recordings match "{term}". Try a different search."*
+3. **`showEmptyDayFilter`** — the Epic D Part 6 day-filter-miss state, likewise only when no
+   mode/favorites filter is active: *"No recordings on {date}."*
+
+The Phase 1 *"No recordings yet"* state (genuinely zero recordings) is unchanged and still
+hides the search bar / toggle / filter bar entirely.
+
+**Calendar/List persistence decision: filters PERSIST across the toggle** (they are not cleared
+when leaving List view) — consistent with how the search term already persists per Epic D Part
+5, and with treating mode/favorites as *refinements* rather than singular intents. Concretely:
+`modeFilter` / `favoritesOnly` live as `HistoryScreen` state (not inside `FilterBar`), so
+switching to Calendar and back leaves them exactly as set. A calendar **day tap** clears any
+active search (unchanged Epic D Part 6 behaviour) but **does not** clear the mode/favorites
+filters — so tapping a day while "favorites only" is on shows that day's favorites. The
+`filtersActive` flag (`modeFilter !== 'all' || favoritesOnly`) gates the new empty state and the
+"Clear filters" affordance.
+
+**Epic K test plan (hand-off, no on-device pass yet):**
+1. Favorite a few recordings across different modes, including at least one attempt inside a
+   multi-attempt chain (favorite it from the chain header, or from the grouped card's star).
+2. **Mode only:** tap Interview → only interview chains/rows show; the chip is highlighted.
+   Repeat for Storytelling, Miscellaneous, then All (everything back).
+3. **Favorites only:** toggle it on → only chains whose root is favorited show, across all
+   modes. Confirm the multi-attempt chain appears iff its root/card-star is on.
+4. **Combined:** Interview + Favorites → only favorited interview chains. Switch the mode to
+   Storytelling with Favorites still on → the list updates to favorited storytelling chains.
+5. **Filter + search:** type a term that matches something, then apply a mode filter that
+   excludes it → empty state reads *"Nothing matches your filters and "…"."* with "Clear
+   filters".
+6. **Empty state:** pick a mode + Favorites combo you know matches nothing → the new
+   *"No recordings match your filters."* state with a working "Clear filters" link (resets the
+   chips, keeps any search term).
+7. **Calendar/List persistence:** set Interview + Favorites, switch to Calendar, switch back to
+   List → both filters still applied and highlighted. Tap a calendar day → lands in List still
+   filtered by mode + favorites (search cleared if it was set).
+8. **Pill row + fade:** confirm all 5 chips sit on one line and scroll horizontally; scroll the
+   list and confirm cards pass **under** the pills, fading out (no hard cut-off line). Confirm
+   the first card isn't hidden behind the pills at rest, and pull-to-refresh spins below them.
+9. **Rename (3 places):** from a single-recording list card's 3-dot menu → "Rename title" → the
+   heading becomes an inline editor; save → the card shows the new title, Supabase row updated.
+   Repeat from the detail screen's menu and from an accordion panel's menu (panel must be
+   expanded first — the menu isn't on the collapsed header anymore).
+10. **Grouped card menu:** a multi-attempt card now shows a 3-dot menu in the same spot as every
+    other card (no "Rename title" item). Run Download / Delete audio on it → affects only the
+    most-recent attempt. "Delete recording" on a 2-attempt chain → it collapses to a normal
+    single card.
+11. **Streaks badge:** open a metric detail screen with a real trend, cycle Week/Month/Year/All
+    Time → the top-right badge shows "%" over "Last N days" / "Last 30 days" / etc., always on
+    **one line**, never wrapping.
+
 ## v4 wrap-up
 
 Same spirit as the [Phase 3 assessment](#phase-3-assessment), [Phase 4 exit
 checkpoint](#phase-4-exit-checkpoint), [Epic D wrap-up](#epic-d-wrap-up), and
-[v3 wrap-up](#v3-wrap-up): does v4's scope hold together end-to-end, and what's shaky?
-**Epic K (History filters — a mode filter + favorites-only toggle) is the one piece still
-unbuilt**; Epics H, I, J are complete.
+[v3 wrap-up](#v3-wrap-up): does v4's **full** scope hold together end-to-end, and what's shaky
+before calling v4 done? This **supersedes** the earlier "H/I/J complete, K next" version.
 
-**Scope-complete (H, I, J).** Type-check, `expo lint`, backend `pytest`, `npm run test:streaks`
-(31), and `npm run test:chains` (12) are all clean.
+**v4 is scope-complete — all four epics done.** Type-check (`npx tsc --noEmit`), backend
+`pytest`, `npm run test:streaks` (31), and `npm run test:chains` (**14** — Epic K added two
+`chainFavoriteReference` cases) are all clean. **`expo lint` currently can't run** — `eslint`
+went missing from `node_modules` (it's not in `package.json`'s deps and the env dropped it);
+flagged below, not caused by any v4 change.
 - **Epic H** — the global daily-question system: `daily_questions` table, lazy US-Eastern-day
   assignment, structural no-repeat (a pool question retired on assignment), synchronous batch
   top-up on exhaustion, `GET /questions/daily`, and the frontend wired to it (old client-side
@@ -1112,47 +1264,92 @@ unbuilt**; Epics H, I, J are complete.
   accordion chain detail screen (per-attempt panels, per-panel 3-dot menus, chain-level
   favorite). Shared `TitleSection` / `RecordingDetailBody` extracted from `history/[id].tsx`.
   See [Re-practice chains](#re-practice-chains).
+- **Epic K** — History filters: a mode filter (All / Interview / Storytelling / Miscellaneous) +
+  a favorites-only toggle on the List view, client-side over the already-built chains,
+  combining with the existing search + calendar day filter. New empty state + "Clear filters";
+  filters persist across the Calendar/List toggle. First app-wide consumer of `recordings.favorite`.
+  See [History filters](#history-filters). **A follow-up UI pass then:** put the filter pills on
+  one horizontal-scroll row (order All → Favorites → modes) over a cream→transparent fade so
+  cards scroll under them; gave the **grouped chain card** its own 3-dot menu (acts on the most
+  recent attempt, no rename) + moved each **accordion panel's** menu into the expanded body;
+  **removed the standalone title-edit pencil everywhere** — "Rename title" is now a 3-dot menu
+  item opening the shared inline `TitleSection` editor (list card, detail screen, accordion
+  panel); and widened the Streaks metric-detail badge so its "Last N days" label fits on one
+  line. See [Recording titles](#recording-titles), [Re-practice chains](#re-practice-chains),
+  [Streaks detail screen](#streaks-detail-screen).
 
 **Built and internally consistent, confirmed by reading the code:**
 - The whole re-practice loop closes: Record (daily question, or a re-practice handoff) → upload
-  writing `question_id` + `re_practice_of` → History List `buildChains` grouping → chain detail
-  accordion → per-attempt actions, all over the **same** `fetchRecordings()` query the List and
-  Streaks already share, plus one batched `fetchRecordingDetailsByIds()` for the accordion.
+  writing `question_id` + `re_practice_of` → History List `buildChains` grouping + Epic K
+  filtering → chain detail accordion → per-attempt actions, all over the **same**
+  `fetchRecordings()` query the List and Streaks already share, plus one batched
+  `fetchRecordingDetailsByIds()` for the accordion.
 - `buildChains` is the single grouping authority — the List card, the chain screen's chain
-  resolution, and the chain screen's favorite-reference calc all call it; there's no second
-  place that decides "what's in this group".
+  resolution, the chain screen's favorite-reference calc, and now Epic K's mode/favorites
+  filters all call it; there's no second place that decides "what's in this group".
+- Epic K's filters are a pure, additive `useMemo` layer over `allChains` — they touch no
+  fetching, polling, per-row action state, or the Calendar view's per-day dots (dots keep
+  reflecting every recording, same as they already ignore search). `chainFavoriteReference`
+  ties "chain is favorited" to the exact recording the card's star shows.
 - Deletion is coherent: the chain screen removes a member locally, `refreshDetails` re-pulls the
   survivors (catching `on delete set null` on a middle attempt's children), and a
   collapse-navigation effect resolves 0 → back to List, 1 → `router.replace` into the normal
   single-recording screen, 2+ → accordion continues. The favorite reference re-derives through
   `buildChains` with no special-casing for a deleted root.
-- Nothing new in the backend for Epic J — it's client-side over existing queries + endpoints,
-  same as v2's search/calendar and v3's Streaks.
+- Nothing new in the backend for Epic J or K — both are client-side over existing queries +
+  endpoints, same as v2's search/calendar and v3's Streaks.
 
-**Shaky / worth knowing before Epic K:**
-- **No on-device pass yet across any of v4** — type-check + lint + unit tests only, the same
-  standing caveat carried since Phase 3. Epic H's live-Supabase/Gemini pass, Epic I's upload
-  pass, and Epic J's accordion pass are all still hand-off test plans, not done runs.
+**Shaky / worth knowing before calling v4 fully done:**
+- **No on-device pass yet across any of v4** — type-check + unit tests only, the same standing
+  caveat carried since Phase 3. Epic H's live-Supabase/Gemini pass, Epic I's upload pass, Epic
+  J's accordion pass, and Epic K's filter + UI-pass changes are all still hand-off test plans,
+  not done runs. Each epic's section has its own test plan; a single combined pass through
+  Record → History → chain → filters would exercise the lot.
+- **`expo lint` can't run** — `eslint` is absent from `node_modules` and not declared in
+  `package.json`. It ran clean earlier in Epic K; the environment dropped it. `tsc` is the only
+  static check currently passing. Re-add eslint (hand the install to the human per the
+  [dependency convention](#dependency-installation-convention)) before relying on lint again.
+- **Epic K UI pass, unverified on device:** (a) the filter pills are an **`onLayout`-measured
+  absolute overlay** on the list with the list content inset by the measured height — a wrong
+  measurement (or a slow first layout) would briefly mis-inset the first card; the 70px default
+  keeps the mount jump small. (b) The **cream fade** is a 14-band stacked-`View` approximation,
+  not a real gradient — banding *shouldn't* be visible for a same-hue fade over 32px but hasn't
+  been eyeballed. (c) `TitleSection`'s inline editor now `autoFocus`es right as the
+  `RecordingActionsMenu` `Modal` fades out — iOS *usually* pops the keyboard fine through that,
+  but if it doesn't, defer the `'rename'` handler by a frame.
+- **Grouped chain card "Delete recording"** deletes only the **most-recent attempt** (the menu
+  acts on `chain.members[0]`), not the whole group, despite the confirm dialog's singular
+  "removes the recording…" wording. Coherent (the chain shrinks; at 1 member it becomes a normal
+  card) but a user might expect it to nuke the group. Noted.
 - **`.expo/types/router.d.ts` was hand-edited** to add `/history/chain/[rootId]` (a gitignored
   build artifact — `expo start` regenerates it). Same situation as the `/streaks/[metric]` note
   in the [v3 wrap-up](#v3-wrap-up): a fresh clone's `tsc` may complain about that route until
-  Metro has run once.
+  Metro has run once. (Epic K added no route.)
+- **Epic K day-tap edge case:** tapping a calendar day while a mode/favorites filter is active
+  keeps that filter (deliberate — filters are refinements, not singular intents like search),
+  so the day-filtered List is *also* mode/favorites-narrowed. If that combination is empty the
+  user sees the *"No recordings match your filters."* state with a "Showing {date}" chip *and* a
+  "Clear filters" link — two resets at once. Not incorrect, mildly busy; noted in case the
+  design wants the day tap to also clear filters.
 - **The chain screen re-runs `fetchRecordings()` on every focus** (to re-resolve the chain), on
   top of the batched detail fetch — two queries per focus. Fine at 30-rows/user scale, but it's
   more than the single-recording screen does. The 1.5s poll while non-terminal uses only the
   lighter `refreshDetails`.
 - **A branched chain** (an attempt re-practised from a *middle* attempt, then that middle
   attempt deleted) can leave `buildChains` returning several sub-chains for one accordion. The
-  screen still shows every surviving attempt as a panel; the favorite star just binds to the
-  largest sub-chain's root. Rare, and not incorrect — just noted.
+  screen still shows every surviving attempt as a panel; the favorite star binds to the largest
+  sub-chain's root. Epic K's favorites filter uses `chainFavoriteReference` = the *List* chain's
+  root, which for such a branched chain may differ from the *detail* header's star — a linear
+  chain (the overwhelmingly common case) has them agree. Rare, not incorrect — just noted.
 - **`getStatusPresentation` / raw error-hex (`#e5484d`)** flagged since Epic C/D are still
-  unaddressed — the chain screen's per-panel error text and status labels use the same
-  raw literals as the rest of History. Out of Epic J's scope, same as before.
+  unaddressed — History's per-row/per-panel error text and status labels use the same raw
+  literals. Epic K's filter chips use only `Theme` tokens; the empty-state text reuses the
+  existing `styles.emptyText`. Out of v4's scope, same as before.
 - **Day-boundary interpretation for the daily question (US Eastern)** is still flagged for the
   human to confirm — see [Daily questions](#daily-questions).
 
-**Nothing found that blocks calling v4 feature-complete once Epic K lands** — the shakiness is
-"unverified on device", not "known-broken".
+**Nothing found that blocks calling v4 feature-complete** — the shakiness above is "unverified on
+device", not "known-broken". v4 is done pending that on-device pass.
 
 ## Database
 
@@ -2034,6 +2231,35 @@ value is unchanged — display strings only.
     the search does **not** switch back or restore a day filter (that would feel like the UI
     fighting the user — they stay on whatever view they last chose).
 
+- **Filters (v4 Epic K, done):** `FilterBar`, a local component in `history/index.tsx`,
+  **only in List view** (a list-refinement control; Calendar's per-day dots keep reflecting
+  every recording). A **single horizontal-scrolling row** (`ScrollView horizontal`,
+  `flexGrow: 0`) of pill chips, order **All → Favorites → Interview → Storytelling →
+  Miscellaneous**, in the app's standard control treatment: unselected = `Theme.colors.card` +
+  `Theme.colors.border` + `textSecondary`; **active = `Theme.colors.accent` fill +
+  `Theme.colors.onAccent` label** (the same flip the mode-select pill and selected calendar day
+  use), so a narrowed list is obvious at a glance. The pill row is **overlaid** on the top of
+  the `FlatList` (`position: absolute` in a shared `listRegion`) with a cream→transparent
+  `CreamFade` beneath it so cards scroll *under* the pills — see the "Overlay + fade" note in
+  [History filters](#history-filters).
+  - **Mode chips:** `All` / `Interview` / `Storytelling` / `Miscellaneous`, single-select
+    (`ModeFilter = 'all' | RecordingMode`; `MODE_FILTER_OPTIONS` a local const since it carries
+    the `'all'` option `MODE_LABELS` doesn't).
+  - **Favorites chip:** a `star`/`star.fill` toggle, independent of the mode selection, placed
+    right after **All**.
+  - **Logic (`visibleChains` `useMemo`) operates on `allChains = buildChains(...)`, not raw
+    recordings** — filters whole chains: mode via `chain.members[0].mode` (all members share a
+    mode), favorites via `chainFavoriteReference(chain).favorite` (the chain root — what the
+    grouped card's star shows). Both **AND** with each other and with the existing search term /
+    day filter — one `useMemo`, every constraint narrows the same list.
+  - **New empty state:** when a mode/favorites combo (± search) matches nothing,
+    `showNoFilterMatches` renders *"No recordings match your filters."* (or *"Nothing matches
+    your filters and "{term}"."*) **plus a "Clear filters" link** (resets mode → All,
+    favorites → off; leaves any search term). This is **distinct** from the Epic D Part 5
+    search-miss state and the Epic D Part 6 day-filter-miss state (both now only shown when no
+    mode/favorites filter is active) and from the Phase 1 "No recordings yet" state. Full
+    breakdown + the Calendar/List persistence decision (filters persist, consistent with
+    search) in [History filters](#history-filters).
 - **Calendar view (Epic D Part 6, done):** `MonthCalendar`, a local component in
   `history/index.tsx`, plus `dayKey()` / `formatDayLabel()` helpers and a `WEEKDAY_LABELS`
   const. No card surface — the grid sits directly on the flat cream background.
@@ -2147,6 +2373,10 @@ value is unchanged — display strings only.
     question (`canRePracticeRecording()`); never on Miscellaneous. Navigates to the Record screen
     in a read-only re-practice state; the new recording's `re_practice_of` is set on upload. See
     [Re-practice mode](#re-practice-mode). No confirmation, not destructive.
+  - **Rename title** (v4 Epic K) — `canRename`, always shown (a NULL-title row can be titled for
+    the first time). Opens the shared `TitleSection` inline editor **right in the card heading**
+    (the standalone pencil is gone) — see [Recording titles](#recording-titles)'s "Editing"
+    subsection. The card's tap-to-open-detail is disabled while renaming.
   - **Download audio** — `canDownload` = `!audio_deleted && audio_path` set. Calls the existing
     `shareRecordingAudio()` (see [Audio download](#audio-download)).
   - **Delete audio** — `canDeleteAudio` = `!audio_deleted`. The existing Phase 3 Step 5
@@ -3100,20 +3330,33 @@ sets one by hand (Part 2), or naturally on new recordings.
   overwrite a hand-set title** — fixed in Part 7, see "Not overwriting a hand-edited title
   (Part 7)" below.
 
-### Editing (Part 2)
+### Editing (Part 2; opened from the 3-dot menu as of v4 Epic K)
 
-- **Where:** the History **detail** screen (`src/app/(tabs)/history/[id].tsx`). `TitleSection`
-  renders at the top of the header row as the screen's large bold heading (Part 7's restyle —
-  see [History](#history)'s "Detail screen" bullet for the full layout this sits in; the
-  interaction described below is unchanged from Part 2). The History **list** shows `title`
-  too as of Part 3 (see "List display (Part 3)" below).
-- **Interaction:** mirrors the custom-question pencil-edit in `QuestionArea` (Epic C Part 3 —
-  that pattern lives inline there, not as a shared component, so this *mirrors* it rather than
-  importing). Display = the title text + a `pencil` `SymbolView`; tap it → a bordered input
-  box (`Theme` tokens, `arrow.up.circle.fill` submit icon) pre-filled with the current title;
-  confirm saves, **"Cancel"** reverts. `TitleSection` owns the in-progress `draft` / local
-  validation error / open state; the parent owns the persisted `recording.title` and the
-  async save.
+- **Where:** the History **detail** screen (`history/[id].tsx`), each accordion panel on the
+  **chain detail** screen (`history/chain/[rootId].tsx`), **and the History list card**
+  (`RecordingListItem`) — all three render the shared `TitleSection` and open its editor from
+  the **3-dot menu's "Rename title" item**.
+- **v4 Epic K — the pencil is GONE.** `TitleSection` no longer has its own trigger; it's
+  purely "show the title, or (when `editing`) show the inline editor". The parent owns the
+  `editing` flag and flips it when the menu fires `'rename'` (`RecordingMenuAction`). Rationale:
+  consolidating every row-level action into the one menu (the list card had no room for a
+  pencil beside the star + menu anyway), and — on the chain accordion — the pencil/menu sat
+  where people tap to expand.
+- **Interaction:** menu → "Rename title" → a bordered input box (`Theme` tokens,
+  `arrow.up.circle.fill` submit icon) pre-filled with the current title, `autoFocus`; confirm
+  saves, **"Cancel"** reverts (both call the parent's `onEndEdit`). `TitleSection` owns the
+  in-progress `draft` + local validation error (re-seeded from `title` on each `editing`→true
+  transition via a `useEffect`); the parent owns `editing`, the persisted `recording.title`,
+  and the async save.
+- **`compact` / `textStyle` props (Epic K)** let the List card reuse `TitleSection` at its
+  smaller 17px heading size (smaller input box + submit icon) — the detail screen and accordion
+  panels use the default 24px. The List card also disables its card-tap navigation while
+  `renaming` so a stray tap doesn't abandon the edit.
+- **Menu item order (Epic K):** Re-practice this question → **Rename title** → Download audio →
+  Delete audio → Delete recording → Regenerate report (last one only when `status === 'failed'`;
+  it wasn't in the user's requested 5 but stays because the list card's menu is the *only* way
+  to regenerate a failed row). The **grouped re-practice chain card omits "Rename title"** — its
+  heading is the shared question, not a per-attempt title (see [Re-practice chains](#re-practice-chains)).
 - **NULL titles:** editing works identically — the field just starts empty (display shows a
   muted **"Untitled recording"** placeholder), so a user can title an old or
   generation-failed recording for the first time.

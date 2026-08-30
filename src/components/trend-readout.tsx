@@ -10,7 +10,7 @@ import type { TrendResult, TrendWindow } from '@/lib/streaks';
 // discriminated union so a card/screen never renders "NaN%":
 //   - 'ok'  -> the signed % with an up/down triangle, in `positive` green
 //             (up) / `recordRed` (down); a rounded 0 shows a plain grey
-//             "0%". `card` variant adds a sublabel — normally `windowLabel`
+//             "0%". A sublabel sits under the number — normally `windowLabel`
 //             ("Last 7 days"), auto-shortened to "Last N days" when practice
 //             only started partway into the window.
 //   - 'insufficient-history' (exactly one day of scored data) -> `card`:
@@ -21,7 +21,8 @@ import type { TrendResult, TrendWindow } from '@/lib/streaks';
 //
 // Variants: `card` (home metric card — 30px number + sublabel) and `compact`
 // (detail-screen header badge, only ever mounted for an 'ok' trend — ~17px
-// number + triangle only, no sublabel; the tab row already names the period).
+// number + triangle, with the "Last N days" sublabel on ONE line beneath it;
+// v4 Epic K — the badge box is sized wide enough to keep it unwrapped).
 
 export function TrendTriangle({
   direction,
@@ -107,7 +108,7 @@ export function TrendReadout({
   }
 
   return (
-    <View style={styles.block}>
+    <View style={[styles.block, compact && styles.compactBlock]}>
       <View style={styles.valueRow}>
         {direction !== 'flat' && (
           <TrendTriangle direction={direction} color={color} size={triangleSize} />
@@ -121,11 +122,15 @@ export function TrendReadout({
           {rounded}%
         </ThemedText>
       </View>
-      {!compact && (
-        <ThemedText type="small" themeColor="textSecondary" numberOfLines={1}>
-          {label}
-        </ThemedText>
-      )}
+      <ThemedText
+        type="small"
+        themeColor="textSecondary"
+        numberOfLines={1}
+        adjustsFontSizeToFit={compact}
+        minimumFontScale={0.8}
+        style={compact ? styles.compactLabel : undefined}>
+        {label}
+      </ThemedText>
     </View>
   );
 }
@@ -138,6 +143,14 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: Spacing.one,
+  },
+  compactBlock: {
+    alignItems: 'center',
+  },
+  compactLabel: {
+    fontSize: 11,
+    lineHeight: 14,
+    textAlign: 'center',
   },
   big: {
     fontFamily: Theme.typography.fontFamily.bold,

@@ -49,6 +49,9 @@ export default function RecordingDetailScreen() {
   const [deleteRecordingError, setDeleteRecordingError] = useState<string | null>(null);
   const [savingTitle, setSavingTitle] = useState(false);
   const [titleSaveError, setTitleSaveError] = useState<string | null>(null);
+  // v4 Epic K — title editing is now opened from the 3-dot menu's "Rename
+  // title" item (the inline pencil is gone), so the parent owns this flag.
+  const [titleEditing, setTitleEditing] = useState(false);
 
   // Shared with the silent poll below, same purpose as the History list's
   // own `requestSeqRef` (Phase 2 Step 7): only the response matching the
@@ -233,7 +236,10 @@ export default function RecordingDetailScreen() {
   const handleMenuAction = useCallback(
     (action: RecordingMenuAction) => {
       if (action === 're-practice') handleRePractice();
-      else if (action === 'download') handleDownloadAudio();
+      else if (action === 'rename') {
+        setTitleSaveError(null);
+        setTitleEditing(true);
+      } else if (action === 'download') handleDownloadAudio();
       else if (action === 'delete-audio') handleDeleteAudio();
       else if (action === 'delete-recording') handleDeleteRecording();
       else if (action === 'regenerate') handleRegenerate();
@@ -314,24 +320,26 @@ export default function RecordingDetailScreen() {
             <View style={styles.headerRow}>
               <TitleSection
                 title={recording.title}
+                editing={titleEditing}
                 onSave={handleSaveTitle}
                 saving={savingTitle}
                 saveError={titleSaveError}
-                onCancelEdit={() => setTitleSaveError(null)}
+                onEndEdit={() => {
+                  setTitleEditing(false);
+                  setTitleSaveError(null);
+                }}
               />
               <View style={styles.headerActions}>
                 <FavoriteStar favorite={recording.favorite} onToggle={handleToggleFavorite} disabled={favoritePending} />
                 {/* v2 Epic D Part 4 — the same 3-dot menu as the History list
-                    card. Download / Delete audio / Delete recording, plus
+                    card. Rename title (v4 Epic K — replaces the old inline
+                    pencil) / Download / Delete audio / Delete recording, plus
                     Regenerate report when failed (also offered as the
                     prominent button in `ReportSection` below — kept in both
-                    for menu parity with the list). The design screenshots
-                    show separate inline "Download"/"Delete" text links here,
-                    but Part 4 deliberately consolidated all row-level
-                    actions into this menu for consistency with the list —
-                    that decision stands through this restyle. */}
+                    for menu parity with the list). */}
                 <RecordingActionsMenu
                   canRePractice={canRePracticeRecording(recording)}
+                  canRename
                   canDownload={!recording.audio_deleted && !!recording.audio_path}
                   canDeleteAudio={!recording.audio_deleted}
                   canRegenerate={recording.status === 'failed'}

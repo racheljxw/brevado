@@ -134,10 +134,11 @@ function ChainPanel({
   onToggle,
   onMenuAction,
   menuBusy,
+  titleEditing,
   onSaveTitle,
   savingTitle,
   titleError,
-  onCancelTitleEdit,
+  onEndTitleEdit,
   onRegenerate,
   regenerating,
   regenerateError,
@@ -150,10 +151,11 @@ function ChainPanel({
   onToggle: () => void;
   onMenuAction: (action: RecordingMenuAction) => void;
   menuBusy: boolean;
+  titleEditing: boolean;
   onSaveTitle: (next: string) => Promise<boolean>;
   savingTitle: boolean;
   titleError: string | null;
-  onCancelTitleEdit: () => void;
+  onEndTitleEdit: () => void;
   onRegenerate: () => void;
   regenerating: boolean;
   regenerateError: string | null;
@@ -163,6 +165,10 @@ function ChainPanel({
 }) {
   return (
     <Card style={styles.panel}>
+      {/* v4 Epic K — the 3-dot menu moved OUT of this collapse header and into
+          the expanded body (same row as the title), because it sat right where
+          people tap to expand and got hit by accident. The header is now
+          purely an expand/collapse target. */}
       <Pressable
         onPress={onToggle}
         style={({ pressed }) => [styles.panelHeader, pressed && styles.pressed]}
@@ -177,15 +183,6 @@ function ChainPanel({
             {panelStatusLabel(recording.status)}
           </ThemedText>
         </View>
-        <RecordingActionsMenu
-          canRePractice={canRePracticeRecording(recording)}
-          canDownload={!recording.audio_deleted && !!recording.audio_path}
-          canDeleteAudio={!recording.audio_deleted}
-          canRegenerate={recording.status === 'failed'}
-          busy={menuBusy}
-          onSelect={onMenuAction}
-          iconSize={18}
-        />
         <SymbolView
           name={expanded ? 'chevron.up' : 'chevron.down'}
           size={16}
@@ -195,16 +192,29 @@ function ChainPanel({
 
       {expanded && (
         <View style={styles.panelBody}>
-          {/* Row wrapper so `TitleSection`'s `flex: 1` fills horizontally
-              (as it does inside `[id].tsx`'s row header), not vertically. */}
+          {/* Title (flex) + this attempt's own 3-dot menu, right-aligned —
+              mirrors the List card / `[id].tsx` heading row. */}
           <View style={styles.panelTitleRow}>
             <TitleSection
               title={recording.title}
+              editing={titleEditing}
               onSave={onSaveTitle}
               saving={savingTitle}
               saveError={titleError}
-              onCancelEdit={onCancelTitleEdit}
+              onEndEdit={onEndTitleEdit}
             />
+            <View style={styles.panelMenu}>
+              <RecordingActionsMenu
+                canRePractice={canRePracticeRecording(recording)}
+                canRename
+                canDownload={!recording.audio_deleted && !!recording.audio_path}
+                canDeleteAudio={!recording.audio_deleted}
+                canRegenerate={recording.status === 'failed'}
+                busy={menuBusy}
+                onSelect={onMenuAction}
+                iconSize={18}
+              />
+            </View>
           </View>
           {(downloadError || deleteAudioError || deleteRecordingError) && (
             <View style={styles.panelErrors}>
@@ -262,6 +272,9 @@ export default function ChainDetailScreen() {
   const [delRecErrors, setDelRecError, clearDelRecError] = useIdErrors();
   const [titleSavingIds, addTitleSaving, removeTitleSaving] = useIdSet();
   const [titleErrors, setTitleError, clearTitleError] = useIdErrors();
+  // v4 Epic K — which panels have their title editor open (opened from that
+  // panel's "Rename title" menu item; the inline pencil is gone).
+  const [renamingIds, addRenaming, removeRenaming] = useIdSet();
 
   // Out-of-order-response guard shared by the full load and the poll — same
   // purpose as `history/[id].tsx`'s `requestSeqRef`.
@@ -498,12 +511,24 @@ export default function ChainDetailScreen() {
       if (action === 're-practice') {
         const recording = memberById(id);
         if (recording) router.navigate({ pathname: '/', params: rePracticeNavParams(recording) });
+      } else if (action === 'rename') {
+        clearTitleError(id);
+        addRenaming(id);
       } else if (action === 'download') handleDownloadAudio(id);
       else if (action === 'delete-audio') handleDeleteAudio(id);
       else if (action === 'delete-recording') handleDeleteRecording(id);
       else if (action === 'regenerate') handleRegenerate(id);
     },
-    [handleDeleteAudio, handleDeleteRecording, handleDownloadAudio, handleRegenerate, memberById, router]
+    [
+      addRenaming,
+      clearTitleError,
+      handleDeleteAudio,
+      handleDeleteRecording,
+      handleDownloadAudio,
+      handleRegenerate,
+      memberById,
+      router,
+    ]
   );
 
   const toggleExpanded = useCallback((id: string) => {
@@ -588,10 +613,14 @@ export default function ChainDetailScreen() {
                   downloadIds.has(recording.id) ||
                   delRecIds.has(recording.id)
                 }
+                titleEditing={renamingIds.has(recording.id)}
                 onSaveTitle={(next) => handleSaveTitle(recording.id, next)}
                 savingTitle={titleSavingIds.has(recording.id)}
                 titleError={titleErrors[recording.id] ?? null}
-                onCancelTitleEdit={() => clearTitleError(recording.id)}
+                onEndTitleEdit={() => {
+                  removeRenaming(recording.id);
+                  clearTitleError(recording.id);
+                }}
                 onRegenerate={() => handleRegenerate(recording.id)}
                 regenerating={regenIds.has(recording.id)}
                 regenerateError={regenErrors[recording.id] ?? null}
@@ -691,6 +720,11 @@ const styles = StyleSheet.create({
   panelTitleRow: {
     flexDirection: 'row',
     alignItems: 'flex-start',
+    gap: Spacing.two,
+  },
+  panelMenu: {
+    // nudge the 3-dot glyph onto the title's first-line optical centre
+    marginTop: Spacing.half,
   },
   panelErrors: {
     gap: Spacing.one,
