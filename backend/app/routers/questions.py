@@ -10,8 +10,8 @@ Auth: standard bearer-token verification only — this data is NOT user-specific
 `/recordings/*` endpoints. The token is still required so the endpoint isn't
 open to the world.
 
-NOT wired to the frontend yet — that's Epic H Step 2. Step 1 is this endpoint
-plus its logic and tests, in isolation.
+Consumed by the Record flow's `fetchDailyQuestion` (`src/lib/api.ts`) as of
+Epic H Step 2.
 """
 
 from fastapi import APIRouter, Depends, HTTPException, Query
