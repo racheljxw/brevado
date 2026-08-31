@@ -127,7 +127,7 @@ export function TrendReadout({
         themeColor="textSecondary"
         numberOfLines={1}
         adjustsFontSizeToFit={compact}
-        minimumFontScale={0.8}
+        minimumFontScale={0.65}
         style={compact ? styles.compactLabel : undefined}>
         {label}
       </ThemedText>
@@ -148,8 +148,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   compactLabel: {
-    fontSize: 11,
-    lineHeight: 14,
+    fontSize: 10,
+    lineHeight: 13,
     textAlign: 'center',
   },
   big: {

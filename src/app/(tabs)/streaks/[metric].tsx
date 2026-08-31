@@ -285,12 +285,13 @@ const styles = StyleSheet.create({
     gap: Spacing.one,
   },
   // Badge in the header's top-right — the % (+ triangle) with the "Last N
-  // days" window label on ONE line beneath it. v4 Epic K widened this past a
-  // square so the label never wraps.
+  // days" window label on ONE line beneath it. Square (per the user); the
+  // label uses `adjustsFontSizeToFit` (see `compactLabel` in trend-readout)
+  // to shrink the longer windows ("Last 12 months") to a single line.
   statCard: {
-    width: 116,
+    width: 76,
     minHeight: 76,
-    paddingHorizontal: Spacing.two,
+    paddingHorizontal: Spacing.one,
     paddingVertical: Spacing.two,
     alignItems: 'center',
     justifyContent: 'center',

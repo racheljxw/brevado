@@ -555,14 +555,14 @@ unchanged, same as History.
   1. **`HeaderBackLink` "‹ Back to Streaks"** → `router.back()` (the shared header back-link
      component, same as History detail's "Back to History").
   2. **Header row:** the metric name as a large bold heading (28px) with its short description
-     under it on the left, and — top-**right**, in the same row — a **`<Card>` badge** (shared
-     card UI, `width: 116` / `minHeight: 76` — v4 Epic K widened it past a square) showing the
-     **currently-selected tab's** % change via `TrendReadout variant="compact"` (~17px number +
-     up/down triangle, **with the "Last N days" window label on ONE line beneath it** — v4
-     Epic K; the label auto-shrinks a touch (`adjustsFontSizeToFit`) and the box is sized so it
-     never wraps). The badge is rendered **only for a real trend** (`trend.status === 'ok'`, i.e.
-     2+ days of scored data) — with no data, or just one day of it (nothing to compare against),
-     the badge is omitted and the corner is simply empty.
+     under it on the left, and — top-**right**, in the same row — a **square `<Card>` badge**
+     (shared card UI, `76×76`) showing the **currently-selected tab's** % change via
+     `TrendReadout variant="compact"` (~17px number + up/down triangle, **with the "Last N days"
+     window label on ONE line beneath it** — v4 Epic K; the label is 10px and
+     `adjustsFontSizeToFit` (`minimumFontScale` 0.65) shrinks the longer windows like "Last 12
+     months" to keep it single-line in the square). The badge is rendered **only for a real
+     trend** (`trend.status === 'ok'`, i.e. 2+ days of scored data) — with no data, or just one
+     day of it (nothing to compare against), the badge is omitted and the corner is simply empty.
   3. **Week / Month / Year / All Time tab row** — the minimalist underline style, matching
      History's Calendar/List toggle (v2 Epic D Part 5) for visual consistency. Switching a tab
      recalculates the **stat badge**, the graph, and — on Clarity — the supporting badges, all
@@ -1327,7 +1327,8 @@ flagged below, not caused by any v4 change.
   ~mid-pill, tighter gap to the first card) **and under the header on every scroll screen**
   (recording detail, chain accordion, Streaks home + metric detail) so content dissolves rather
   than hard-cutting; tightened the list card's star/3-dot cluster + `edgeAlign`ed the menu; and
-  widened the Streaks metric-detail badge so its "Last N days" label fits on one line. See
+  added the "Last N days" label under the Streaks metric-detail badge (a shrink-to-fit label in
+  the existing 76×76 square). See
   [Recording titles](#recording-titles), [Re-practice chains](#re-practice-chains),
   [Header fades](#header-fades), [Streaks detail screen](#streaks-detail-screen).
 
