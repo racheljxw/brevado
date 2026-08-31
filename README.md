@@ -11,6 +11,10 @@ actually getting tighter over time, not just whether you showed up.
 It's aimed at anyone who wants to get better at speaking off the cuff — interview prep, storytelling,
 thinking out loud clearly — without booking a coach or joining a club.
 
+<img width="585" height="1266" alt="IMG_5907" src="https://github.com/user-attachments/assets/c330e3e6-80eb-4885-bef0-23815e85a035" />
+<img width="585" height="1266" alt="IMG_5909" src="https://github.com/user-attachments/assets/8607f148-d9fa-4071-86e0-5b06ae145997" />
+<img width="585" height="1266" alt="IMG_5911" src="https://github.com/user-attachments/assets/54cf11b4-eb06-4a52-abba-cb94e910134d" />
+<img width="585" height="1266" alt="IMG_5910" src="https://github.com/user-attachments/assets/26a115db-1c58-44ee-b78c-f50f9d98ffb5" />
 
 
 ## Features
