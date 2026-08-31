@@ -50,14 +50,13 @@ export default function RecordingDetailScreen() {
   const [deleteRecordingError, setDeleteRecordingError] = useState<string | null>(null);
   const [savingTitle, setSavingTitle] = useState(false);
   const [titleSaveError, setTitleSaveError] = useState<string | null>(null);
-  // v4 Epic K — title editing is now opened from the 3-dot menu's "Rename
-  // title" item (the inline pencil is gone), so the parent owns this flag.
+  // Title editing is opened from the 3-dot menu's "Rename title" item, so the
+  // parent owns this flag.
   const [titleEditing, setTitleEditing] = useState(false);
 
-  // Shared with the silent poll below, same purpose as the History list's
-  // own `requestSeqRef` (Phase 2 Step 7): only the response matching the
-  // most recently *issued* request is ever applied, so a slower, older
-  // fetch resolving after a newer one can't briefly overwrite fresh state.
+  // Only the response matching the most recently *issued* request is ever
+  // applied, so a slower, older fetch resolving after a newer one can't
+  // briefly overwrite fresh state. Shared with the silent poll below.
   const requestSeqRef = useRef(0);
 
   const load = useCallback(async () => {
@@ -88,17 +87,12 @@ export default function RecordingDetailScreen() {
     load();
   }, [load]);
 
-  // Phase 3 Step 2: this screen's own analogue of the History list's Step 7
-  // polling. The list's polling is scoped to whatever's in the list's own
-  // state and only runs while the list tab itself is focused — it does
-  // nothing for a screen further up the navigation stack, so a recording
-  // regenerated from here (see `handleRegenerate` below) wouldn't otherwise
-  // be seen moving through `processing` -> `done`/`failed` unless the user
-  // backed out to History and back in. Same shape as the list's: a flat 1.5s
-  // interval, gated on this screen being focused, that stops once
-  // `recording.status` is terminal (`TERMINAL_STATUSES`) and silently
-  // updates `recording` in place (no `screenState`/loading-spinner flicker)
-  // rather than calling `load()`.
+  // This screen's own poll, so a recording regenerated from here (see
+  // `handleRegenerate`) is seen moving through `processing` -> `done`/`failed`
+  // without backing out to the list and returning. The list's polling only
+  // runs while the list tab is focused, so it doesn't cover this screen. Flat
+  // 1.5s interval, gated on focus, stops once `recording.status` is terminal;
+  // updates `recording` in place with no loading-spinner flicker.
   const recordingRef = useRef<RecordingDetail | null>(null);
   useEffect(() => {
     recordingRef.current = recording;
@@ -132,13 +126,10 @@ export default function RecordingDetailScreen() {
     setRegenerateError(null);
     try {
       await regenerateReport(recording.id);
-      // Optimistically reflect the pipeline restarting immediately, rather
-      // than waiting for the next poll tick — `process_recording()` flips
-      // status straight to `processing` as its first step (see
-      // `backend/app/services/processing.py`), so this mirrors exactly what
-      // the backend is about to do and reuses the pending/processing UI
-      // already built into this component (status badge + the "still
-      // processing" branch above) with no new "regenerating" display needed.
+      // Reflect the pipeline restarting immediately rather than waiting for
+      // the next poll tick — `process_recording()` flips status straight to
+      // `processing` as its first step, so this mirrors what the backend is
+      // about to do and reuses the existing processing UI.
       setRecording((prev) => (prev ? { ...prev, status: 'processing' } : prev));
     } catch (err) {
       setRegenerateError(err instanceof Error ? err.message : 'Could not start regeneration.');
@@ -147,10 +138,8 @@ export default function RecordingDetailScreen() {
     }
   }, [recording]);
 
-  // Phase 3 Step 4 — same optimistic-then-persist pattern as the History
-  // list's `handleToggleFavorite` (`history/index.tsx`): flip local state
-  // immediately so the star responds without waiting on a round-trip, then
-  // persist via the same `setFavorite` direct Supabase update, reverting on
+  // Optimistic-then-persist: flip local state immediately so the star
+  // responds without waiting on a round-trip, then persist and revert on
   // failure.
   const handleToggleFavorite = useCallback(async () => {
     if (!recording) return;
@@ -166,10 +155,8 @@ export default function RecordingDetailScreen() {
     }
   }, [recording]);
 
-  // Phase 3 Step 5 — same "no confirmation, not optimistic" reasoning as the
-  // History list's `handleDeleteAudio` (`history/index.tsx`): fires
-  // immediately on tap, and `recording.audio_deleted` only flips once the
-  // backend confirms the delete actually completed.
+  // No confirmation, not optimistic: fires immediately on tap, and
+  // `recording.audio_deleted` only flips once the backend confirms.
   const handleDeleteAudio = useCallback(async () => {
     if (!recording) return;
     setDeletingAudio(true);
@@ -184,11 +171,9 @@ export default function RecordingDetailScreen() {
     }
   }, [recording]);
 
-  // Phase 3 Step 6 — same "not an error" reasoning as the list's
-  // `handleDownloadAudio` (`history/index.tsx`): `shareRecordingAudio`
-  // resolves the same way whether the user actually shared the file or
-  // dismissed the share sheet, so there's nothing to special-case for a
-  // cancel here either — only a genuine failure lands in `downloadAudioError`.
+  // `shareRecordingAudio` resolves the same way whether the user shared the
+  // file or dismissed the share sheet, so a cancel needs no special-casing —
+  // only a genuine failure lands in `downloadAudioError`.
   const handleDownloadAudio = useCallback(async () => {
     if (!recording?.audio_path) {
       setDownloadAudioError('No audio file to download.');
@@ -205,13 +190,10 @@ export default function RecordingDetailScreen() {
     }
   }, [recording]);
 
-  // v2 Epic D Part 4 — permanently delete the whole recording (row + audio).
-  // Gated behind a confirmation dialog in `RecordingActionsMenu` before it
-  // reaches here — the irreversible loss of transcript/feedback/metrics is
-  // why this one action confirms where "Delete audio" doesn't. Not
-  // optimistic: on success there's nothing left to show, so we navigate back
-  // to the list (which refetches on focus, so the row — and its freed cap
-  // slot — reflect immediately). On failure, stay put with an inline error.
+  // Permanently delete the whole recording (row + audio). Gated behind a
+  // confirmation dialog in `RecordingActionsMenu` before it reaches here. On
+  // success there's nothing left to show, so navigate back to the list (which
+  // refetches on focus); on failure, stay put with an inline error.
   const handleDeleteRecording = useCallback(async () => {
     if (!recording) return;
     setDeletingRecording(true);
@@ -225,10 +207,9 @@ export default function RecordingDetailScreen() {
     }
   }, [recording, router]);
 
-  // v4 Epic I — see the matching handler in `history/index.tsx`. Hands the
-  // Record tab the original recording's id + mode + question via route params;
-  // it enters a read-only re-practice state and writes `re_practice_of` on
-  // upload.
+  // Hands the Record tab the original recording's id + mode + question via
+  // route params; it enters a read-only re-practice state and writes
+  // `re_practice_of` on upload.
   const handleRePractice = useCallback(() => {
     if (!recording) return;
     router.navigate({ pathname: '/', params: rePracticeNavParams(recording) });
@@ -248,20 +229,10 @@ export default function RecordingDetailScreen() {
     [handleRePractice, handleDownloadAudio, handleDeleteAudio, handleDeleteRecording, handleRegenerate]
   );
 
-  // v2 Epic D Part 2 — persist a user-edited title. A direct Supabase update
-  // (`updateRecordingTitle`), not a backend endpoint — same call and same
-  // reasoning as the favorite toggle: RLS already scopes it to this user and
-  // there's no Gemini/Storage work involved (see the function's own doc
-  // comment in src/lib/recordings.ts). Deliberately NOT optimistic, matching
-  // `handleDeleteAudio`: `recording.title` only changes once the write has
-  // actually landed, so a failed save never leaves a wrong title on screen.
+  // Persist a user-edited title via `updateRecordingTitle` (a direct Supabase
+  // update). Not optimistic: `recording.title` only changes once the write
+  // has landed, so a failed save never leaves a wrong title on screen.
   // Returns whether it persisted, so `TitleSection` knows whether to close.
-  //
-  // v2 Epic D Part 7: `updateRecordingTitle` now also sets
-  // `title_edited_by_user = true` in the same write, so a subsequent
-  // pipeline run (initial generation or "Regenerate report") never
-  // overwrites this hand-set title — see that function's doc comment and
-  // `backend/app/services/processing.py`.
   const handleSaveTitle = useCallback(
     async (nextTitle: string): Promise<boolean> => {
       if (!recording) return false;
@@ -319,9 +290,9 @@ export default function RecordingDetailScreen() {
             style={styles.scrollArea}
             contentContainerStyle={styles.scrollContent}
             showsVerticalScrollIndicator={false}>
-            {/* Header: the editable title (Part 2) sharing its line with the
-                favorite star + 3-dot menu, mirroring the List card's heading
-                row (Part 3/4) at a larger scale. */}
+            {/* Header: the editable title sharing its line with the favorite
+                star + 3-dot menu, mirroring the List card's heading row at a
+                larger scale. */}
             <View style={styles.headerRow}>
               <TitleSection
                 title={recording.title}
@@ -336,12 +307,10 @@ export default function RecordingDetailScreen() {
               />
               <View style={styles.headerActions}>
                 <FavoriteStar favorite={recording.favorite} onToggle={handleToggleFavorite} disabled={favoritePending} />
-                {/* v2 Epic D Part 4 — the same 3-dot menu as the History list
-                    card. Rename title (v4 Epic K — replaces the old inline
-                    pencil) / Download / Delete audio / Delete recording, plus
-                    Regenerate report when failed (also offered as the
-                    prominent button in `ReportSection` below — kept in both
-                    for menu parity with the list). */}
+                {/* The same 3-dot menu as the History list card. Regenerate
+                    report (when failed) is also offered as the prominent
+                    button in `ReportSection` below — kept in both for parity
+                    with the list. */}
                 <RecordingActionsMenu
                   canRePractice={canRePracticeRecording(recording)}
                   canRename
@@ -355,12 +324,10 @@ export default function RecordingDetailScreen() {
               </View>
             </View>
 
-            {/* Meta row: the colour-coded mode pill (Part 3 styling) on the
-                left, the date/time right-aligned. No status badge — removed
-                as redundant: `ReportSection` below already shows an explicit
-                "still processing" / "Processing failed" notice for anything
-                that isn't done, so a second status label up here duplicated
-                that same information. */}
+            {/* Meta row: the colour-coded mode pill on the left, the date/time
+                right-aligned. No status badge — `ReportSection` below already
+                shows an explicit "still processing" / "Processing failed"
+                notice for anything that isn't done. */}
             <View style={styles.metaRow}>
               <View style={[styles.modePillBox, { backgroundColor: modePill.backgroundColor }]}>
                 <ThemedText type="small" style={[styles.modePillText, { color: modePill.color }]}>
@@ -394,7 +361,7 @@ export default function RecordingDetailScreen() {
 
             {/* Question -> Audio -> Scores/Feedback/Transcript. Shared with
                 each accordion panel on the re-practice chain screen via
-                `RecordingDetailBody` (v4 Epic J Part 2). */}
+                `RecordingDetailBody`. */}
             <RecordingDetailBody
               recording={recording}
               onRegenerate={handleRegenerate}
@@ -422,9 +389,8 @@ const styles = StyleSheet.create({
     flex: 1,
     width: '100%',
     maxWidth: MaxContentWidth,
-    // Gutter lives on the sections below, not here — a padded ScrollView
-    // frame would clip the card drop shadows at its left/right edges. See
-    // the matching note in `history/index.tsx`.
+    // Gutter lives on the scroll content, not here — a padded ScrollView
+    // frame would clip the card drop shadows at its left/right edges.
   },
   centerFill: {
     flex: 1,
@@ -442,7 +408,7 @@ const styles = StyleSheet.create({
   centerText: {
     textAlign: 'center',
   },
-  // v4 Epic K — relative wrapper for the header `ScrollFade` overlay.
+  // Relative wrapper for the header `ScrollFade` overlay.
   scrollArea: {
     flex: 1,
   },
@@ -459,8 +425,7 @@ const styles = StyleSheet.create({
     paddingTop: SCROLL_FADE_HEIGHT + Spacing.two,
     paddingBottom: BottomTabInset + Spacing.four,
   },
-  // Header row: title (flex) + the star/menu cluster pinned to the right —
-  // same pattern as the List card's heading row, at a larger scale.
+  // Header row: title (flex) + the star/menu cluster pinned to the right.
   headerRow: {
     flexDirection: 'row',
     alignItems: 'flex-start',
@@ -473,9 +438,7 @@ const styles = StyleSheet.create({
     // nudge onto the title's optical centre on its first line
     marginTop: Spacing.half,
   },
-  // Meta row: mode pill on the left, date right-aligned — matching the List
-  // card's `metaRow` layout (Part 3). No status badge (see the JSX comment
-  // above where this renders).
+  // Meta row: mode pill on the left, date right-aligned.
   metaRow: {
     flexDirection: 'row',
     alignItems: 'center',

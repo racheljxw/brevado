@@ -16,10 +16,9 @@ import { AuthProvider, useAuth } from '@/lib/auth-context';
 
 SplashScreen.preventAutoHideAsync();
 
-// v2 Epic B: the app is a single warm *light* theme (see docs/CLAUDE.md's
-// "Design system" section). Pin React Navigation's container theme to the
-// cream palette so screen transitions never flash a white/grey ground,
-// regardless of the OS colour scheme.
+// The app is a single warm light theme. Pin React Navigation's container
+// theme to the cream palette so screen transitions never flash a white/grey
+// ground, regardless of the OS colour scheme.
 const navTheme: NavTheme = {
   ...DefaultTheme,
   dark: false,
@@ -34,10 +33,9 @@ const navTheme: NavTheme = {
 };
 
 export default function RootLayout() {
-  // v2 Epic B: Noto Sans is the app-wide typeface. The family keys here
-  // ("NotoSans_400Regular" …) are exactly what `Theme.typography.fontFamily`
-  // (src/constants/theme.ts) references, so any `fontFamily: NotoSans.*`
-  // resolves once these are loaded.
+  // Noto Sans is the app-wide typeface. The family keys here are exactly what
+  // `NotoSans` in src/constants/theme.ts references, so any
+  // `fontFamily: NotoSans.*` resolves once these are loaded.
   const [fontsLoaded, fontError] = useFonts({
     NotoSans_400Regular,
     NotoSans_500Medium,
@@ -90,8 +88,8 @@ function RootNavigator() {
     <Stack screenOptions={{ headerShown: false }}>
       <Stack.Protected guard={!!session}>
         <Stack.Screen name="(tabs)" />
-        {/* v2 Epic A Step 2: Settings is a non-tab stack screen, pushed
-            from the header profile icon on the three main tab screens. */}
+        {/* Settings is a non-tab stack screen, pushed from the header profile
+            icon on the three main tab screens. */}
         <Stack.Screen name="settings" />
       </Stack.Protected>
       <Stack.Protected guard={!session}>

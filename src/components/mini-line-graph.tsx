@@ -4,16 +4,14 @@ import { StyleSheet, View, type LayoutChangeEvent } from 'react-native';
 import { Theme } from '@/constants/theme';
 import type { GraphPoint } from '@/lib/streaks';
 
-// A compact inline sparkline for the Streaks home-screen metric cards (v3
-// Epic G Part 2). This project has no `react-native-svg`, so the line is
-// drawn as a run of thin rotated `View` segments between consecutive
-// non-null points; a `null` point (a bucket with no qualifying recordings —
-// see `buildGraphPoints` in src/lib/streaks.ts) simply leaves a gap the
-// line doesn't bridge.
+// A compact inline sparkline for the Streaks home-screen metric cards. This
+// project has no `react-native-svg`, so the line is drawn as a run of thin
+// rotated `View` segments between consecutive non-null points; a `null` point
+// (a bucket with no qualifying recordings — see `buildGraphPoints`) leaves a
+// gap the line doesn't bridge.
 //
-// Deliberately small — it's a glanceable trend hint inside the card, not the
-// full graph. The metric detail screens' full-size graphs are Epic G Part 3
-// and are not built on this.
+// Deliberately small — a glanceable trend hint inside the card. The detail
+// screens' full-size graph is a separate component (`MetricLineGraph`).
 
 const STROKE = 2;
 const DOT = 5;

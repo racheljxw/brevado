@@ -1,17 +1,10 @@
 """
-Shared Gemini API client, lazily built from `GEMINI_API_KEY`.
+Shared Gemini API client, lazily built from `GEMINI_API_KEY` and reused for
+the life of the process.
 
-Uses the official **`google-genai`** SDK (`pip install google-genai`, pinned
-in `backend/requirements.txt`) — Google's current unified Gen AI SDK, not
-the older `google-generativeai` package. `google-generativeai` is now
-explicitly marked legacy/limited-maintenance upstream in favor of
-`google-genai` (see https://github.com/googleapis/python-genai and the
-migration guide at https://ai.google.dev/gemini-api/docs/migrate), so
-`google-genai` is what any new Gemini work in this project should use.
-
-Built once (module-level singleton) and reused, the same way
-`app/supabase_client.py` builds one shared Supabase client — cheap to
-construct, but no reason to rebuild it on every `BackgroundTasks` call.
+Uses the `google-genai` SDK (Google's current unified Gen AI SDK), not the
+legacy `google-generativeai` package. Migration guide:
+https://ai.google.dev/gemini-api/docs/migrate
 """
 
 from google import genai

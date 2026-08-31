@@ -1,23 +1,18 @@
 """
-Phase 2 Step 4: deterministic metrics computed from a transcript (and, for
-words-per-minute, the source audio) — no Gemini calls in this module. Per
-docs/PROJECT_PLAN.md Section 3 ("Processing & feedback"), these are computed
-in code and fed into the feedback prompt as grounding rather than left to
-the LLM to eyeball, so they need to be right on their own, independent of
-any AI call. As of Step 5, `app/services/feedback.py` passes this module's
-output into the feedback prompt as grounding context.
+Deterministic metrics computed from a transcript (and, for words-per-minute,
+the source audio) — no Gemini calls in this module. They're computed in code
+and fed into the feedback prompt as grounding rather than left to the LLM to
+eyeball, so they need to be right on their own.
 
-Kept as its own module rather than folded into `processing.py` — this is
-pure text/audio-metadata logic with no Supabase/Gemini/network calls of its
-own, easy to unit-test in isolation (see `test_metrics.py`), and
-`processing.py` is already growing across Steps 3–6.
+Pure text/audio-metadata logic with no network calls, unit-tested in
+isolation (see `test_metrics.py`).
 
 Output shape (stored as-is into `recordings.metrics` jsonb):
     {
         "filler_word_rate": 0.08,      # float 0.0-1.0, NOT a percentage — see compute_filler_word_rate
         "words_per_minute": 142,       # int, or None if audio duration couldn't be determined
         "repetition_count": 3,         # int, count of immediate word/phrase repeats — see compute_repetition_count
-        "word_count": 210,             # int, included since both fields above are derived from it and the feedback prompt / Phase 5 scoring may want it directly
+        "word_count": 210,             # int, kept because the other two fields derive from it and callers want it directly
     }
 """
 
@@ -29,11 +24,10 @@ from mutagen import File as MutagenFile
 
 logger = logging.getLogger(__name__)
 
-# Starter filler word/phrase list — deliberately simple (plain substring/word-boundary
-# matching, no POS tagging or context awareness). "like" and "so" in particular will
-# also match legitimate, non-filler uses ("I like pizza", "so, that's the plan") — this
-# is a known limitation of a starter list, not a bug. Tune this list based on what real
-# transcripts show; see docs/CLAUDE.md's "Metrics" section for where this lives.
+# Starter filler word/phrase list — deliberately simple (plain word-boundary matching,
+# no POS tagging or context awareness). "like" in particular will also match legitimate
+# non-filler uses ("I like pizza") — a known limitation of a starter list, not a bug.
+# Tune this list based on what real transcripts show.
 FILLER_WORDS = [
     "um",
     "umm",
@@ -51,10 +45,9 @@ FILLER_WORDS = [
     "literally",
 ]
 
-# Longer phrases must be matched before their single-word substrings (e.g. "i mean"
-# before a bare "mean" would ever be considered) — not currently an issue since no
-# filler word here is a substring of another, but sorting longest-first keeps that true
-# if the list grows.
+# Sort longest-first so a multi-word phrase is matched before any single-word substring
+# of it. No current filler word is a substring of another, but this keeps that safe if
+# the list grows.
 _FILLER_PATTERN = re.compile(
     r"\b(" + "|".join(re.escape(w) for w in sorted(FILLER_WORDS, key=len, reverse=True)) + r")\b",
     re.IGNORECASE,
@@ -62,8 +55,8 @@ _FILLER_PATTERN = re.compile(
 
 _WORD_PATTERN = re.compile(r"[A-Za-z']+")
 
-# Mirrors `_GEMINI_MIME_TYPES` in `processing.py` — mutagen identifies format from file
-# content, not extension, so this only needs to cover formats we actually pass it.
+# mutagen identifies format from file content, not extension, so this only needs to
+# cover the formats we actually pass it (mirrors `_GEMINI_MIME_TYPES` in processing.py).
 _MUTAGEN_EXTENSION_HINT = {
     "audio/mp4": ".m4a",
     "audio/wav": ".wav",
@@ -107,9 +100,8 @@ def compute_repetition_count(transcript: str) -> int:
     are immediately repeated right after themselves (checked longest-first so "the main
     point the main point" counts once, not additionally as a 1-word or 2-word repeat
     inside it). On a match, the count increments once and the scan jumps past both
-    copies, so overlapping repeats aren't double-counted. Case-insensitive; punctuation
-    is stripped before comparison (repetition_count over transcript text, not audio
-    disfluency detection over raw speech).
+    copies, so overlapping repeats aren't double-counted. Case-insensitive, punctuation
+    stripped before comparison.
     """
     words = [w.lower() for w in _tokenize(transcript)]
     count = 0
@@ -130,25 +122,18 @@ def compute_repetition_count(transcript: str) -> int:
 
 
 def get_audio_duration_seconds(audio_bytes: bytes, mime_type: str) -> float | None:
-    """Reads audio duration straight from the file's own metadata via `mutagen`.
+    """Reads audio duration straight from the file's own header via `mutagen`.
 
-    Why this approach over the alternatives: Gemini's `generate_content` transcription
-    response doesn't include audio duration or word-level timing — the API isn't asked
-    for timestamps, and Flash's transcription output is just text, no timing metadata
-    included. Rather than adding a second, timestamp-requesting Gemini call just to get
-    a duration (extra cost/latency for one number, and an LLM-reported duration isn't
-    guaranteed to be exact anyway), duration is read directly from the audio file's own
-    header — this is exact, free, and needs no extra network call. The bytes are the
-    same ones already downloaded from Storage for transcription (see `processing.py`) —
-    not re-downloaded here.
+    The Gemini transcription response carries no duration or timing metadata, and asking
+    for timestamps would mean a second call for one number that still wouldn't be exact.
+    The file header is exact, free, and needs no network call — and the bytes are the
+    ones already downloaded for transcription, not re-fetched.
 
-    `mutagen.File` sniffs format from content, but works more reliably with a filename/
-    extension hint for containers like m4a/mp4 that can be ambiguous — `_MUTAGEN_EXTENSION_HINT`
-    supplies that from the same MIME type already resolved for the Gemini call.
+    `mutagen.File` sniffs format from content but is more reliable with an extension
+    hint for ambiguous containers like m4a/mp4; `_MUTAGEN_EXTENSION_HINT` supplies one.
 
-    Returns None (never raises) if duration can't be determined — an unrecognized/
-    corrupt file, or a format mutagen can't parse — so a metrics computation issue never
-    fails the whole recording (see `processing.py`'s `process_recording`).
+    Returns None (never raises) if duration can't be determined, so a metrics issue
+    never fails the whole recording.
     """
     extension_hint = _MUTAGEN_EXTENSION_HINT.get(mime_type, "")
     try:
@@ -185,10 +170,8 @@ def compute_metrics(transcript: str, audio_bytes: bytes | None, mime_type: str |
     Filler-word rate, repetition count, and word count only need the transcript text and
     always succeed for any string input (including "", which yields all-zero metrics).
     Words-per-minute is the only field that depends on audio duration and can come back
-    None — deliberately isolated in `compute_words_per_minute` so a duration failure
-    only nulls out that one field rather than the whole metrics object. See
-    `process_recording` in `processing.py` for how a totally unexpected failure here
-    (not just a duration miss) is still handled without losing the transcript.
+    None — isolated in `compute_words_per_minute` so a duration failure only nulls that
+    one field rather than the whole metrics object.
     """
     word_count = compute_word_count(transcript)
     return {

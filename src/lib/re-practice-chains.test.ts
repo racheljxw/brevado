@@ -1,9 +1,7 @@
-// Unit tests for src/lib/re-practice-chains.ts (v4 Epic J Part 1).
+// Unit tests for src/lib/re-practice-chains.ts.
 //
-// Runs on Node's built-in test runner (`node:test`, zero new dependencies),
-// same setup as `streaks.test.ts` — `re-practice-chains.ts` is deliberately
-// dependency-free, so this compiles just the two files to plain JS and runs
-// them. See `npm run test:chains` (package.json) for the exact command.
+// Runs on Node's built-in test runner (`node:test`, no new dependencies),
+// same setup as `streaks.test.ts`. See `npm run test:chains` in package.json.
 
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';

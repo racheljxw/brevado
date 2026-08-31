@@ -11,11 +11,9 @@ import { WebBadge } from '@/components/web-badge';
 import { MaxContentWidth, Spacing } from '@/constants/theme';
 import { useAuth } from '@/lib/auth-context';
 
-// v2 Epic A Step 2 — the Settings screen. A non-tab stack screen, pushed
-// from the header profile icon (`ProfileButton`) on the three main tab
-// screens. This is where sign-out lives now (migrated off the old
-// Phase 1 "Sign out" button on the Record tab). Styling is intentionally
-// plain — Epic B's redesign pass restyles this along with everything else.
+// The Settings screen — a non-tab stack screen, pushed from the header
+// profile icon (`ProfileButton`) on the three main tab screens. Shows the
+// signed-in email and the sign-out action.
 export default function SettingsScreen() {
   const router = useRouter();
   const { user, signOut } = useAuth();
@@ -86,9 +84,8 @@ const styles = StyleSheet.create({
     flex: 1,
     width: '100%',
     maxWidth: MaxContentWidth,
-    // NB: horizontal gutter/gap live on `content` below, not here —
-    // `HeaderBackLink` owns its own padding, so a shared one here would double
-    // up on its row. See the matching note in `history/index.tsx`.
+    // Horizontal gutter lives on `content` below, not here — `HeaderBackLink`
+    // owns its own padding, so a shared one here would double up on its row.
   },
   content: {
     flex: 1,

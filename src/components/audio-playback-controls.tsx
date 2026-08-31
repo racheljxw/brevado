@@ -8,20 +8,10 @@ import { formatDuration } from '@/lib/format-time';
 
 /**
  * Play/pause button + progress bar + elapsed/duration labels for a single
- * audio source. Originally built inline as part of `RecordingPlayback` in
- * `src/app/(tabs)/index.tsx` (the post-recording preview); extracted here in
- * Phase 3 Step 1 once the History detail screen needed the same controls for
- * a recording's already-uploaded audio, not just a freshly-recorded local
- * file. `useAudioPlayer(uri)` doesn't care whether `uri` is a local
- * `file://` path or a remote (signed) URL, so no branching is needed here —
- * callers just pass whichever `uri` they have.
- *
- * v2 Epic D Part 7 — restyled onto `Theme` tokens as part of the History
- * detail-screen restyle: a filled pill Play/Pause button (accent fill,
- * play.fill/pause.fill icon + label) and a token-coloured progress track,
- * matching the design's audio-player treatment. Shared with the Home tab's
- * post-recording preview (`RecordingPlayback`), which picks up the same
- * restyle for free since both call sites render this one component.
+ * audio source, shared by the History detail screen and the Home tab's
+ * post-recording preview (`RecordingPlayback`). `useAudioPlayer(uri)` doesn't
+ * care whether `uri` is a local `file://` path or a remote signed URL, so no
+ * branching is needed — callers pass whichever they have.
  */
 export function AudioPlaybackControls({ uri }: { uri: string }) {
   const player = useAudioPlayer(uri);

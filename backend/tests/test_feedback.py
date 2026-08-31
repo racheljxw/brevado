@@ -1,9 +1,7 @@
 """
-Phase 2 Step 5 unit checks for `app/services/feedback.py` — pure prompt-building logic
-only (`build_feedback_prompt` / `_format_metrics_grounding`), not the actual Gemini call,
-which needs a live API key and isn't exercised here. Same spirit as `test_metrics.py`:
-small, hand-written inputs checked against what the built prompt string should contain for
-each of the three modes, per docs/CLAUDE.md's "AI processing endpoint" section.
+Unit checks for `app/services/feedback.py` — the pure prompt-building and
+response-coercion logic, not the live Gemini call. Small hand-written inputs
+checked against what the built prompt should contain for each mode.
 
 Run from `backend/` with the dev deps installed:
     pip install -r requirements.txt -r requirements-dev.txt
@@ -92,9 +90,8 @@ def test_prompt_includes_miscellaneous_criteria():
 
 
 def test_prompt_handles_null_question_regardless_of_mode():
-    # A null question is still possible for interview/story even post-Phase-4 (e.g. a
-    # lookup edge case), not just miscellaneous (which always passes question=null) — the
-    # prompt must handle this gracefully for every mode.
+    # A null question is possible for interview/story too (a lookup edge case), not just
+    # miscellaneous — the prompt must handle it gracefully for every mode.
     prompt = build_feedback_prompt(
         mode="interview", question=None, transcript="Some answer.", metrics=SAMPLE_METRICS,
     )
@@ -138,7 +135,7 @@ def test_prompt_requests_prose_feedback_no_numeric_scores():
     assert "numeric scores" in prompt
 
 
-# --- prompt construction: title (v2 Epic D Part 1) --------------------------------
+# --- prompt construction: title --------------------------------------------------
 
 
 def test_prompt_asks_for_a_json_object_with_feedback_and_title():
@@ -183,7 +180,7 @@ def test_feedback_response_schema_requires_all_keys():
     assert set(_FEEDBACK_RESPONSE_SCHEMA.required) == expected
 
 
-# --- prompt construction: v3 scores (Epic F Step 1) -------------------------------
+# --- prompt construction: scores ------------------------------------------------
 
 
 def test_prompt_asks_for_the_three_scores_and_grammar_count():

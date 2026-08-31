@@ -1,16 +1,11 @@
-// Unit tests for src/lib/streaks.ts (v3 Epic G Part 1).
+// Unit tests for src/lib/streaks.ts.
 //
 // The Expo project has no test runner of its own (only the backend uses
-// pytest). Rather than pull in `jest-expo` + its toolchain for four pure
-// functions, these run on Node's built-in test runner (`node:test`, zero
-// new dependencies). `streaks.ts` is deliberately dependency-free, so this
-// works by compiling just these two files to plain JS and running them —
-// see `npm run test:streaks` (package.json) for the exact command.
-//
-// If/when the frontend grows enough logic to warrant it, the recommendation
-// is to add `jest-expo` (`npx expo install -- --save-dev jest-expo @types/jest`,
-// run by the human per the dependency convention) and port these; the
-// assertions translate directly.
+// pytest). Rather than pull in `jest-expo` + its toolchain for a handful of
+// pure functions, these run on Node's built-in test runner (`node:test`, no
+// new dependencies). `streaks.ts` is dependency-free, so this works by
+// compiling just these two files to plain JS and running them — see
+// `npm run test:streaks` in package.json.
 
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';

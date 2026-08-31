@@ -4,17 +4,10 @@ import { Pressable, StyleSheet } from 'react-native';
 import { Theme } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 
-// Phase 3 Step 4 — a personal star marker on a recording, purely cosmetic:
-// see docs/CLAUDE.md's History section for the explicit note that this has
-// no automated behavior attached (no retention exemption, no confirmation
-// gate on delete). Shared by the History list row and detail screen so the
-// icon/color reads identically in both places (same reasoning as
-// `getStatusPresentation` in `recording-status.ts`).
-//
-// Uses `expo-symbols` (SF Symbols), matching the existing convention set by
-// `Collapsible` (`src/components/ui/collapsible.tsx`) — this app only runs
-// via Expo Go on iOS today (see docs/CLAUDE.md's Conventions section), so an
-// iOS-only icon source is already an accepted tradeoff elsewhere.
+// A personal star marker on a recording, purely cosmetic — no automated
+// behavior is attached (no retention exemption, no confirmation gate on
+// delete). Shared by the History list row, the detail screen, and the
+// re-practice chain header.
 export function FavoriteStar({
   favorite,
   onToggle,

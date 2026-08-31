@@ -6,25 +6,19 @@ import { Card } from '@/components/card';
 import { ThemedText } from '@/components/themed-text';
 import { Spacing, Theme } from '@/constants/theme';
 
-// v2 Epic D Part 4 — the per-recording "3-dot" actions menu, shared by the
-// History list card (`history/index.tsx`) and the detail screen
-// (`history/[id].tsx`). It replaces the old inline row of icon buttons
-// (`DownloadAudioButton` / `DeleteAudioButton` + the inline "Regenerate
-// report" text action), folding them into one menu and adding the new,
-// stronger "Delete recording" action.
+// The per-recording "3-dot" actions menu, shared by the History list card and
+// the detail screen.
 //
-// Presentation: a tap on the vertical ellipsis opens a small popover card
-// that hovers over the row, right-aligned to the trigger — NOT a full-width
-// bottom sheet and NOT the system `ActionSheetIOS` (which can't take `Theme`
-// tokens). The popover reuses the shared `<Card>` treatment (near-white fill,
-// inset border, soft drop shadow), positioned absolutely from the trigger's
-// measured on-screen location.
+// Presentation: a tap on the vertical ellipsis opens a small popover card that
+// hovers over the row, right-aligned to the trigger — NOT a full-width bottom
+// sheet and NOT the system `ActionSheetIOS` (which can't take `Theme` tokens).
+// It reuses the shared `<Card>` treatment, positioned absolutely from the
+// trigger's measured on-screen location.
 //
-// "Delete recording" is the one action gated behind a confirmation
-// (`Alert.alert`) — it's irreversible and destroys the transcript / feedback
-// / metrics, not just the re-exportable audio file. "Delete audio" keeps its
-// existing no-confirmation behaviour (an explicit product decision, Phase 3
-// Step 5).
+// "Delete recording" is the one action gated behind an `Alert.alert`
+// confirmation — it's irreversible and destroys the transcript / feedback /
+// metrics, not just the re-exportable audio file. "Delete audio" deliberately
+// has no confirmation.
 
 export type RecordingMenuAction =
   | 're-practice'
@@ -61,16 +55,15 @@ export function RecordingActionsMenu({
   edgeAlign = false,
 }: {
   /**
-   * v4 Epic I — the recording is Interview/Story AND has a question (a pool
-   * `question_id` or custom text). Never true for Miscellaneous. Tapping it
-   * navigates to the Record screen pre-set to re-record that same question.
+   * The recording is Interview/Story AND has a question (a pool `question_id`
+   * or custom text). Never true for Miscellaneous. Tapping it navigates to the
+   * Record screen pre-set to re-record that same question.
    */
   canRePractice?: boolean;
   /**
-   * v4 Epic K — "Rename title" is available. The parent flips its own
-   * title-editing flag when this fires (the inline editor replaced the old
-   * pencil trigger). Not shown on the grouped re-practice chain card (its
-   * heading is the shared question, not a per-attempt title).
+   * "Rename title" is available. The parent flips its own title-editing flag
+   * when this fires (the editor is inline in the heading). Not shown on the
+   * grouped re-practice chain card, whose heading is the shared question.
    */
   canRename?: boolean;
   /** audio still present (audio_path set and not audio_deleted). */

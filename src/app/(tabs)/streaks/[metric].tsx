@@ -24,17 +24,15 @@ import {
   type TrendWindow,
 } from '@/lib/streaks';
 
-// v3 Epic G Part 3 — the per-metric detail screen the home screen's "See
-// details" links open (`/streaks/impact` | `/streaks/clarity` |
-// `/streaks/structure`). Everything is still computed CLIENT-SIDE over the
-// same `fetchRecordings()` query (via `useStreakRecordings`, shared with the
-// home screen), so the two never disagree.
+// The per-metric detail screen the home screen's "See details" links open
+// (`/streaks/impact` | `/streaks/clarity` | `/streaks/structure`). Computed
+// client-side over the same `fetchRecordings()` query as the home screen (via
+// `useStreakRecordings`), so the two never disagree.
 //
-// The Week / Month / Year / All Time tab row recalculates BOTH the headline
-// % (via `calculateTrend` with that window) AND the graph (via
-// `buildGraphPoints` with that tab) together. On Clarity only, it also
-// recalculates the three supporting badges (Filler rate / Repetition /
-// Grammar) over the same window — see `averageClaritySupportingMetrics`.
+// The Week / Month / Year / All Time tab row recalculates the headline % (via
+// `calculateTrend`), the graph (via `buildGraphPoints`), and — on Clarity
+// only — the three supporting badges (via `averageClaritySupportingMetrics`)
+// off the same window, so they always reflect the same period.
 
 type TabConfig = {
   key: GraphTab;
@@ -75,9 +73,9 @@ function TabRow({ tab, onChange }: { tab: GraphTab; onChange: (next: GraphTab) =
   );
 }
 
-// One supporting badge — same visual as the old recording-detail Metrics
-// section (Epic F moved those off individual recordings; this is their new
-// home): a bold value on top, a muted label under, hairline dividers between.
+// The three Clarity supporting badges: a bold value on top, a muted label
+// under, hairline dividers between. The raw filler/repetition/grammar signals
+// that ground the Clarity score, averaged over the selected window.
 function SupportingBadges({
   filler,
   repetition,
@@ -177,10 +175,8 @@ export default function MetricDetailScreen() {
             contentContainerStyle={styles.scrollContent}
             showsVerticalScrollIndicator={false}>
             {/* Heading + subheading on the left; the selected window's % change
-                + its "Last N days" label as a badge (shared card UI) top-right.
-                Shown only for a real trend (`'ok'`) — with no data, or only one
-                day of it (nothing to compare against), the corner is just
-                empty. */}
+                as a badge top-right, shown only for a real trend (`'ok'`) —
+                with no data, or only one day of it, the corner is empty. */}
             <View style={styles.headerRow}>
               <View style={styles.headerTitleBlock}>
                 <ThemedText style={styles.metricHeading}>{config.label}</ThemedText>
@@ -284,10 +280,10 @@ const styles = StyleSheet.create({
     flex: 1,
     gap: Spacing.one,
   },
-  // Badge in the header's top-right — the % (+ triangle) with the "Last N
-  // days" window label on ONE line beneath it. Square (per the user); the
-  // label uses `adjustsFontSizeToFit` (see `compactLabel` in trend-readout)
-  // to shrink the longer windows ("Last 12 months") to a single line.
+  // Badge in the header's top-right — the % (+ triangle) with the window
+  // label on one line beneath it. The label uses `adjustsFontSizeToFit` (see
+  // `compactLabel` in trend-readout) to keep the longer windows ("Last 12
+  // months") on a single line in this square.
   statCard: {
     width: 76,
     minHeight: 76,
@@ -302,8 +298,7 @@ const styles = StyleSheet.create({
     lineHeight: 34,
     color: Theme.colors.textPrimary,
   },
-  // Minimalist underline tabs — matches History's Calendar/List toggle
-  // (v2 Epic D Part 5) for visual consistency.
+  // Minimalist underline tabs — matches History's Calendar/List toggle.
   tabRow: {
     flexDirection: 'row',
     gap: Spacing.four,

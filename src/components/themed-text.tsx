@@ -29,12 +29,9 @@ export function ThemedText({ style, type = 'default', themeColor, ...rest }: The
   );
 }
 
-// v2 Epic B: Noto Sans, one loaded family per weight (see `NotoSans` in
-// src/constants/theme.ts and `useFonts` in src/app/_layout.tsx). Weight is
-// carried by the family name, so there's no `fontWeight` alongside it —
-// that avoids faux-bold doubling on Android. Sizes/line-heights are
-// unchanged from the v1 scale; Epic C/D reconciles these `type`s with
-// `Theme.typography.variants`.
+// Noto Sans, one loaded family per weight (see `NotoSans` in
+// src/constants/theme.ts). Weight is carried by the family name, with no
+// `fontWeight` alongside it — that avoids faux-bold doubling on Android.
 const styles = StyleSheet.create({
   small: {
     fontSize: 14,
@@ -65,9 +62,7 @@ const styles = StyleSheet.create({
     lineHeight: 30,
     fontSize: 14,
     fontFamily: NotoSans.regular,
-    // The one app-wide link blue. Single source of truth — see
-    // `Theme.colors.link` in src/constants/theme.ts. (Replaced the old
-    // `linkPrimary` type and its hardcoded `#3c87f7`.)
+    // The one app-wide link blue — see `Theme.colors.link`.
     color: Theme.colors.link,
   },
   code: {

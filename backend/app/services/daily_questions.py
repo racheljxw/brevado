@@ -1,28 +1,24 @@
 """
-v4 Epic H Step 1 — the global daily-question system (backend logic).
+The global daily-question system (backend logic).
 
 ONE shared "question of the day" per mode (interview / story), assigned lazily
 on the first request of the day that needs it and stored in `daily_questions`
-so every later request that day just reads it. No cron, no scheduled job —
-same "no background worker" philosophy as the rest of this backend (see
-docs/CLAUDE.md's "Background processing" section).
+so every later request that day just reads it. No cron, no scheduled job.
 
-Key properties (see docs/CLAUDE.md's "v4 scope" / "Daily questions" sections):
+Key properties:
 
 * **Day boundary is US Eastern (`America/New_York`), DST-aware** — real IANA
-  rules via `zoneinfo`, NOT a fixed UTC-5 offset. `eastern_today()` below.
-  Colloquially "EST"; implemented as true US Eastern with spring/fall
-  transitions. This is an *interpretation* of "daily" and is flagged for the
-  human to confirm.
+  rules via `zoneinfo`, NOT a fixed UTC-5 offset, so the same UTC instant can
+  fall on different dates in January vs. July. `eastern_today()` below.
 
 * **Structural no-repeat guarantee** — a question's `used_date` is set the
   instant it's assigned, so it's never assigned again, for anyone. This is why
-  v4 needs no per-user "recently used" tracking at all.
+  there's no per-user "recently used" tracking anywhere.
 
 * **Synchronous batch top-up** — when a mode's `used_date IS NULL` pool is
-  empty, the triggering request generates 15 new questions via one Gemini call
-  *synchronously* (the user is waiting), inserts them, and assigns from the new
-  batch. Rare (<= once per ~15 days per mode).
+  empty, the triggering request generates `QUESTION_BATCH_SIZE` new questions
+  via one Gemini call *synchronously* (the user is waiting), inserts them, and
+  assigns from the new batch. Rare (<= once per ~15 days per mode).
 
 * **Concurrency-safe assignment** — `insert into daily_questions ... on
   conflict (date, mode) do nothing returning question_id` makes the database
@@ -31,10 +27,9 @@ Key properties (see docs/CLAUDE.md's "v4 scope" / "Daily questions" sections):
   race re-reads the row and returns the winner's question, leaving its own
   candidate untouched and available for a future day.
 
-Testability: `get_or_assign_daily_question` depends on a tiny `DailyQuestionStore`
-protocol (and an injectable `generate_batch` / `today`), so `test_daily_questions.py`
-drives it with an in-memory fake — no live Supabase or Gemini, same isolation
-discipline as `test_processing.py` / `test_feedback.py`.
+`get_or_assign_daily_question` depends on a tiny `DailyQuestionStore` protocol
+(and an injectable `generate_batch` / `today`), so tests drive it with an
+in-memory fake — no live Supabase or Gemini.
 """
 
 from __future__ import annotations
@@ -59,15 +54,15 @@ logger = logging.getLogger(__name__)
 
 # Only interview/story have a curated pool + a daily question. Miscellaneous is
 # a free-topic mode with no question — matches the `daily_questions.mode` check
-# constraint in 0008_daily_questions.sql.
+# constraint in the schema.
 DAILY_QUESTION_MODES: tuple[str, ...] = ("interview", "story")
 
 # How many questions one synchronous top-up generates when a mode runs out.
 QUESTION_BATCH_SIZE = 15
 
-# Day boundary. America/New_York = true US Eastern, DST-aware — see module
-# docstring. `zoneinfo` reads this from the IANA database (the `tzdata` package
-# on platforms without a system copy — pinned in requirements.txt).
+# Day boundary — true US Eastern, DST-aware (see module docstring). `zoneinfo`
+# reads this from the IANA database; the `tzdata` package (in requirements.txt)
+# supplies it on platforms without a system copy.
 EASTERN = ZoneInfo("America/New_York")
 
 

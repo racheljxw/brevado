@@ -8,8 +8,7 @@ export function formatDuration(totalSeconds: number): string {
 }
 
 // Formats a `recordings.created_at` timestamp as "Aug 25 · 3:42 PM". Shared
-// by the History list rows and the Phase 3 Step 1 detail screen so both
-// render the same date/time the same way.
+// by the History list rows and the detail screen.
 export function formatRecordedAt(isoString: string): string {
   const date = new Date(isoString);
   const dateLabel = date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
@@ -21,14 +20,13 @@ export function formatRecordedAt(isoString: string): string {
 // Local calendar-day keys
 //
 // `localDayKey` is the "which calendar day did this happen on" grouping key,
-// first written inline for History's Calendar view (v2 Epic D Part 6) and
-// pulled out here so v3's Streaks aggregation (`src/lib/streaks.ts`, Epic G)
-// groups by the exact same rule instead of re-deriving date bucketing
-// differently. It uses the device's LOCAL date parts on purpose — a
-// recording made at 11pm is filed under the day the user actually made it,
-// not a UTC-shifted one. Consequence: a user who travels across time zones
-// between recording and viewing can see a recording shift days (accepted —
-// it matches how a phone's own Photos/Calendar behave).
+// shared by History's Calendar view and the Streaks aggregation
+// (`src/lib/streaks.ts`) so both bucket dates the same way. It uses the
+// device's LOCAL date parts on purpose — a recording made at 11pm is filed
+// under the day the user actually made it, not a UTC-shifted one.
+// Consequence: a user who travels across time zones between recording and
+// viewing can see a recording shift days (accepted — it matches how a
+// phone's own Photos/Calendar behave).
 // ---------------------------------------------------------------------------
 
 /** `YYYY-MM-DD` in the device's local time zone. Zero-padded, so plain

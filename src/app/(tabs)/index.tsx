@@ -52,35 +52,28 @@ import {
   type RecordingUploadStage,
 } from '@/lib/recordings';
 
-// The Record tab (formerly "Home") is a small local flow, plain local state
-// rather than Expo Router routes. Two `FlowScreen` values:
+// The Record tab is a small local flow driven by plain local state rather
+// than Expo Router routes. Two `FlowScreen` values:
 //   - 'mode-select': `ModeSelectFlow` — the pill row, and (once a mode is
 //     picked) the shift animation + the folded-in question area. Interview
-//     and Storytelling show the question area here (Epic C Part 3);
-//     Miscellaneous skips straight past to 'record'.
-//   - 'record': the existing record/playback/upload UI.
-// (Epic C Part 2 removed the old separate 'question' FlowScreen — the
-// question step now lives inside `ModeSelectFlow`.) See
-// docs/CLAUDE.md's History section for the one place in this app that *does*
-// use real nested routes (list -> detail), which needs an actual back stack
-// and deep-linkable URL in a way this flow doesn't (yet).
+//     and Storytelling show the question area here; Miscellaneous skips
+//     straight to 'record'.
+//   - 'record': the record/playback/upload UI.
 type FlowScreen = 'mode-select' | 'record';
 type Mode = RecordingMode;
 
-// v4 Epic I — re-practice mode. When the user taps "Re-practice this question"
-// from a History recording's 3-dot menu, that screen navigates here with route
-// params (`rpSource` / `rpMode` / `rpQuestion` / `rpQuestionId` / `rpTs`). This
-// screen consumes them into `rePractice` state, which is a THIRD entry path
-// into the record flow alongside the normal mode-select→pool-pick and
-// mode-select→custom paths:
+// Re-practice mode. "Re-practice this question" from a History recording's
+// 3-dot menu navigates here with route params
+// (`rpSource` / `rpMode` / `rpQuestion` / `rpQuestionId` / `rpTs`), which this
+// screen consumes into `rePractice` state — a third entry path into the
+// record flow:
 //   - no mode-select step (mode is fixed to the original's)
-//   - no question UI at all — no pool fetch, no "ask my own" toggle, no custom
-//     input; the fixed question is shown read-only and recording starts
+//   - no question UI — no pool fetch, no "ask my own" toggle; the fixed
+//     question is shown read-only and recording starts
 //   - on upload, `handleKeepAndUpload` sends `rePracticeOf: sourceId` so the
-//     new recording's `re_practice_of` points at the ORIGINAL row the menu was
-//     opened from (never a further-back ancestor — Epic J walks the chain).
-// The 30-recording cap still applies (checked in `enterRePractice`, same as
-// `handleSelectMode`) — no exemption.
+//     new recording's `re_practice_of` points at the exact row the menu was
+//     opened from (`buildChains` walks the chain to a root).
+// The recording cap still applies (checked in `enterRePractice`).
 type RePracticeContext = {
   sourceId: string;
   mode: 'interview' | 'story';
@@ -92,22 +85,14 @@ type PermissionState = 'unknown' | 'granted' | 'denied';
 type UploadState = 'idle' | 'uploading' | 'error' | 'done';
 type UploadErrorInfo = { message: string; stage: RecordingUploadStage };
 
-// v2 Epic C Part 4 — the inline processing-status display, shown on the
-// Record screen after a successful upload instead of navigating away to
-// History. It reuses the SAME polling shape History already has (see the
-// note in `pollStatus` below), just fetching this one recording.
+// The inline processing-status display, shown on the Record screen after a
+// successful upload instead of navigating away to History. Reuses the same
+// polling shape History has, fetching just this one recording.
 //
-//   pending / processing → a spinner, nothing else (the spinner alone says
-//                          "still working" — no separate status label)
+//   pending / processing → a spinner (that alone says "still working")
 //   done                 → "See more details ›" → this recording's History
 //                          detail screen
-//   failed               → an explanation + "Regenerate report" (the Phase 3
-//                          Step 2 endpoint/flow, same as History's) inline
-//
-// A status-word badge/pill used to sit above these (`getStatusPresentation`,
-// the same one History used) — removed as redundant: the spinner/link/
-// explanation below it already say everything the badge said, just more
-// specifically. See docs/CLAUDE.md for the removal note.
+//   failed               → an explanation + "Regenerate report" inline
 function ProcessingStatus({
   recordingId,
   kickoffError,
@@ -125,9 +110,8 @@ function ProcessingStatus({
   const [regenerating, setRegenerating] = useState(false);
   const [regenerateError, setRegenerateError] = useState<string | null>(null);
 
-  // Out-of-order guard — same purpose as History's `requestSeqRef` (Phase 2
-  // Step 7 / Phase 3 Step 2): a slower, older fetch resolving after a newer
-  // one can't overwrite fresh state.
+  // Out-of-order guard: a slower, older fetch resolving after a newer one
+  // can't overwrite fresh state.
   const requestSeqRef = useRef(0);
   const statusRef = useRef(status);
   useEffect(() => {
@@ -156,11 +140,9 @@ function ProcessingStatus({
     pollStatus();
   }, [pollStatus]);
 
-  // Poll while non-terminal, only while the Record tab is focused — the
-  // exact 1.5s / `TERMINAL_STATUSES`-stop / focus-gated shape as History's
-  // list polling (Phase 2 Step 7) and its detail screen (Phase 3 Step 2).
-  // The only divergence: it fetches this one recording (`fetchRecordingById`)
-  // rather than the whole list, because that's all this screen tracks.
+  // Poll while non-terminal, only while the Record tab is focused — the same
+  // 1.5s / `TERMINAL_STATUSES`-stop / focus-gated shape as History's polling,
+  // just fetching this one recording rather than the whole list.
   useFocusEffect(
     useCallback(() => {
       const interval = setInterval(() => {
@@ -177,8 +159,7 @@ function ProcessingStatus({
     try {
       await regenerateReport(recordingId);
       // `process_recording()` flips straight to 'processing' as its first
-      // step regardless of entry point — reflect that immediately so the
-      // poll above picks it back up (same as History's `handleRegenerate`).
+      // step — reflect that so the poll above picks it back up.
       setStatus('processing');
     } catch (err) {
       setRegenerateError(err instanceof Error ? err.message : 'Could not regenerate — try again.');
@@ -326,9 +307,8 @@ function RecordingPlayback({
         </>
       ) : (
         // Once the recording is done, "Record another" is the only reset
-        // affordance — "Change mode" was removed here (it doesn't make sense
-        // to offer switching mode after a take is already recorded/uploaded;
-        // leaving the screen and coming back resets to mode-select anyway).
+        // affordance — switching mode after a take is recorded doesn't make
+        // sense, and leaving the screen and returning resets to mode-select.
         <Pressable
           style={({ pressed }) => [styles.discardButton, pressed && styles.pressed]}
           onPress={onDiscard}>
@@ -341,11 +321,9 @@ function RecordingPlayback({
   );
 }
 
-// Phase 3 Step 3 — shown in place of the mode options once the cap check
-// (now run from mode selection, not the old record button — see
-// docs/CLAUDE.md's Recording cap section) finds the user at/over
-// MAX_RECORDINGS_PER_USER. Manual delete (Phase 3 Step 5) is the only way
-// to free a slot, so this is the entry point into History to do that.
+// Shown in place of the mode options once the cap check finds the user
+// at/over MAX_RECORDINGS_PER_USER. Deleting a recording's audio from History
+// is the only way to free a slot, so this links there.
 function CapBlockedCard({ onGoToHistory }: { onGoToHistory: () => void }) {
   const theme = useTheme();
   return (
@@ -364,24 +342,14 @@ function CapBlockedCard({ onGoToHistory }: { onGoToHistory: () => void }) {
   );
 }
 
-// Phase 4 Step 2 — the entry point into the recording flow, replacing the
-// old bare record button. Three options: Interview, Storytelling,
-// Miscellaneous. Selecting one runs the (now-relocated) recording-cap check
-// first — see docs/CLAUDE.md's Recording cap section.
+// The entry point into the recording flow: three options — Interview,
+// Storytelling, Miscellaneous — as a horizontal row of pill-shaped buttons.
+// Selecting one runs the recording-cap check first.
 //
-// v2 Epic C Part 1 — restyled to the design system: the three modes are a
-// horizontal row of pill-shaped buttons (white fill, tan hairline border,
-// soft #BEA398 drop shadow), per the design screenshots.
-//
-// v2 Epic C Part 2 — the mode-select *shift animation*. Picking a mode no
-// longer swaps one screen for another: the same three pill elements stay
-// mounted and reposition (Reanimated layout animation) from a centred group
-// to a top row, the picked pill fills with `Theme.colors.accent` (still the
-// Part 1 placeholder brown — exact value TBD) and `onAccent` text, and a
-// placeholder question container animates in below. "‹ Change mode"
-// reverses the whole thing. Part 3 swaps the placeholder for the real
-// restyled QuestionSelect (and folds it into this same persistent flow, so
-// the current Continue→'question' hop goes away).
+// Picking a mode doesn't swap screens: the same three pill elements stay
+// mounted and reposition from a centred group to a top row (the shift
+// animation), the picked pill fills with `Theme.colors.accent`, and the
+// question area animates in below. "‹ Change mode" reverses it.
 const MODE_OPTIONS: { mode: Mode; label: string }[] = [
   { mode: 'interview', label: 'Interview' },
   { mode: 'story', label: 'Storytelling' },
@@ -459,14 +427,13 @@ function ModePill({
   );
 }
 
-// Pill-label sizing. All three pills share ONE font size (per-`<Text>`
-// `adjustsFontSizeToFit` was rejected — it shrank "Miscellaneous" alone,
-// breaking visual consistency). The size is derived so the *longest* label
-// leaves ~`MODE_LABEL_SIDE_GAP` of clear space on each side within its
-// pill, and it's recomputed from real measurements (row width via
-// `onLayout`, the longest label's rendered width via `onTextLayout` at a
-// fixed reference size) so it adapts to any screen without guessing glyph
-// widths.
+// Pill-label sizing. All three pills share ONE font size — using per-`<Text>`
+// `adjustsFontSizeToFit` instead would shrink "Miscellaneous" alone and break
+// visual consistency. The size is derived so the longest label leaves
+// ~`MODE_LABEL_SIDE_GAP` of clear space each side within its pill, recomputed
+// from real measurements (row width via `onLayout`, the longest label's
+// rendered width via `onTextLayout` at a fixed reference size) so it adapts
+// to any screen without guessing glyph widths.
 const MODE_LABEL_MAX_FONT = 18;
 const MODE_LABEL_MIN_FONT = 11;
 const MODE_LABEL_FALLBACK_FONT = 13; // used for the first frame, before measurement
@@ -474,7 +441,7 @@ const MODE_LABEL_MEASURE_FONT = 16; // reference size the hidden measurer render
 const MODE_LABEL_SIDE_GAP = 16; // clear space each side of the longest word → 32 total
 const MODE_LONGEST_LABEL = MODE_OPTIONS.reduce((a, o) => (o.label.length > a.length ? o.label : a), '');
 
-// The whole mode-select area and its shift choreography (Epic C Part 2).
+// The whole mode-select area and its shift choreography.
 //
 // Everything stays mounted the whole time — nothing swaps screens:
 //   - `introWrap` floats *above* the pill row (absolute, `bottom: '100%'`)
@@ -483,14 +450,13 @@ const MODE_LONGEST_LABEL = MODE_OPTIONS.reduce((a, o) => (o.label.length > a.len
 //     it) gets a `translateY` that interpolates between a centred position
 //     and `MODE_PILLS_TOP_INSET`, driven by the `shift` shared value.
 //   - the question slot is absolutely positioned at its final resting spot
-//     (just below where the pills end up) and only fades/rises in. Epic C
-//     Part 3 fills it with the real `QuestionArea` (passed as `questionSlot`
-//     by the parent), replacing Part 2's placeholder + "Continue" button.
+//     (just below where the pills end up) and only fades/rises in. The
+//     parent passes the real `QuestionArea` as `questionSlot`.
 //
 // A single `useEffect` on `isSelected` schedules the three shared values
-// (`introOpacity`, `shift`, `questionOpacity`) with `withDelay` so the
-// phases run in the exact order + timing the design calls for. The pill
-// fill (phase 1) lives in `ModePill` and fires on its own.
+// (`introOpacity`, `shift`, `questionOpacity`) with `withDelay` so the phases
+// run in the order + timing the design calls for. The pill fill (phase 1)
+// lives in `ModePill` and fires on its own.
 function ModeSelectFlow({
   selectedMode,
   onSelectMode,
@@ -578,8 +544,8 @@ function ModeSelectFlow({
   }));
 
   // Keep the last-rendered question content mounted for a beat after a mode
-  // is deselected, so the Part 2 reverse animation's "question fades out"
-  // phase has something to fade rather than the content vanishing instantly.
+  // is deselected, so the reverse animation's "question fades out" phase has
+  // something to fade rather than the content vanishing instantly.
   const lastSlot = useRef<ReactNode>(null);
   if (questionSlot != null) lastSlot.current = questionSlot;
   const [keepStaleSlot, setKeepStaleSlot] = useState(false);
@@ -660,17 +626,16 @@ function ModeSelectFlow({
   );
 }
 
-// v2 Epic C Part 3 — the real question area, folded into `ModeSelectFlow`'s
-// animated slot (replacing Part 2's placeholder box). Three display states:
-//   - 'pool':   the AI-picked question as large centred quoted text, with an
+// The question area, folded into `ModeSelectFlow`'s animated slot. Three
+// display states:
+//   - 'pool':   the daily question as large centred quoted text, with an
 //               "Ask my own question instead" link below it.
-//   - 'input':  a bordered input box (Theme tokens, not a raw RN box) with a
-//               submit icon; the link flips to "‹ Use prompt instead".
+//   - 'input':  a bordered input box with a submit icon; the link flips to
+//               "‹ Use prompt instead".
 //   - 'custom': the confirmed typed question in the same quoted style, with a
 //               pencil to re-edit; "‹ Use prompt instead" still abandons it.
-// Validation is Phase 4 Step 4's: non-empty after trim. State swaps just
-// cross-fade (`FadeIn`) with a light `LinearTransition` for the height
-// change — deliberately simpler than Part 2's choreography.
+// Validation: non-empty after trim. State swaps just cross-fade with a light
+// `LinearTransition` for the height change.
 //
 // `poolQuestion` / `customQuestion` are the parent's state; this component
 // only owns the in-progress `draft`, its validation error, and whether the
@@ -728,10 +693,9 @@ function QuestionArea({
 
   const backLink = <BackLink label="Use prompt instead" onPress={usePromptInstead} style={styles.backLink} />;
 
-  // The record affordance: a big red disc (#C53030, 200) sitting on a
-  // larger off-white disc (#FFFEFE, 245, 1px #56453D border), with a hint
-  // below. Advances to `flowScreen === 'record'` for now — Epic C Part 4
-  // makes this the real record button + folds recording into this screen.
+  // The record affordance: a red disc on a larger off-white disc, with a hint
+  // below. Advances to `flowScreen === 'record'`, where the real recording
+  // happens.
   const recordStart = (
     <View style={styles.recordStart}>
       <Pressable
@@ -858,31 +822,27 @@ export default function RecordScreen() {
   // The mode chosen for the current attempt, carried through into
   // handleKeepAndUpload's insert.
   const [selectedMode, setSelectedMode] = useState<Mode | null>(null);
-  // Epic C Part 3: the pool pick (loaded for interview/story) and the
-  // confirmed custom question, kept as SEPARATE state so `QuestionArea` can
-  // toggle between them. `customQuestion` non-null = the user typed their
-  // own; the effective question for the recording is `customQuestion ??
-  // poolQuestion?.text`.
+  // The pool pick (loaded for interview/story) and the confirmed custom
+  // question, kept as SEPARATE state so `QuestionArea` can toggle between
+  // them. The effective question for the recording is
+  // `customQuestion ?? poolQuestion?.text`.
   const [poolQuestion, setPoolQuestion] = useState<DailyQuestion | null>(null);
   const [customQuestion, setCustomQuestion] = useState<string | null>(null);
   const [questionLoading, setQuestionLoading] = useState(false);
   const [questionError, setQuestionError] = useState<string | null>(null);
-  // v4 Epic I — non-null while this attempt is a re-practice of an existing
-  // recording (see `RePracticeContext` above). Drives the read-only question
-  // banner on the record screen and the `re_practice_of` value on upload.
+  // Non-null while this attempt is a re-practice of an existing recording
+  // (see `RePracticeContext` above). Drives the read-only question banner and
+  // the `re_practice_of` value on upload.
   const [rePractice, setRePractice] = useState<RePracticeContext | null>(null);
 
   const [permission, setPermission] = useState<PermissionState>('unknown');
   const [canAskAgain, setCanAskAgain] = useState(true);
   const [recordedUri, setRecordedUri] = useState<string | null>(null);
 
-  // Phase 3 Step 3, relocated here in Phase 4 Step 2: per-user recording cap
-  // (MAX_RECORDINGS_PER_USER) — see docs/CLAUDE.md's Recording cap section.
-  // This now runs from mode selection (handleSelectMode below), the real
-  // entry point into recording, instead of the old bare record button.
-  // `checkingCap` guards against a double-tap firing two count queries at
-  // once; `blockedByCap` swaps the mode options for a blocking message once
-  // we know the user is at/over the cap.
+  // Per-user recording cap (MAX_RECORDINGS_PER_USER), checked in
+  // `handleSelectMode`. `checkingCap` guards against a double-tap firing two
+  // count queries at once; `blockedByCap` swaps the mode options for a
+  // blocking message once the user is at/over the cap.
   const [checkingCap, setCheckingCap] = useState(false);
   const [blockedByCap, setBlockedByCap] = useState(false);
 
@@ -899,23 +859,21 @@ export default function RecordScreen() {
   const [uploadState, setUploadState] = useState<UploadState>('idle');
   const [uploadError, setUploadError] = useState<UploadErrorInfo | null>(null);
   const [uploadedRecordingId, setUploadedRecordingId] = useState<string | null>(null);
-  // v2 Epic C Part 4: if the `POST /recordings/{id}/process` kick-off itself
-  // fails (best-effort — the upload already succeeded), `ProcessingStatus`
-  // shows a "couldn't start processing" note + retry rather than the status
-  // silently sticking at "Pending" forever.
+  // If the `POST /recordings/{id}/process` kick-off itself fails (the upload
+  // already succeeded), `ProcessingStatus` shows a "couldn't start
+  // processing" note + retry rather than the status silently sticking at
+  // "Pending".
   const [processingKickoffError, setProcessingKickoffError] = useState<string | null>(null);
   // Set once per recording (on first upload attempt) so a retry after a
   // failure overwrites the same Storage object instead of leaving stray
   // partial uploads behind. Cleared whenever the recording itself resets.
   const audioPathRef = useRef<string | null>(null);
 
-  // v2 Epic C Part 4: the post-upload flow keeps the user on this screen
-  // showing live status. When they *leave* the screen after a recording is
-  // done (tap "See more details", or switch tabs), the screen resets on
-  // their next visit so no stale status/recording is lingering — this pair
-  // of refs drives that: `uploadStateRef` so the blur handler can read the
-  // latest upload state without re-subscribing, `resetPendingRef` as the
-  // "reset me on next focus" flag.
+  // After upload the user stays on this screen watching live status. When
+  // they *leave* after a recording is done, the screen resets on their next
+  // visit so no stale status lingers. `uploadStateRef` lets the blur handler
+  // read the latest upload state without re-subscribing; `resetPendingRef` is
+  // the "reset me on next focus" flag.
   const uploadStateRef = useRef(uploadState);
   useEffect(() => {
     uploadStateRef.current = uploadState;
@@ -961,8 +919,8 @@ export default function RecordScreen() {
   }, []);
 
   // Full reset back to the mode-select screen — abandons the take *and* the
-  // chosen mode/question. "‹ Change mode", and the post-recording
-  // reset-on-return (below).
+  // chosen mode/question. Used by "‹ Change mode" and the post-recording
+  // reset-on-return below.
   const handleBackToModeSelect = useCallback(() => {
     resetRecordingState();
     setSelectedMode(null);
@@ -973,10 +931,9 @@ export default function RecordScreen() {
     setFlowScreen('mode-select');
   }, [resetRecordingState]);
 
-  // v2 Epic C Part 4: reset the screen the next time it's focused, but only
-  // if the user left *after* finishing a recording (upload done). Leaving
-  // mid-take (recorded-not-uploaded) is preserved, same as before — an
-  // accidental tab tap shouldn't throw away an unsaved take.
+  // Reset the screen the next time it's focused, but only if the user left
+  // *after* finishing a recording. Leaving mid-take (recorded-not-uploaded)
+  // is preserved — an accidental tab tap shouldn't throw away an unsaved take.
   useFocusEffect(
     useCallback(() => {
       if (resetPendingRef.current) {
@@ -991,10 +948,9 @@ export default function RecordScreen() {
     }, [handleBackToModeSelect])
   );
 
-  // v2 Epic C Part 4: kick off backend processing. Best-effort — the upload
-  // already succeeded and the row exists, so a failure here doesn't lose the
-  // recording; it's surfaced inline (see `processingKickoffError`) with a
-  // retry rather than navigating away.
+  // Kick off backend processing. Best-effort — the upload already succeeded
+  // and the row exists, so a failure here doesn't lose the recording; it's
+  // surfaced inline with a retry.
   const kickProcessing = useCallback(async (id: string) => {
     setProcessingKickoffError(null);
     try {
@@ -1005,11 +961,9 @@ export default function RecordScreen() {
     }
   }, []);
 
-  // v4 Epic H Step 2 — fetches today's globally-assigned question for the mode
-  // from `GET /questions/daily` (src/lib/api.ts → the FastAPI backend) and
-  // stores it as `poolQuestion` (id + text), so `QuestionArea` can render it
-  // and `handleKeepAndUpload` can store the `question_id`. Also the retry
-  // target for `QuestionArea`'s "Try again" on a failed/slow fetch.
+  // Fetches today's globally-assigned question for the mode from
+  // `GET /questions/daily` and stores it as `poolQuestion` (id + text). Also
+  // the retry target for `QuestionArea`'s "Try again".
   async function loadQuestion(mode: 'interview' | 'story') {
     setQuestionLoading(true);
     setQuestionError(null);
@@ -1024,17 +978,12 @@ export default function RecordScreen() {
     }
   }
 
-  // Phase 4 Step 2: the recording-cap check runs here — before any mode is
-  // entered — rather than in handleStartRecording below.
-  //
-  // v2 Epic C Part 2/3: selecting a mode drives `ModeSelectFlow`'s "mode
-  // picked" shift animation (interview/story), where the folded-in
-  // `QuestionArea` then shows. Miscellaneous has no question step and jumps
-  // straight to 'record'.
+  // Selecting a mode drives `ModeSelectFlow`'s shift animation
+  // (interview/story), after which the folded-in `QuestionArea` shows.
+  // Miscellaneous has no question step and jumps straight to 'record'. The
+  // recording-cap check runs earlier, in `handleSelectMode`.
   function startModeSelection(mode: Mode) {
-    // v2 Epic C Part 4: clear any finished/lingering take so entering the
-    // record flow is always fresh (this is the "start a new recording via
-    // mode-select" reset path).
+    // Clear any finished/lingering take so entering the record flow is fresh.
     resetRecordingState();
     setCustomQuestion(null);
     setPoolQuestion(null);
@@ -1049,11 +998,10 @@ export default function RecordScreen() {
     loadQuestion(mode);
   }
 
-  // v4 Epic I — enter the read-only re-practice state from a History 3-dot
-  // menu handoff (route params, consumed by the effect below). Runs the same
-  // recording-cap check `handleSelectMode` does — a re-practice recording gets
-  // no cap exemption. On a cap hit it drops back to mode-select showing the
-  // `CapBlockedCard` (same UI as a blocked normal start); otherwise it goes
+  // Enter the read-only re-practice state from a History 3-dot menu handoff
+  // (route params, consumed by the effect below). Runs the same recording-cap
+  // check `handleSelectMode` does — no exemption for re-practice. On a cap
+  // hit it drops back to mode-select showing the `CapBlockedCard`; otherwise
   // straight to the record screen with the mode + question fixed.
   const enterRePractice = useCallback(
     async (ctx: RePracticeContext) => {
@@ -1077,8 +1025,8 @@ export default function RecordScreen() {
             return;
           }
         } catch (err) {
-          // Fail open, same as `handleSelectMode` — the Postgres trigger
-          // (0004_recording_cap_enforcement.sql) is the real backstop.
+          // Fail open, same as `handleSelectMode` — the Postgres trigger is
+          // the real backstop.
           console.warn('Recording cap check failed for re-practice, allowing it to proceed', err);
         }
       }
@@ -1124,7 +1072,7 @@ export default function RecordScreen() {
 
     // Already in the "mode picked" sub-state — just switch which pill is
     // filled / which question loads. The cap check already passed and the
-    // recording count can't have changed since, so don't re-run it.
+    // recording count can't have changed since.
     if (selectedMode) {
       startModeSelection(mode);
       return;
@@ -1138,10 +1086,8 @@ export default function RecordScreen() {
         return;
       }
     } catch (err) {
-      // Fail open: don't block proceeding over a cap check that itself
-      // couldn't complete (e.g. a network blip) — the Postgres trigger
-      // (supabase/migrations/0004_recording_cap_enforcement.sql) is the
-      // real safety net if this ever lets someone squeak past the cap.
+      // Fail open: don't block over a cap check that couldn't complete (e.g. a
+      // network blip) — the Postgres trigger is the real backstop.
       console.warn('Recording cap check failed, allowing recording to proceed', err);
     } finally {
       setCheckingCap(false);
@@ -1188,15 +1134,13 @@ export default function RecordScreen() {
     setUploadError(null);
 
     try {
-      // v4 Epic I — a re-practice attempt carries the ORIGINAL recording's
-      // mode / question / question_id verbatim (the question was shown
-      // read-only, no pool fetch or custom input), plus `rePracticeOf` = the
-      // id of the recording the 3-dot menu was opened from.
+      // A re-practice attempt carries the original recording's
+      // mode / question / question_id verbatim, plus `rePracticeOf` = the id
+      // of the recording the 3-dot menu was opened from.
       //
-      // Otherwise: miscellaneous never has a question; interview/story pass the
-      // chosen question — the custom-typed text if there is one, else the daily
-      // pool pick — and `question_id` is only set for a pool pick (not custom,
-      // not miscellaneous). See uploadRecording / the schema.
+      // Otherwise: miscellaneous has no question; interview/story pass the
+      // chosen question (the custom-typed text if any, else the daily pool
+      // pick), and `question_id` is set only for a pool pick.
       const usingCustom = customQuestion != null;
       const mode = rePractice ? rePractice.mode : (selectedMode ?? 'miscellaneous');
       const question = rePractice
@@ -1221,13 +1165,10 @@ export default function RecordScreen() {
       setUploadedRecordingId(result.id);
       setUploadState('done');
 
-      // v2 Epic C Part 4: kick off backend processing, then STAY on this
-      // screen — `ProcessingStatus` (rendered by `RecordingPlayback` in the
-      // 'done' state) polls the recording and shows pending -> processing ->
-      // done/failed live, with a "See more details" link to the History
-      // detail screen once done. (Phase 1 Step 5's `router.navigate('/history')`
-      // right here is gone — that was the old "navigate away after upload"
-      // behaviour this step replaces.)
+      // Kick off backend processing, then STAY on this screen —
+      // `ProcessingStatus` polls the recording and shows
+      // pending -> processing -> done/failed live, with a "See more details"
+      // link to the History detail screen once done.
       kickProcessing(result.id);
     } catch (err) {
       const stage = err instanceof RecordingUploadError ? err.stage : 'upload';
@@ -1250,10 +1191,9 @@ export default function RecordScreen() {
   // Show the "Change mode" header back link (in place of `AppHeader`) whenever
   // we're past mode selection but before a take exists: the mode-picked
   // sub-state of mode-select, AND the pre-recording record screen. Once
-  // recording starts or a take is captured, "Change mode" no longer applies
-  // (Epic C Part 4) and `AppHeader` returns. This is the ONE back affordance
-  // for the record flow — it always lives in the header row, never inline in
-  // the body, matching History's detail screen and Settings.
+  // recording starts or a take is captured, `AppHeader` returns. This is the
+  // one back affordance for the record flow, and it always lives in the
+  // header row, never inline in the body.
   const showChangeModeHeader =
     (flowScreen === 'mode-select' && !!selectedMode) ||
     (flowScreen === 'record' && !recordedUri && !recorderState.isRecording);
@@ -1261,13 +1201,10 @@ export default function RecordScreen() {
   return (
     <ThemedView style={styles.container}>
       <SafeAreaView style={styles.safeArea}>
-        {/* v2: once a mode is picked (and through the pre-recording record
-            screen), this screen's header swaps from "brevado. + profile icon"
-            (`AppHeader`) to a header-row back link reading "Change mode"
-            (`HeaderBackLink`) — the same swap History's detail screen and
-            Settings do with their own back links. Both render through the exact
-            same row shape, so nothing about the header's position ever shifts,
-            only its content. See `showChangeModeHeader` above. */}
+        {/* Once a mode is picked (and through the pre-recording record
+            screen), the header swaps from `AppHeader` to a "Change mode"
+            `HeaderBackLink`. Both render through the same row shape, so the
+            header's position never shifts, only its content. */}
         {showChangeModeHeader ? (
           <Reanimated.View
             style={styles.headerFade}
@@ -1396,10 +1333,9 @@ const styles = StyleSheet.create({
   },
   safeArea: {
     flex: 1,
-    // No horizontal padding here — `AppHeader`/`HeaderBackLink` own their
-    // own (so the gutter matches History/Streaks exactly), and `heroSection`
-    // below carries its own for the rest of this screen's content. See the
-    // matching note on `heroSection`.
+    // No horizontal padding here — `AppHeader`/`HeaderBackLink` and
+    // `heroSection` below own their own gutters (see the note on
+    // `heroSection`).
     alignItems: 'center',
     gap: Spacing.three,
     paddingBottom: BottomTabInset + Spacing.three,
@@ -1415,13 +1351,10 @@ const styles = StyleSheet.create({
   },
   heroSection: {
     // `alignSelf: 'stretch'` is load-bearing: `safeArea` centres its
-    // children, so without this `heroSection` shrinks to hug its widest
-    // child (the tagline) and the mode-select row can never get wider than
-    // that line. With it, `heroSection` fills `safeArea`'s content width and
-    // the row spans the screen.
-    // This is also this screen's one horizontal-gutter source below the
-    // header (moved here from `safeArea` so `AppHeader`'s own gutter isn't
-    // doubled).
+    // children, so without it `heroSection` hugs its widest child (the
+    // tagline) and the mode-select row can never get wider than that line.
+    // Also this screen's one horizontal-gutter source below the header (on
+    // here, not `safeArea`, so `AppHeader`'s own gutter isn't doubled).
     alignSelf: 'stretch',
     alignItems: 'center',
     justifyContent: 'center',
@@ -1429,10 +1362,9 @@ const styles = StyleSheet.create({
     gap: Spacing.four,
     paddingHorizontal: Spacing.three,
   },
-  // v2 Epic C Part 1/2 — mode-select screen. `modeFlow` is the full-height
-  // stage; `modeFlowInner` (pill row + the floating intro) sits at the top
-  // of it and gets the animated `translateY` that slides it between centred
-  // and top.
+  // `modeFlow` is the full-height stage; `modeFlowInner` (pill row + the
+  // floating intro) sits at the top of it and gets the animated `translateY`
+  // that slides it between centred and top.
   modeFlow: {
     flex: 1,
     alignSelf: 'stretch',
@@ -1440,10 +1372,8 @@ const styles = StyleSheet.create({
   modeFlowInner: {
     alignSelf: 'stretch',
     // Above `questionSlot` in the paint/hit order: the slot's ScrollView
-    // spans from just-below-the-pills to the bottom of the stage, which
-    // overlaps where the *centred* (unselected) pills sit — this keeps the
-    // pills painted on top and tappable there (the slot is also
-    // pointerEvents:'none' while nothing's selected).
+    // overlaps where the centred (unselected) pills sit, so this keeps the
+    // pills painted on top and tappable there.
     zIndex: 1,
   },
   // The intro floats *above* the pill row (absolute, its bottom pinned to
@@ -1458,8 +1388,6 @@ const styles = StyleSheet.create({
     paddingBottom: Theme.spacing.xl,
   },
   tagline: {
-    // v2 Epic C Part 2 — bumped from a one-off 24px to the `title` variant
-    // (28) for more hero impact on this screen.
     fontFamily: Theme.typography.variants.title.fontFamily,
     fontSize: Theme.typography.variants.title.fontSize,
     lineHeight: Theme.typography.variants.title.lineHeight,
@@ -1471,19 +1399,18 @@ const styles = StyleSheet.create({
     lineHeight: Theme.typography.variants.body.lineHeight,
     textAlign: 'center',
   },
-  // The three mode pills on one horizontal row, each `flex: 1` (equal
-  // thirds). Shared measured label font size (see `ModeSelectFlow`). This
-  // row is the one element that moves in the Part 2 shift animation.
+  // The three mode pills on one horizontal row, each `flex: 1`. Shared
+  // measured label font size (see `ModeSelectFlow`). This row is the one
+  // element that moves in the shift animation.
   modeList: {
     alignSelf: 'stretch',
     flexDirection: 'row',
     gap: Theme.spacing.sm,
   },
-  // Epic C Part 2/3 — `ModeSelectFlow`'s question slot: absolutely positioned
-  // from just below the pills (`top`) to the bottom of the stage, only
-  // fades/rises in (opacity + translateY via `questionStyle`). Holds a
-  // `ScrollView` wrapping `QuestionArea` (a long question + the disc + hint
-  // can still overflow a short screen).
+  // `ModeSelectFlow`'s question slot: absolutely positioned from just below
+  // the pills (`top`) to the bottom of the stage, only fades/rises in. Holds
+  // a `ScrollView` wrapping `QuestionArea` (a long question + the disc + hint
+  // can overflow a short screen).
   questionSlot: {
     position: 'absolute',
     left: 0,
@@ -1504,9 +1431,9 @@ const styles = StyleSheet.create({
     paddingTop: Theme.spacing.sm,
     paddingBottom: Theme.spacing.xl,
   },
-  // Epic C Part 3 — `QuestionArea` root: a plain column (no card / border of
-  // its own — the quoted question stands alone; only the custom input state
-  // has a box). `flex: 1` so the per-state flex spacers work.
+  // `QuestionArea` root: a plain column (no card / border of its own — only
+  // the custom-input state has a box). `flex: 1` so the per-state flex
+  // spacers work.
   questionArea: {
     flex: 1,
     alignSelf: 'stretch',
@@ -1528,10 +1455,9 @@ const styles = StyleSheet.create({
   questionGapBottom: {
     flex: 1.3,
   },
-  // Centred question text — `regular` weight, 20px: just a touch larger than
-  // "Choose a mode." (`body`, 16), which everything else on this screen is
-  // scaled around. The slot still scrolls in case a long pool question +
-  // the disc overflow a short screen.
+  // Centred question text — `regular` weight, 20px: a touch larger than
+  // "Choose a mode." (`body`, 16), which the rest of this screen is scaled
+  // around.
   questionQuote: {
     fontFamily: Theme.typography.fontFamily.regular,
     fontSize: 20,
@@ -1554,10 +1480,8 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   // The interactive links ("Ask my own question instead" / "‹ Use prompt
-  // instead" / "Try again"). `Theme.colors.link` — the one app-wide link
-  // blue and a deliberate exception to the warm palette (a warm link would
-  // be `#56453D`, identical to body text). No underline — the blue carries
-  // it. Single source of truth: `Theme.colors.link` in constants/theme.ts.
+  // instead" / "Try again"). `Theme.colors.link` is the one app-wide link
+  // blue — no underline, the blue carries it.
   questionLink: {
     fontFamily: Theme.typography.fontFamily.medium,
     fontSize: Theme.typography.variants.label.fontSize,
@@ -1567,8 +1491,8 @@ const styles = StyleSheet.create({
   backLink: {
     alignSelf: 'flex-start',
   },
-  // The custom-question input box — Theme tokens, 30px corners, NOT a raw
-  // RN TextInput border. Icon submit button on the right.
+  // The custom-question input box — a styled `View` wrapping the TextInput,
+  // not a raw RN TextInput border. Icon submit button on the right.
   customInputBox: {
     alignSelf: 'stretch',
     flexDirection: 'row',
@@ -1596,11 +1520,9 @@ const styles = StyleSheet.create({
   customSubmit: {
     paddingBottom: Theme.spacing.xs,
   },
-  // Interim record affordance below the question — a red disc (#C53030,
-  // 62) layered on a larger off-white disc (#FFFEFE, 76, 1px #56453D
-  // border) — same ~1.22 ratio as the design's 200/245, scaled to sit with
-  // the 20px question. Hint below. Advances to `flowScreen === 'record'`;
-  // Epic C Part 4 makes this the real record button.
+  // The record affordance below the question — a red disc layered on a larger
+  // off-white bordered disc, with a hint below. Advances to
+  // `flowScreen === 'record'`.
   recordStart: {
     alignItems: 'center',
     gap: Theme.spacing.sm,
@@ -1609,9 +1531,9 @@ const styles = StyleSheet.create({
     width: 76,
     height: 76,
     borderRadius: 38,
-    backgroundColor: Theme.colors.card, // #FFFEFE
+    backgroundColor: Theme.colors.card,
     borderWidth: 1,
-    borderColor: Theme.colors.cardBorder, // #56453D
+    borderColor: Theme.colors.cardBorder,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -1619,14 +1541,13 @@ const styles = StyleSheet.create({
     width: 62,
     height: 62,
     borderRadius: 31,
-    backgroundColor: Theme.colors.recordRed, // #C53030
+    backgroundColor: Theme.colors.recordRed,
   },
-  // Same size as `questionLink` (`label`, 14) — per the design.
   recordHint: {
     fontFamily: Theme.typography.fontFamily.regular,
     fontSize: Theme.typography.variants.label.fontSize,
     lineHeight: Theme.typography.variants.label.lineHeight,
-    color: Theme.colors.textPrimary, // #2D1306
+    color: Theme.colors.textPrimary,
     textAlign: 'center',
   },
   modePill: {
@@ -1639,9 +1560,8 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: Theme.colors.border,
     backgroundColor: Theme.colors.card,
-    // Drop shadow: #BEA398 @ 15%, 0/0 offset, 5 spread + 50 blur in the
-    // design. RN has no spread and its blur scale differs, so `shadowRadius`
-    // stands in for both; `elevation` is the Android equivalent.
+    // RN has no shadow "spread", so `shadowRadius` stands in for the design's
+    // spread + blur; `elevation` is the Android equivalent.
     shadowColor: Theme.colors.shadow,
     shadowOpacity: 0.15,
     shadowOffset: { width: 0, height: 0 },
@@ -1728,7 +1648,7 @@ const styles = StyleSheet.create({
   uriLabel: {
     textAlign: 'center',
   },
-  // v2 Epic C Part 4 — inline processing-status block (`ProcessingStatus`).
+  // Inline processing-status block (`ProcessingStatus`).
   processingStatus: {
     alignItems: 'center',
     alignSelf: 'stretch',

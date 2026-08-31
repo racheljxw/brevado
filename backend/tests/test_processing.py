@@ -1,17 +1,10 @@
 """
-Phase 2 Step 6 unit checks for `app/services/processing.py`'s retry policy —
+Unit checks for `app/services/processing.py`'s retry policy —
 `_run_with_one_retry` specifically, which is pure orchestration logic with no
-Supabase/Gemini calls of its own, so it's easy to unit-test in isolation the
-same way `metrics.py`/`feedback.py` are (see docs/CLAUDE.md's "Background
-processing" section). Full end-to-end pipeline behavior (Supabase reads/
-writes, live Gemini calls) is exercised manually per the Step 6 test plan,
-not here.
-
-Each test hands `_run_with_one_retry` a small fake callable that fails a
-controlled number of times before succeeding (or never succeeds), rather than
-pointing GEMINI_MODEL at a bogus name and racing a live API call — deterministic
-and repeatable, and exercises exactly the retry-count logic Step 6 cares about
-without needing network access or a real API key.
+Supabase/Gemini calls of its own. Each test hands it a fake callable that
+fails a controlled number of times before succeeding (or never succeeds), so
+the retry-count logic is exercised deterministically with no network access.
+Full end-to-end pipeline behavior is exercised manually, not here.
 
 Run from `backend/` with the dev deps installed:
     pip install -r requirements.txt -r requirements-dev.txt

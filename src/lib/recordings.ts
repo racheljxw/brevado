@@ -5,26 +5,16 @@ import { supabase } from '@/lib/supabase';
 
 const RECORDINGS_BUCKET = 'recordings-audio';
 
-// The `recordings.mode` check constraint's full set of values (0001_initial_
-// schema.sql): 'interview' / 'story' have a curated question pool + a daily
-// question (v4 Epic H); 'miscellaneous' is free-topic with no question.
-// Exported so callers threading a selected mode through to uploadRecording()
-// (src/app/(tabs)/index.tsx) share one type instead of redeclaring the three
-// literals.
+// The full set of values allowed by the `recordings.mode` check constraint.
+// 'interview' / 'story' have a curated question pool + a daily question;
+// 'miscellaneous' is free-topic with no question.
 export type RecordingMode = 'interview' | 'story' | 'miscellaneous';
 
-// Mirrors MAX_RECORDINGS_PER_USER in backend/app/config.py — kept as a
-// separate constant here for the same reason RECORDINGS_BUCKET above is:
-// this frontend and the backend are separate projects with no shared module
-// to import a constant from (see docs/CLAUDE.md's "Backend" section).
-// Checked before a new recording starts (src/app/(tabs)/index.tsx —
-// originally the record button in Phase 3 Step 3, relocated to the mode
-// selection screen's `handleSelectMode` in Phase 4 Step 2, same file either
-// way) and enforced again, independently, by a Postgres trigger
-// (supabase/migrations/0004_recording_cap_enforcement.sql) as a safety
-// net — see docs/CLAUDE.md's Recording cap section for why this one
-// number ends up duplicated in three places, and update all three if it
-// ever changes.
+// Duplicated as MAX_RECORDINGS_PER_USER in backend/app/config.py and again in
+// the cap-enforcement migration — the frontend, backend and Postgres can't
+// share a constant. Checked before a new recording starts, and enforced
+// independently by a Postgres trigger as a backstop. If it changes, update
+// all three.
 export const MAX_RECORDINGS_PER_USER = 30;
 
 const CONTENT_TYPES_BY_EXTENSION: Record<string, string> = {
@@ -35,7 +25,7 @@ const CONTENT_TYPES_BY_EXTENSION: Record<string, string> = {
 };
 
 // Which step of uploadRecording() failed, so the UI can explain what's being
-// retried (and, for 'insert', know the audio itself is already safely stored).
+// retried — and, for 'insert', that the audio itself is already safely stored.
 export type RecordingUploadStage = 'upload' | 'insert';
 
 export class RecordingUploadError extends Error {
@@ -48,56 +38,28 @@ export class RecordingUploadError extends Error {
   }
 }
 
-// Only the columns the Step 6 history list needs. Widen this (or select('*'))
-// once Phase 3's detail view needs transcript/feedback/metrics too.
-// `favorite` was added in Phase 3 Step 4 — the list needs it directly (not
-// just the detail screen) since the star toggle now lives on both.
-// `audio_deleted` was added in Phase 3 Step 5 — the list needs to know
-// whether a row still has audio to show/hide the delete action and (Step 6)
-// the download action correctly per row. `audio_path` was added in Step 6 —
-// the list needs the actual Storage path to download from, not just the
-// boolean; the detail screen already selected it (`RecordingDetail` below).
-// `question` was added in the Phase 4 Step 5 exit-checkpoint review — the
-// detail screen already selected and stored it (`RecordingDetail` below,
-// since Phase 3 Step 1) but neither screen actually rendered it, a gap left
-// over from when every recording had `question: null` (pre-Phase-4). Now
-// that Interview/Story carry a real chosen or custom-typed question (Phase
-// 4 Steps 3-4), the list shows a one-line preview per row too, not just the
-// detail screen.
-// `title` was added in v2 Epic D Part 3 — the restyled list card shows it as
-// each row's bold heading (nullable: null for recordings from before Part 1,
-// or where generation returned nothing usable — the card falls back to
-// "Untitled recording" then). The detail screen selects it via
-// `RecordingDetail` below (Part 1/2).
-// `impact_score` / `clarity_score` / `structure_score` were added in v3 Epic
-// G Part 2 — the Streaks tab aggregates them client-side over this same
-// query (no new backend endpoint, consistent with how v2's History search /
-// calendar view were built). Nullable: a pre-v3 recording, or a score that
-// missed generation (Epic F's lenient failure), stays null and is excluded
-// from every Streaks aggregation. This makes `RecordingRow` structurally a
-// `StreakRecording` (src/lib/streaks.ts). The History screens don't read
-// these — they just ride along on the widened select.
-// `metrics` / `grammar_issue_count` were added in v3 Epic G Part 3 — the
-// Streaks → Clarity detail screen (`/streaks/clarity`) averages the raw
-// filler-rate / repetition / grammar-issue signals over the selected window
-// as supporting badges (`averageClaritySupportingMetrics` in streaks.ts).
-// Same "ride along on one query" approach — the History screens and the
-// other two Streaks detail screens don't read them.
+// The columns the History list and the Streaks tab need. The Streaks tab has
+// no query of its own — it aggregates the score / metrics columns client-side
+// over this same fetch, which is why they're selected here even though the
+// History screens don't read them. The detail screens use their own wider
+// queries (`RECORDING_DETAIL_COLUMNS` below) rather than growing this one.
+//
+// Nullable score/metrics fields: an older recording, or one where a given
+// score missed generation, stays null and is excluded from every Streaks
+// aggregation.
 export type RecordingRow = {
   id: string;
   mode: string;
   question: string | null;
-  // v4 Epic H: the `questions` pool row this recording answered (null for
-  // custom-typed questions, miscellaneous, and every pre-v4 row). v4 Epic I
-  // reads it so History's 3-dot "Re-practice this question" can carry the
-  // original pool question_id onto the new attempt.
+  // The `questions` pool row this recording answered. Null for custom-typed
+  // questions and miscellaneous. Read by History's "Re-practice this question"
+  // so the new attempt can carry the same pool question_id.
   question_id: string | null;
   title: string | null;
-  // v4 Epic I: set on a re-practice recording's upload — the id of the
-  // recording its 3-dot menu was opened from. v4 Epic J Part 1 reads it to
-  // group a question's attempts into one History list card (`buildChains` in
-  // src/lib/re-practice-chains.ts). Null for every normal recording and every
-  // pre-Epic-I row.
+  // Set on a re-practice recording's upload — the id of the recording its
+  // 3-dot menu was opened from. Read by `buildChains`
+  // (src/lib/re-practice-chains.ts) to group a question's attempts into one
+  // History list card. Null for every normal recording.
   re_practice_of: string | null;
   status: string;
   created_at: string;
@@ -111,12 +73,9 @@ export type RecordingRow = {
   metrics: RecordingMetrics | null;
 };
 
-// v4 Epic I — whether History's 3-dot menu should offer "Re-practice this
-// question" for a recording: Interview/Story only (never Miscellaneous), and
-// only when there's actually a question to re-practice — a pool `question_id`
-// or custom `question` text. (Per Epic H a pool recording always stores the
-// `question` text too, so in practice `question` alone is enough, but the
-// `question_id` check keeps this correct against any odd row.)
+// Whether History's 3-dot menu should offer "Re-practice this question":
+// Interview/Story only (never Miscellaneous), and only when there's a question
+// to re-practice — a pool `question_id` or custom `question` text.
 export function canRePracticeRecording(recording: {
   mode: string;
   question: string | null;
@@ -126,11 +85,11 @@ export function canRePracticeRecording(recording: {
   return modeHasQuestions && (!!recording.question || !!recording.question_id);
 }
 
-// v4 Epic I — the params the Record screen (src/app/(tabs)/index.tsx) reads to
-// enter its read-only "re-practice" state. Shared by the History list and
-// detail 3-dot menus so both hand the Record screen exactly the same shape.
-// `rpTs` is a nonce so re-practicing the same recording twice in a row still
-// re-triggers the consume effect (which dedupes on it).
+// The params the Record screen (src/app/(tabs)/index.tsx) reads to enter its
+// read-only "re-practice" state. Shared by the History list and detail 3-dot
+// menus so both hand the Record screen the same shape. `rpTs` is a nonce so
+// re-practicing the same recording twice in a row still re-triggers the
+// consume effect (which dedupes on it).
 export function rePracticeNavParams(recording: {
   id: string;
   mode: string;
@@ -161,18 +120,12 @@ export async function fetchRecordings(userId: string): Promise<RecordingRow[]> {
 }
 
 /**
- * Toggles the `favorite` marker on a single recording (Phase 3 Step 4).
+ * Toggles the `favorite` marker on a single recording.
  *
- * A direct Supabase update, not a backend endpoint — same judgment call as
- * `getActiveRecordingCount` above: RLS ("Users can update their own
- * recordings", 0001_initial_schema.sql) already scopes this to the calling
- * user, there's no Gemini/Storage/other-service work involved (unlike
- * `/process` and `/regenerate`, which exist as backend endpoints precisely
- * *because* they kick off Gemini calls the backend holds the API key for),
- * and `favorite` is purely a personal marker with no logic attached to it
- * anywhere else in the app (see docs/CLAUDE.md's History section) — so a
- * backend round-trip would add latency without adding correctness or any
- * shared logic worth centralizing.
+ * A direct Supabase update rather than a backend endpoint: RLS already scopes
+ * it to the calling user, and `favorite` is a personal marker with no
+ * Gemini/Storage work and no logic attached elsewhere, so a round-trip
+ * through the backend would only add latency.
  */
 export async function setFavorite(id: string, favorite: boolean): Promise<void> {
   const { error } = await supabase.from('recordings').update({ favorite }).eq('id', id);
@@ -182,29 +135,17 @@ export async function setFavorite(id: string, favorite: boolean): Promise<void> 
 }
 
 /**
- * Saves a user-edited recording `title` (v2 Epic D Part 2).
+ * Saves a user-edited recording `title`. A direct Supabase update, for the
+ * same reasons as `setFavorite` above.
  *
- * A direct Supabase update, not a backend endpoint — the same call the
- * favorite toggle makes (`setFavorite` above) and for the same reasons: RLS
- * ("Users can update their own recordings", 0001_initial_schema.sql) already
- * scopes the update to the calling user, and a title is a plain user-facing
- * label with no Gemini/Storage/other-service work and no logic attached to it
- * anywhere else in the app. Contrast `/process`, `/regenerate` and the audio
- * delete endpoint, which are all backend routes precisely because they touch
- * Gemini or do a Storage+DB pair that must not disagree — none of which
- * applies here. So a backend round-trip would only add latency.
+ * Also sets `title_edited_by_user: true` in the same write — this is the only
+ * place a title is ever hand-set. `process_recording`
+ * (backend/app/services/processing.py) reads that flag and skips overwriting
+ * `title` on a later run, so a hand-picked title survives a "Regenerate
+ * report" instead of being replaced by a fresh AI-generated one.
  *
- * Also sets `title_edited_by_user: true` in the same write (v2 Epic D
- * Part 7, migration `0006_title_edited_by_user.sql`) — this is the ONLY
- * place a title is ever hand-set, so this is the one place that needs to
- * flip the flag. `process_recording` (backend/app/services/processing.py)
- * reads it and skips overwriting `title` on a later run (initial generation
- * or "Regenerate report") once it's true, so a user's hand-picked title
- * survives a regenerate instead of being silently replaced by a fresh
- * AI-generated one.
- *
- * The caller is responsible for trimming and rejecting an empty title before
- * calling this (see `history/[id].tsx`); this just writes what it's given.
+ * The caller trims and rejects an empty title before calling this; this just
+ * writes what it's given.
  */
 export async function updateRecordingTitle(id: string, title: string): Promise<void> {
   const { error } = await supabase
@@ -220,12 +161,8 @@ export async function updateRecordingTitle(id: string, title: string): Promise<v
  * Counts the current user's recordings that still count against the cap
  * (`audio_deleted = false`) — see `MAX_RECORDINGS_PER_USER` above.
  *
- * A direct Supabase query rather than a backend endpoint, deliberately: RLS
- * ("Users can view their own recordings", 0001_initial_schema.sql) already
- * scopes this correctly to the calling user, so there's nothing a backend
- * round-trip would add here beyond latency — see docs/CLAUDE.md's Audio
- * retention section for the fuller reasoning. `head: true` means Supabase
- * returns just the count, not the matching rows.
+ * A direct Supabase query rather than a backend endpoint: RLS already scopes
+ * it to the calling user. `head: true` returns just the count, not the rows.
  */
 export async function getActiveRecordingCount(userId: string): Promise<number> {
   const { count, error } = await supabase
@@ -239,19 +176,10 @@ export async function getActiveRecordingCount(userId: string): Promise<number> {
   return count ?? 0;
 }
 
-// Shape stored in `recordings.metrics` (Phase 2 Step 4) — see
-// docs/CLAUDE.md's "Metrics" section for what each field means and why
-// `words_per_minute` in particular can come back null.
-//
-// v3 Epic F Step 1: the recording DETAIL screen no longer displays these
-// (the raw filler/WPM/repetition numbers were replaced by the three score
-// badges — see `RecordingDetail` below), so `fetchRecordingById` stopped
-// selecting `metrics`. The metrics still compute and store on every
-// recording; as of v3 Epic G Part 3 `fetchRecordings` selects `metrics`
-// again (it rides along on the one Streaks/History query) and the Streaks →
-// Clarity detail screen (`/streaks/clarity`) surfaces filler-rate /
-// repetition (from here) + `grammar_issue_count` as windowed supporting
-// badges — see `averageClaritySupportingMetrics` in `src/lib/streaks.ts`.
+// Shape stored in `recordings.metrics`. `words_per_minute` can be null when
+// the audio duration couldn't be read. Not shown on the recording detail
+// screen (the score badges replaced the raw numbers there); surfaced only on
+// the Streaks → Clarity detail screen as windowed supporting badges.
 export type RecordingMetrics = {
   filler_word_rate: number | null;
   words_per_minute: number | null;
@@ -259,38 +187,33 @@ export type RecordingMetrics = {
   word_count: number | null;
 };
 
-// The full row, for the Phase 3 Step 1 detail screen — everything
-// `RecordingRow` has plus the fields the list view doesn't need.
+// The full row for the detail screens — everything `RecordingRow` has plus
+// transcript / feedback and the fields the list view doesn't need.
 export type RecordingDetail = {
   id: string;
   mode: string;
   question: string | null;
-  // v4 Epic H / Epic I — see the note on `RecordingRow.question_id` above.
   question_id: string | null;
-  // v4 Epic I / Epic J Part 2 — the recording this is a re-practice of (null
-  // for a normal recording). Selected here so the chain detail screen
-  // (`history/chain/[rootId].tsx`) can re-run `buildChains` over the full
-  // member details after a per-panel deletion. `history/[id].tsx` ignores it.
+  // The recording this is a re-practice of (null for a normal recording).
+  // Selected so the chain detail screen can re-run `buildChains` over the
+  // member details after a per-panel deletion.
   re_practice_of: string | null;
   status: string;
   created_at: string;
-  // v2 Epic D Part 1: auto-generated by the Gemini feedback call; null for
-  // recordings from before that change or where generation returned nothing
-  // usable. User-editable on the detail screen as of Part 2 — see
+  // Auto-generated by the Gemini feedback call; null for older recordings or
+  // where generation returned nothing usable. User-editable — see
   // `updateRecordingTitle` above.
   title: string | null;
   transcript: string | null;
   feedback: string | null;
-  // v3 Epic F Step 1: three 0-100 scores from the same Gemini feedback call,
-  // shown as badges on the detail screen (Impact / Clarity / Structure, that
-  // order). Null for a pre-v3 recording, or where generation returned nothing
-  // usable for that one score (lenient — never fails the recording). Streaks
-  // aggregation (Epic G) excludes any recording with a null score.
+  // Three 0-100 scores from the Gemini feedback call, shown as badges on the
+  // detail screen. Null for an older recording or a score that missed
+  // generation.
   impact_score: number | null;
   clarity_score: number | null;
   structure_score: number | null;
   // Not a displayed score — a Clarity grounding input the model assesses
-  // itself. Selected here so Epic G's Clarity detail screen can show it.
+  // itself. Selected so the Streaks → Clarity detail screen can show it.
   grammar_issue_count: number | null;
   audio_path: string | null;
   audio_deleted: boolean;
@@ -300,11 +223,9 @@ export type RecordingDetail = {
 /**
  * Fetches a single recording by id for the detail screen.
  *
- * Deliberately doesn't filter by `user_id` itself — RLS ("Users can view
- * their own recordings", 0001_initial_schema.sql) already scopes the select
- * to `auth.uid()`, so a bad id and someone else's id both just come back as
- * no row, which `maybeSingle()` surfaces as `null` instead of throwing. That
- * gives the not-found screen for free rather than needing a second check.
+ * Doesn't filter by `user_id` — RLS already scopes the select to `auth.uid()`,
+ * so a bad id and someone else's id both come back as no row, which
+ * `maybeSingle()` surfaces as `null`. That gives the not-found screen for free.
  */
 const RECORDING_DETAIL_COLUMNS =
   'id, mode, question, question_id, re_practice_of, status, created_at, title, transcript, feedback, impact_score, clarity_score, structure_score, grammar_issue_count, audio_path, audio_deleted, favorite';
@@ -322,14 +243,12 @@ export async function fetchRecordingById(id: string): Promise<RecordingDetail | 
 }
 
 /**
- * v4 Epic J Part 2 — full detail rows for a set of recording ids, for the
- * re-practice chain detail screen (`history/chain/[rootId].tsx`), which needs
- * every chain member's transcript / feedback / scores to render one accordion
- * panel each. One `.in('id', …)` query rather than N `fetchRecordingById`
- * calls. RLS ("Users can view their own recordings", 0001) scopes it to the
- * caller, so an id that isn't theirs (or no longer exists) simply doesn't
- * come back — the caller treats a shrunken result as members having been
- * deleted elsewhere. Order isn't guaranteed; the caller sorts.
+ * Full detail rows for a set of recording ids, for the re-practice chain
+ * detail screen — one `.in('id', …)` query rather than N `fetchRecordingById`
+ * calls. RLS scopes it to the caller, so an id that isn't theirs (or no
+ * longer exists) simply doesn't come back; the caller treats a shrunken
+ * result as members deleted elsewhere. Order isn't guaranteed; the caller
+ * sorts.
  */
 export async function fetchRecordingDetailsByIds(ids: string[]): Promise<RecordingDetail[]> {
   if (ids.length === 0) return [];
@@ -345,9 +264,8 @@ export async function fetchRecordingDetailsByIds(ids: string[]): Promise<Recordi
 
 /**
  * Signed, time-limited URL for playing back a recording's audio from the
- * private `recordings-audio` bucket. Storage RLS ("Users can read their own
- * audio files", 0002_storage_bucket.sql) means this only succeeds for the
- * calling user's own files, same as the table-level RLS above.
+ * private `recordings-audio` bucket. Storage RLS means this only succeeds for
+ * the calling user's own files.
  */
 export async function getRecordingAudioUrl(audioPath: string): Promise<string> {
   const { data, error } = await supabase.storage
@@ -365,41 +283,31 @@ function extensionOf(localUri: string): string {
 }
 
 // Storage RLS only requires the first path segment to equal the uploader's
-// user id (see supabase/migrations/0002_storage_bucket.sql) — the rest is a
-// timestamp so we don't need a pre-existing recording id to name the file.
+// user id — the rest is a timestamp, so naming the file doesn't need a
+// pre-existing recording id.
 export function buildAudioPath(userId: string, localUri: string): string {
   return `${userId}/${Date.now()}.${extensionOf(localUri)}`;
 }
 
 /**
- * Phase 3 Step 6 — downloads a recording's audio to a temp local file and
- * hands it to the native share sheet so the user can save/export it
- * wherever they want (Files app, AirDrop, Messages, etc.).
+ * Downloads a recording's audio to a temp local file and hands it to the
+ * native share sheet so the user can save/export it (Files app, AirDrop,
+ * Messages, etc.).
  *
- * Deliberately not a raw blob/data-URI download — per docs/PROJECT_PLAN.md's
- * approach, that pattern (works fine on web) is unreliable on iOS, which is
- * the only platform this app runs on via Expo Go (see docs/CLAUDE.md's
- * Conventions section). The reliable path is: get a signed Storage URL (the
- * same helper `AudioSection`'s playback already uses), download it to a
- * real file on-device with `expo-file-system`, then open the OS share sheet
- * on that local file with `expo-sharing` — the same two packages the
- * project plan calls for.
+ * Not a raw blob/data-URI download — that pattern is unreliable on iOS. The
+ * reliable path is: get a signed Storage URL, download it to a real
+ * on-device file with `expo-file-system`, then open the OS share sheet on
+ * that file with `expo-sharing`.
  *
- * The downloaded file goes in `Paths.cache`, not `Paths.document` — it only
- * needs to survive long enough for the share sheet to hand it off, and the
- * cache directory is the one the OS is allowed to reclaim under storage
- * pressure. It's named uniquely per call (`Date.now()`) so two downloads
- * fired close together (e.g. one per row, tapped quickly) can't collide on
- * the same path mid-flight, and it's deleted again once the share sheet
- * closes, whether or not anything was actually shared — no reason to
- * accumulate temp copies of already-uploaded audio in the cache.
+ * The temp file goes in `Paths.cache` (which the OS may reclaim under
+ * storage pressure — fine, it only needs to outlive the share sheet), is
+ * named uniquely per call so concurrent downloads can't collide, and is
+ * deleted once the share sheet closes whether or not anything was shared.
  *
- * Cancelling the share sheet is NOT a failure worth surfacing: iOS's
- * `UIActivityViewController` (via `expo-sharing`'s native module) resolves
- * this same promise on a clean dismiss exactly the way it does on a
- * completed share — there is no separate "user cancelled" rejection to
- * catch. Only a genuine failure (no network, a bad/expired signed URL,
- * sharing unavailable on this device) throws here.
+ * Cancelling the share sheet is not a failure worth surfacing: `expo-sharing`
+ * resolves this promise the same way on a clean dismiss as on a completed
+ * share. Only a genuine failure (no network, a bad signed URL, sharing
+ * unavailable) throws.
  */
 export async function shareRecordingAudio(audioPath: string): Promise<void> {
   const canShare = await Sharing.isAvailableAsync();
@@ -443,21 +351,16 @@ export async function shareRecordingAudio(audioPath: string): Promise<void> {
  * caller keeps it in state) means a retry after either failure overwrites
  * that same object instead of accumulating new ones.
  *
- * `mode`/`question`/`questionId` are threaded in by the caller (see
- * src/app/(tabs)/index.tsx) rather than hardcoded here — miscellaneous still
- * passes `question: null` (the only combination the schema's check constraint
- * allows without a question). For interview/story: a pool question from
- * `GET /questions/daily` (v4 Epic H Step 2) passes both its `text` and its
- * `questions` row id as `questionId` → stored in `recordings.question_id`; a
- * custom typed-in question passes only `question` text and leaves `questionId`
- * null, same as miscellaneous.
+ * `mode`/`question`/`questionId` are threaded in by the caller. Miscellaneous
+ * passes `question: null`. For interview/story: a pool question from
+ * `GET /questions/daily` passes both its `text` and its `questions` row id as
+ * `questionId` (→ `recordings.question_id`); a custom typed-in question passes
+ * only `question` text and leaves `questionId` null.
  *
- * `rePracticeOf` (v4 Epic I) is the id of the ORIGINAL recording a re-practice
- * attempt was launched from (the History row whose 3-dot menu was tapped) —
- * stored as `recordings.re_practice_of`. It always points at the recording the
- * user tapped from, never a further-back ancestor: walking the chain to group
- * a whole question's attempts is Epic J's job, not this insert's. Null for
- * every normal (non-re-practice) recording.
+ * `rePracticeOf` is the id of the original recording a re-practice attempt was
+ * launched from (→ `recordings.re_practice_of`). It always points at the
+ * recording the user tapped from, never a further-back ancestor — walking the
+ * chain to a root is `buildChains`' job. Null for a normal recording.
  */
 export async function uploadRecording({
   userId,
@@ -476,7 +379,7 @@ export async function uploadRecording({
   question: string | null;
   /** The `questions` row id, when the question came from the daily-question pool. Null for custom / miscellaneous. */
   questionId?: string | null;
-  /** v4 Epic I — the original recording this is a re-practice of. Null otherwise. */
+  /** The original recording this is a re-practice of. Null otherwise. */
   rePracticeOf?: string | null;
 }): Promise<{ id: string; audioPath: string }> {
   const path = audioPath ?? buildAudioPath(userId, localUri);

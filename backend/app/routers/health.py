@@ -7,8 +7,7 @@ router = APIRouter()
 def health_check() -> dict[str, str]:
     """Liveness check — confirms the API process is up and responding.
 
-    This is the way to confirm the deploy is alive; it doesn't check any
-    downstream dependency (Supabase, Gemini) since none of those are wired
-    up yet as of Step 1.
+    Deliberately does not touch any downstream dependency (Supabase, Gemini);
+    it's a pure "is this process alive" probe.
     """
     return {"status": "ok"}

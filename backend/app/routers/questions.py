@@ -1,17 +1,14 @@
 """
-v4 Epic H Step 1 — the daily-question endpoint.
+The daily-question endpoint.
 
 `GET /questions/daily?mode=interview|story` returns the one shared
 "question of the day" for that mode, assigning it lazily if this is the first
 request of the day (see `app/services/daily_questions.py`).
 
-Auth: standard bearer-token verification only — this data is NOT user-specific
-(every user gets the same question), so there's no ownership check, unlike the
-`/recordings/*` endpoints. The token is still required so the endpoint isn't
-open to the world.
-
-Consumed by the Record flow's `fetchDailyQuestion` (`src/lib/api.ts`) as of
-Epic H Step 2.
+Auth: bearer-token verification only. This data is not user-specific (every
+user gets the same question), so there's no ownership check like the
+`/recordings/*` endpoints have — but the token is still required so the
+endpoint isn't open to the world.
 """
 
 from fastapi import APIRouter, Depends, HTTPException, Query

@@ -1,12 +1,9 @@
 /**
  * App color / typography / spacing tokens.
  *
- * The v1 `Colors` object (light/dark keyed, consumed via `useTheme()` /
- * `ThemedText` / `ThemedView`) is now repointed at the v2 warm palette —
- * see the "v2 Design System" block lower down for the authoritative token
- * set and docs/CLAUDE.md's "Design system" section for the full rundown.
- * Both `light` and `dark` resolve to the SAME warm values on purpose: v2
- * is a single warm *light* theme and deliberately not dark-mode-aware.
+ * A single warm *light* theme — deliberately not dark-mode-aware. The
+ * light/dark-keyed `Colors` object below (consumed via `useTheme()` /
+ * `ThemedText` / `ThemedView`) resolves both halves to the same warm values.
  */
 
 import '@/global.css';
@@ -15,31 +12,29 @@ import { Platform } from 'react-native';
 
 /**
  * Raw values — the single source of truth for every hex code in the app.
- * Prefer the semantic names in `Colors` / `Theme.colors` below; reach for
- * `Palette` directly only when something genuinely needs the literal.
+ * Prefer the semantic names in `Colors` / `Theme.colors` below.
  *
- * "Figma-authoritative" = exact value from the design file. "approximate"
- * = pixel-sampled in Epic B Part 1, gets an exact value when the relevant
- * screen is rebuilt in Epic C/D.
+ * "from the design" = exact value from the design file. "approximate" = not
+ * yet confirmed against a design sample.
  */
 export const Palette = {
-  cream: '#FFFAF6', // screen background — flat, NO gradient (Figma-authoritative)
-  brownBlack: '#2D1306', // primary text, headings, inactive nav icons (Figma-authoritative)
+  cream: '#FFFAF6', // screen background — flat, no gradient (from the design)
+  brownBlack: '#2D1306', // primary text, headings, inactive nav icons (from the design)
   warmBrown: '#56453D', // selected/filled element; also the best-available muted-text tone (approximate)
   recordRed: '#C53030', // record button (approximate)
-  tanGray: '#DFCFC7', // borders / dividers / unselected outlines; also the active nav-tab pill (Figma-authoritative)
-  nearWhite: '#FFFEFE', // card surfaces; also the 2px nav-capsule stroke (Figma-authoritative)
+  tanGray: '#DFCFC7', // borders / dividers / unselected outlines; also the active nav-tab pill (from the design)
+  nearWhite: '#FFFEFE', // card surfaces; also the 2px nav-capsule stroke (from the design)
   gold: '#F3BF16', // filled favorite star (approximate)
   pillPurple: '#E2CDF8', // interview mode pill bg, unselected (approximate)
   pillPink: '#F8CDE5', // storytelling mode pill bg, unselected (approximate)
   pillBlue: '#CDE3F8', // miscellaneous mode pill bg, unselected (approximate)
-  pillPurpleText: '#3E0877', // interview mode pill label (Epic D Part 3)
-  pillPinkText: '#7F084C', // storytelling mode pill label (Epic D Part 3)
-  pillBlueText: '#093C6B', // miscellaneous mode pill label (Epic D Part 3)
-  navIconActive: '#B63700', // active bottom-nav tab icon (Figma-authoritative)
-  shadow: '#BEA398', // drop-shadow tint for cards + the nav capsule (Figma-authoritative; RN can only approximate spread/blur)
+  pillPurpleText: '#3E0877', // interview mode pill label
+  pillPinkText: '#7F084C', // storytelling mode pill label
+  pillBlueText: '#093C6B', // miscellaneous mode pill label
+  navIconActive: '#B63700', // active bottom-nav tab icon (from the design)
+  shadow: '#BEA398', // drop-shadow tint for cards + the nav capsule (RN can only approximate spread/blur)
   link: '#4B75DF', // the ONE blue for links / interactive text, app-wide (see Theme.colors.link)
-  positive: '#2F7A55', // upward / improving trend indicator (v3 Epic G — no Figma sample, approximate; a warm-compatible green). Declines reuse `recordRed`.
+  positive: '#2F7A55', // upward / improving trend indicator — no design sample, approximate; a warm-compatible green. Declines reuse `recordRed`.
 } as const;
 
 export const Colors = {
@@ -51,8 +46,8 @@ export const Colors = {
     textSecondary: Palette.warmBrown,
   },
   dark: {
-    // v2 is not dark-mode-aware — identical to `light` on purpose, so the
-    // app renders the same warm theme whatever the OS colour scheme is.
+    // Not dark-mode-aware — identical to `light` on purpose, so the app
+    // renders the same warm theme whatever the OS colour scheme is.
     text: Palette.brownBlack,
     background: Palette.cream,
     backgroundElement: Palette.nearWhite,
@@ -102,32 +97,21 @@ export const BottomTabInset = Platform.select({ ios: 50, android: 80 }) ?? 0;
 export const MaxContentWidth = 800;
 
 /* ------------------------------------------------------------------ *
- * v2 Design System — Epic B
+ * Design system
  * ------------------------------------------------------------------ *
- * Part 1 defined these tokens; Part 2 is applying them. The v1 `Colors`
- * / `Fonts` / `Spacing` exports above still exist (lots of screens read
- * them via `useTheme()` / `ThemedText` / `ThemedView`) but `Colors` now
- * points at this same warm palette, so consuming either path lands in
- * the same place. Screens get retired onto `Theme` directly in Epic C/D.
- *
- * v2 is a single warm *light* theme — `Theme` is a flat object, not
- * light/dark keyed. Revisit only if the redesign ever needs a dark mode.
+ * A flat object (not light/dark keyed). The v1 `Colors` / `Fonts` /
+ * `Spacing` exports above still exist for screens that read them via
+ * `useTheme()` / `ThemedText` / `ThemedView`, and `Colors` points at this
+ * same warm palette, so both paths land in the same place.
  */
 
 /**
  * Noto Sans, one registered family name per weight. Names match the
  * `@expo-google-fonts/noto-sans` package's exports.
  *
- * IMPORTANT: the font is only actually rendered once that package is
- * installed AND loaded via `useFonts(...)` at app boot (see
- * `src/app/_layout.tsx`). Until then React Native silently falls back to
- * the platform sans-serif (San Francisco on iOS, Roboto on Android) when
- * it sees an unregistered family name — both are clean, simple
- * sans-serifs, so referencing these tokens early is safe but has no
- * visible effect yet. `ThemedText` deliberately does NOT apply these
- * family names yet for that reason (an unloaded weighted family drops to
- * system *regular*, losing bold) — that switch happens in the same
- * change that wires up `useFonts`.
+ * The font only renders once that package is loaded via `useFonts(...)` at
+ * app boot (see `src/app/_layout.tsx`). Until then React Native silently
+ * falls back to the platform sans-serif for an unregistered family name.
  */
 export const NotoSans = {
   regular: 'NotoSans_400Regular',
@@ -143,79 +127,66 @@ export const Theme = {
 
     /** Primary text, headings, most icons. */
     textPrimary: Palette.brownBlack,
-    /**
-     * Muted / secondary text (timestamps, captions, helper lines). No
-     * dedicated value was in the Figma sample set — this reuses the warm
-     * brown until Epic C/D pins one down.
-     */
+    /** Muted / secondary text (timestamps, captions, helper lines). Reuses
+     *  the warm brown — no dedicated design sample. */
     textSecondary: Palette.warmBrown,
 
     /** Card / raised surface fill. */
     card: Palette.nearWhite,
-    /** 1px inset border on a card surface (`#56453D`, Figma). */
+    /** 1px inset border on a card surface. */
     cardBorder: Palette.warmBrown,
     /** Hairline borders, dividers, unselected pill outlines. */
     border: Palette.tanGray,
 
-    /**
-     * Fill for a selected / active control (e.g. the active mode pill).
-     * Warm dark brown — deliberately not pure black. Still approximate.
-     */
+    /** Fill for a selected / active control (e.g. the active mode pill).
+     *  Warm dark brown — deliberately not pure black. */
     accent: Palette.warmBrown,
     /** Text / icon sitting on top of an `accent` fill. */
     onAccent: Palette.nearWhite,
 
-    /** The record button. Still approximate — exact value in Epic C. */
+    /** The record button. */
     recordRed: Palette.recordRed,
-    /** A filled favorite star. Still approximate. */
+    /** A filled favorite star. */
     favoriteGold: Palette.gold,
 
-    /** Mode pill background when NOT selected (selected -> `accent`). Approximate. */
+    /** Mode pill background when NOT selected (selected -> `accent`). */
     modeInterview: Palette.pillPurple,
     modeStory: Palette.pillPink,
     modeMiscellaneous: Palette.pillBlue,
-    /** Mode pill label colour — a saturated tone of the matching pill bg (Epic D Part 3). */
+    /** Mode pill label colour — a saturated tone of the matching pill bg. */
     modeInterviewText: Palette.pillPurpleText,
     modeStoryText: Palette.pillPinkText,
     modeMiscellaneousText: Palette.pillBlueText,
 
-    /* ---- Bottom nav (see docs/CLAUDE.md "Design system" -> nav bar) ----
-     * The nav uses the SYSTEM tab bar (`NativeTabs`), which exposes only a
-     * subset of the Figma spec — capsule background, label colour and
-     * icon colours apply; the 2px capsule stroke and the drop shadow do
-     * NOT (no API for them). Values here are still the source of truth for
-     * whatever the tab bar CAN consume, and for the web tab bar which
-     * renders them fully.
-     *   - capsule background: `background` (#FFFAF6)
-     *   - label colour: `textPrimary` (#2D1306) — CONSTANT, never varies by active state
-     *   - inactive icon: `textPrimary` (#2D1306)
-     *   - active-tab pill: `border` (#DFCFC7) — same value on purpose, per Figma; do not duplicate
+    /* ---- Bottom nav ----
+     * The nav uses the SYSTEM tab bar (`NativeTabs`), which only lets you
+     * set the capsule background, label colour and icon colours; the 2px
+     * capsule stroke and the drop shadow have no API. These values are the
+     * source of truth for whatever the tab bar CAN consume, and for the web
+     * tab bar which renders them fully. The label colour is constant — it
+     * never varies by active state — and the active-tab pill reuses `border`
+     * on purpose (don't duplicate the value).
      */
-    /** 2px stroke around the whole nav capsule (#FFFEFE). */
+    /** 2px stroke around the whole nav capsule. */
     navStroke: Palette.nearWhite,
-    /** Active bottom-nav tab icon (#B63700). */
+    /** Active bottom-nav tab icon. */
     navIconActive: Palette.navIconActive,
-    /** Drop-shadow tint — cards and the nav capsule (#BEA398). */
+    /** Drop-shadow tint — cards and the nav capsule. */
     shadow: Palette.shadow,
 
     /**
-     * Links and interactive text — "See more details", "Regenerate report",
-     * the QuestionArea links, the auth-screen links/submit button, etc. This
-     * is the SINGLE source of truth for that blue: it replaced two older,
-     * conflicting values (`#3c87f7`, previously the `linkPrimary` token in
-     * `themed-text.tsx`, and the `#4B75DF` literal in the Record flow). A
-     * deliberate exception to the warm palette — a warm link would be
-     * `#56453D`, indistinguishable from body text. Never hardcode a link
-     * colour anywhere else; reference this token.
+     * Links and interactive text, app-wide — the single source of truth for
+     * that blue. A deliberate exception to the warm palette: a warm link
+     * would be `#56453D`, indistinguishable from body text. Never hardcode a
+     * link colour elsewhere; reference this token.
      */
     link: Palette.link,
 
     /**
-     * An upward / improving trend — the "+12%" reading and its up-triangle
-     * on a Streaks metric card (v3 Epic G Part 2). The one green in the app:
-     * no Figma sample, approximate, tuned to sit with the warm palette. A
-     * *declining* trend deliberately reuses `recordRed` rather than adding a
-     * second negative colour.
+     * An upward / improving trend — the "+12%" reading and up-triangle on a
+     * Streaks metric card. The one green in the app: no design sample,
+     * approximate, tuned to sit with the warm palette. A declining trend
+     * reuses `recordRed` rather than adding a second negative colour.
      */
     positive: Palette.positive,
   },
@@ -232,10 +203,9 @@ export const Theme = {
   },
 
   /**
-   * Reusable shadow presets. `card` matches the Figma card spec: `#BEA398`
-   * @ 25%, y+4, ~30 blur + 5 spread. React Native / RN-web have no
-   * "spread", so `shadowRadius` is bumped a little to stand in for it, and
-   * Android gets a plain `elevation`. Expect to fine-tune on a device.
+   * Reusable shadow presets. The design's card shadow has spread, which
+   * React Native / RN-web don't support, so `shadowRadius` is bumped a
+   * little to stand in for it and Android gets a plain `elevation`.
    */
   shadows: {
     card: {
@@ -259,15 +229,12 @@ export const Theme = {
   },
 
   typography: {
-    /** See the `NotoSans` note above — not rendered until `useFonts` is wired. */
     fontFamily: NotoSans,
 
     /**
-     * Named text roles — size + line height + family per role. Roughly
-     * mirrors `ThemedText`'s `type` prop; Epic C/D reconciles the two.
-     * Weight is carried by `fontFamily` (one family per weight), so no
-     * separate `fontWeight` here — that avoids faux-bold doubling once
-     * the real weighted families are loaded.
+     * Named text roles — size + line height + family per role. Weight is
+     * carried by `fontFamily` (one family per weight), so there's no
+     * separate `fontWeight` — that avoids faux-bold doubling.
      */
     variants: {
       display: { fontSize: 40, lineHeight: 46, fontFamily: NotoSans.bold },

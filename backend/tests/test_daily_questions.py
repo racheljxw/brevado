@@ -1,11 +1,9 @@
 """
-v4 Epic H Step 1 unit checks for `app/services/daily_questions.py`.
+Unit checks for `app/services/daily_questions.py` — no live Supabase or Gemini.
 
-Same isolation discipline as `test_processing.py` / `test_feedback.py`: no live
-Supabase and no live Gemini. `get_or_assign_daily_question` takes injectable
-`store` / `generate_batch` / `today` seams, so these tests drive it with an
-in-memory `FakeStore` that actually models the `(date, mode)` uniqueness the
-real concurrency guard relies on.
+`get_or_assign_daily_question` takes injectable `store` / `generate_batch` /
+`today` seams, so these tests drive it with an in-memory `FakeStore` that
+models the `(date, mode)` uniqueness the real concurrency guard relies on.
 
 Run from `backend/` with the dev deps installed:
     pip install -r requirements.txt -r requirements-dev.txt

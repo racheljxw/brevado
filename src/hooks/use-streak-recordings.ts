@@ -5,17 +5,15 @@ import { useAuth } from '@/lib/auth-context';
 import { TERMINAL_STATUSES } from '@/lib/recording-status';
 import { fetchRecordings, type RecordingRow } from '@/lib/recordings';
 
-// v3 Epic G Part 3 — the shared fetch shell for the Streaks home screen
-// (`streaks/index.tsx`) and the metric detail screens (`streaks/[metric].tsx`).
-// Both read the exact same `fetchRecordings()` query History's list runs, so
-// Streaks and History never disagree about what recordings exist, and the
-// home screen and its detail screens never disagree with each other.
+// The shared fetch shell for the Streaks home screen (`streaks/index.tsx`) and
+// the metric detail screens (`streaks/[metric].tsx`). Both read the same
+// `fetchRecordings()` query History's list runs, so nothing can disagree
+// about what recordings exist.
 //
-// Same shape as the History list's own fetch (Phase 2 Step 7): `useFocusEffect`
-// refetch, a `requestSeqRef` out-of-order guard, pull-to-refresh, and a 1.5s
-// poll while any row is non-terminal so a just-uploaded session's scores fold
-// in without a manual refresh. Part 2 inlined this in `streaks.tsx`; Part 3
-// pulled it into a hook now that two screens need it.
+// Same shape as the History list's own fetch: `useFocusEffect` refetch, a
+// `requestSeqRef` out-of-order guard, pull-to-refresh, and a 1.5s poll while
+// any row is non-terminal so a just-uploaded session's scores fold in without
+// a manual refresh.
 export function useStreakRecordings() {
   const { user } = useAuth();
 

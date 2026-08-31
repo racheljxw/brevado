@@ -6,16 +6,14 @@ import { ThemedText } from './themed-text';
 
 import { MaxContentWidth, NotoSans, Theme } from '@/constants/theme';
 
-// v2 Epic B Part 2 — the web counterpart of the bottom nav. Unlike the
-// native `NativeTabs` (which can only style a subset of the Figma spec —
-// see `app-tabs.tsx`), this is a plain custom component, so it renders the
-// full spec: the #FFFAF6 capsule with its 2px #FFFEFE stroke, the soft
-// #BEA398 drop shadow, and the #DFCFC7 pill behind the active tab. Label
-// colour stays constant (#2D1306) regardless of active state — only the
-// icon colour and the pill vary.
+// The web counterpart of the bottom nav. Unlike the native `NativeTabs`
+// (which can only style a subset of the design — see `app-tabs.tsx`), this is
+// a custom component and renders the full design: the capsule with its 2px
+// stroke, the soft drop shadow, and the pill behind the active tab. Label
+// colour stays constant regardless of active state.
 //
-// Web isn't a shipping target (the app runs via Expo Go), but this file
-// still has to compile and look right in a browser preview.
+// Web isn't a shipping target (the app runs via Expo Go), but this file still
+// has to compile and look right in a browser preview.
 // Keyed by the trigger's `href` (slot props don't carry `name`).
 const TAB_ICON: Record<string, Parameters<typeof SymbolView>[0]['name']> = {
   '/': 'mic.fill',
@@ -29,8 +27,6 @@ export default function AppTabs() {
       <TabSlot style={{ height: '100%' }} />
       <TabList asChild>
         <CustomTabList>
-          {/* v2 Epic A Step 1: three-tab shell — Record / History / Streaks.
-              "Record" is the renamed former "Home" tab (route still `/`). */}
           <TabTrigger name="home" href="/" asChild>
             <TabButton>Record</TabButton>
           </TabTrigger>
@@ -103,9 +99,8 @@ const styles = StyleSheet.create({
     // The 2px off-white stroke — a deliberate, visible detail.
     borderWidth: 2,
     borderColor: Theme.colors.navStroke,
-    // Approximation of the Figma drop shadow (#BEA398, 15%, 0/0 offset,
-    // 25 spread, 100 blur). RN/web have no "spread", so blur is bumped to
-    // stand in for it; tune once seen in a browser.
+    // The design's drop shadow has spread, which RN/web don't support, so
+    // blur is bumped to stand in for it.
     shadowColor: Theme.colors.shadow,
     shadowOffset: { width: 0, height: 0 },
     shadowOpacity: 0.15,
@@ -130,7 +125,6 @@ const styles = StyleSheet.create({
     borderRadius: Theme.radius.pill,
   },
   tabButtonInnerActive: {
-    // The active-tab pill — Theme.colors.border (#DFCFC7), reused per spec.
     backgroundColor: Theme.colors.border,
   },
   tabLabel: {

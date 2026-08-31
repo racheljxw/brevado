@@ -8,35 +8,19 @@ import { Spacing, Theme } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import { getRecordingAudioUrl, type RecordingDetail } from '@/lib/recordings';
 
-// v4 Epic J Part 2 — the shared "body" of a single recording's detail view:
-// Question → Audio → (Scores → Feedback → Transcript), or the failed /
-// still-processing notice. Pulled out of `history/[id].tsx` so BOTH the
-// single-recording detail screen and each accordion panel on the re-practice
-// chain screen (`history/chain/[rootId].tsx`) render the exact same content
-// instead of duplicating this layout.
-//
-// What each parent composes AROUND this differs and stays with the parent:
-//   - `history/[id].tsx`: the editable title + favorite star + 3-dot menu
-//     header row, and a mode-pill / date meta row.
-//   - `history/chain/[rootId].tsx`: the shared question + mode pill + favorite
-//     star live once at the CHAIN header; each panel's own header carries the
-//     expand chevron + that attempt's title/date + its 3-dot menu, and the
-//     expanded body renders the rename editor (when active) then this body.
-//
-// Everything below (`AudioSection`, `ScoresRow`, `ReportSection`) moved here
-// verbatim from `history/[id].tsx` — behaviour unchanged, only the file.
+// The shared "body" of a single recording's detail view: Question → Audio →
+// (Scores → Feedback → Transcript), or the failed / still-processing notice.
+// Rendered by both the single-recording detail screen (`history/[id].tsx`) and
+// each accordion panel on the re-practice chain screen
+// (`history/chain/[rootId].tsx`). Each parent composes its own header (title,
+// favorite star, mode pill, meta) around this.
 
 type AudioState = 'idle' | 'loading' | 'ready' | 'error';
 
-// Audio playback section: reused as-is regardless of the recording's
-// `status` — audio finishes uploading (and the row is created) *before*
-// backend processing ever starts, so it exists for a pending/processing/
-// failed recording just as much as a done one. Only `audio_deleted` changes
-// what this renders.
-//
-// v2 Epic D Part 7 — every branch renders inside the same `<Card>` treatment
-// (via the wrapper in `RecordingDetailBody`) so the audio section always
-// reads as one consistent playback panel.
+// Audio playback section: reused regardless of the recording's `status` —
+// audio finishes uploading (and the row is created) *before* backend
+// processing starts, so it exists for a pending/processing/failed recording
+// just as much as a done one. Only `audio_deleted` changes what this renders.
 function AudioSection({ recording }: { recording: RecordingDetail }) {
   const theme = useTheme();
   const [audioState, setAudioState] = useState<AudioState>('idle');
@@ -105,11 +89,10 @@ function AudioSection({ recording }: { recording: RecordingDetail }) {
   return <AudioPlaybackControls uri={audioUrl!} />;
 }
 
-// v3 Epic F Step 1 — the three per-recording scores (Impact / Clarity /
-// Structure, that display order), shown as compact badges in one Card,
-// separated by hairline dividers. Plain percentages, no trend arrows — a
-// single recording has no history to trend against. All three null → one
-// plain line instead of a card of dashes.
+// The three per-recording scores (Impact / Clarity / Structure), shown as
+// compact badges in one Card. Plain percentages, no trend arrows — a single
+// recording has no history to trend against. All three null → one plain line
+// instead of a card of dashes.
 function ScoresRow({ recording }: { recording: RecordingDetail }) {
   const scores = [
     { label: 'Impact', value: recording.impact_score },

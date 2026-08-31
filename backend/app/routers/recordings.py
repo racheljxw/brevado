@@ -1,14 +1,11 @@
 """
 Endpoints the Expo app calls once it already owns a `recordings` row.
 
-As of Phase 2 Step 2, upload + row creation still happen entirely on the
-frontend, directly against Supabase (see `src/lib/recordings.ts`) — this
-router only covers what comes after that: kicking off processing, (as of
-Phase 3 Step 2) manually retrying it after a failure, (as of Phase 3
-Step 5) manually deleting a recording's audio, and (as of v2 Epic D
-Part 4) permanently deleting a whole recording (row + audio together). See
-docs/CLAUDE.md's "AI processing endpoint" and "Background processing"
-sections for the full picture.
+Upload and row creation happen entirely on the frontend, directly against
+Supabase (see `src/lib/recordings.ts`). This router only covers what comes
+after: kicking off processing, manually retrying it after a failure,
+deleting a recording's audio, and permanently deleting a whole recording
+(row + audio together).
 """
 
 import logging
@@ -29,13 +26,11 @@ router = APIRouter(prefix="/recordings", tags=["recordings"])
 def _fetch_authorized_recording(client, recording_id: str, user_id: str) -> dict:
     """Fetches `recording_id` and confirms it belongs to `user_id`.
 
-    Shared by `/process`, `/regenerate`, and the audio-delete endpoint so all
-    three give a caller an identical, indistinguishable 403 whether the
-    recording doesn't exist at all or exists but belongs to someone else — a
-    token for one user should never be able to tell those two cases apart
-    from the response. Selects `audio_path`/`audio_deleted` too (unused by
-    `/process` and `/regenerate`, but cheap to include) so the delete
-    endpoint below doesn't need a second round-trip just to get them.
+    Shared by `/process`, `/regenerate`, and the audio-delete endpoint. A
+    nonexistent recording and one that belongs to another user return the
+    *same* 403 — a caller's token must not be able to tell those apart.
+    Selects `audio_path`/`audio_deleted` too so the delete endpoint doesn't
+    need a second round-trip.
     """
     try:
         result = (
@@ -46,9 +41,8 @@ def _fetch_authorized_recording(client, recording_id: str, user_id: str) -> dict
             .execute()
         )
     except APIError:
-        # Most commonly a malformed (non-UUID) recording_id, which Postgres
-        # rejects before it ever gets a chance to not-match any row. Same
-        # response as the case below, deliberately.
+        # Most commonly a malformed (non-UUID) recording_id. Same 403 as a
+        # genuine no-match, deliberately.
         raise HTTPException(status_code=403, detail="Not authorized for this recording.")
 
     recording = None if result is None else result.data
@@ -74,8 +68,7 @@ def start_processing(
             detail=f"Recording is already '{recording['status']}', not 'pending' — refusing to reprocess.",
         )
 
-    # Returns immediately; the actual work (transcription, metrics, feedback — see
-    # app/services/processing.py) runs after this response is sent.
+    # Runs after this response is sent — see app/services/processing.py.
     background_tasks.add_task(process_recording, recording_id)
 
     return {"id": recording_id}
@@ -87,19 +80,15 @@ def regenerate_report(
     background_tasks: BackgroundTasks,
     user_id: str = Depends(get_current_user_id),
 ) -> dict[str, str]:
-    """Phase 3 Step 2 — the manual "Regenerate report" action for a recording
-    that's `failed` even after Phase 2 Step 6's automatic inline retry.
+    """The manual "Regenerate report" action for a recording that's still
+    `failed` after the pipeline's automatic inline retry.
 
     Only valid from `failed` (the mirror image of `/process`, which is only
-    valid from `pending`) — anything else 409s rather than being silently
-    reprocessed. Schedules the exact same `process_recording()` pipeline as
-    `/process`, no separate "regenerate" code path: that function already
-    flips status back to `processing` as its very first step and overwrites
-    transcript/metrics/feedback unconditionally as each stage completes, so a
-    fresh call is a clean, full re-attempt (transcribe -> metrics -> feedback,
-    with its own independent one-inline-retry per stage) with nothing extra
-    to reset first — see docs/CLAUDE.md's "Background processing" section for
-    the full reasoning.
+    valid from `pending`); anything else 409s. Schedules the exact same
+    `process_recording()` pipeline — no separate code path. That function
+    flips status back to `processing` first and overwrites
+    transcript/metrics/feedback as each stage completes, so a fresh call is a
+    clean full re-attempt with nothing to reset first.
     """
     client = get_service_client()
     recording = _fetch_authorized_recording(client, recording_id, user_id)
@@ -120,9 +109,9 @@ def delete_audio(
     recording_id: str,
     user_id: str = Depends(get_current_user_id),
 ) -> dict[str, bool]:
-    """Manual audio delete, the actual mechanism that frees a
-    cap slot (see docs/CLAUDE.md's "Recording cap" section — `getActiveRecordingCount`
-    counts `audio_deleted = false` rows, so this is what makes that count drop).
+    """Delete a recording's audio file but keep the row (transcript, feedback
+    and metrics survive). This is what frees a cap slot: the active-recording
+    count only counts rows with `audio_deleted = false`.
     """
     client = get_service_client()
     recording = _fetch_authorized_recording(client, recording_id, user_id)
@@ -153,36 +142,18 @@ def delete_recording(
     recording_id: str,
     user_id: str = Depends(get_current_user_id),
 ) -> dict[str, bool]:
-    """v2 Epic D Part 4 — permanently delete a whole recording: its Storage
-    audio file (if it still has one) AND the `recordings` row itself, together.
+    """Permanently delete a whole recording: its Storage audio file (if it
+    still has one) AND the `recordings` row itself. Irreversible — the
+    frontend gates it behind a confirmation dialog.
 
-    Stronger than `DELETE /{id}/audio` (which keeps the row and only clears the
-    audio, so the transcript/feedback/metrics survive): this removes
-    everything, irreversibly. The frontend gates it behind a confirmation
-    dialog for that reason — see docs/CLAUDE.md's History section.
+    A backend endpoint rather than a direct client call for the same reason
+    as `delete_audio`: a Storage delete and a DB write both have to happen
+    and must not disagree, and the `recordings-audio` bucket has no
+    client-side delete RLS policy. The row delete uses the service-role
+    client (which bypasses RLS), so no `recordings` DELETE RLS policy exists.
 
-    Why a backend endpoint and not a direct Supabase call from the client —
-    the same reasoning as `delete_audio` above: a Storage delete and a DB
-    write both have to happen and must not end up disagreeing, and the
-    `recordings-audio` bucket has no client-side delete RLS policy
-    (0002_storage_bucket.sql). The row delete here uses the service-role
-    client, which bypasses RLS, so **no new `recordings` DELETE RLS policy is
-    needed** (and none was added — the app never deletes a row from the
-    client; 0001's "add one deliberately later" note is satisfied by routing
-    deletion through this trusted endpoint instead).
-
-    Recording cap: nothing special to do. Both the frontend pre-check
-    (`getActiveRecordingCount`, src/lib/recordings.ts) and the Postgres
-    backstop trigger (`enforce_recording_cap()`,
-    0004_recording_cap_enforcement.sql) count rows where
-    `audio_deleted = false` — a row that no longer exists simply isn't
-    counted, so deleting it frees a cap slot for free, exactly as clearing
-    `audio_deleted` does. No decrement, no bookkeeping.
-
-    Idempotent (the "already deleted" double-tap case, same spirit as
-    `delete_audio`'s early-return): once the row is gone a repeat call just
-    returns success rather than erroring. A row that exists but belongs to
-    someone else still returns 403.
+    Idempotent: once the row is gone, a repeat call returns success rather
+    than erroring. A row belonging to another user still returns 403.
     """
     client = get_service_client()
 
@@ -197,8 +168,8 @@ def delete_recording(
         recording = None if result is None else result.data
     except APIError:
         # Malformed (non-UUID) id, or a no-rows response on some postgrest
-        # versions — either way there's nothing to act on. Treat as
-        # already-gone rather than leaking whether the id is real.
+        # versions. Treat as already-gone rather than leaking whether the id
+        # is real.
         return {"deleted": True}
 
     if recording is None:

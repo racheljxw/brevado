@@ -4,17 +4,14 @@ import { Theme } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 
 /**
- * The shared "card" surface for v2. A near-white fill, a 1px **inset**
- * `#56453D` border (RN borders are always drawn inside the box), and the
- * soft `#BEA398` drop shadow from `Theme.shadows.card`.
+ * The shared "card" surface: a near-white fill, a 1px inset border, and the
+ * soft drop shadow from `Theme.shadows.card`. Takes the same props as `View`;
+ * pass layout (padding, gap, alignment, an overriding `borderRadius`) via
+ * `style`.
  *
- * Use this instead of a bare `<ThemedView type="backgroundElement">` for
- * any raised panel/card. It takes the same props as `View`; pass layout
- * (padding, gap, alignment, an overriding `borderRadius`) via `style`.
- *
- * Note: an iOS shadow needs a non-transparent `backgroundColor` (this
- * component sets one) and is clipped by `overflow: 'hidden'` — don't add
- * that to a card that should cast a shadow.
+ * Note: an iOS shadow needs a non-transparent `backgroundColor` (set here)
+ * and is clipped by `overflow: 'hidden'` — don't add that to a card that
+ * should cast a shadow.
  */
 export function Card({ style, ...rest }: ViewProps) {
   const theme = useTheme();

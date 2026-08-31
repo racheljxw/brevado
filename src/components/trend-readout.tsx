@@ -5,9 +5,9 @@ import { Spacing, Theme } from '@/constants/theme';
 import { dayKeyToDate } from '@/lib/format-time';
 import type { TrendResult, TrendWindow } from '@/lib/streaks';
 
-// The "% change" reading shared by the Streaks home cards (v3 Epic G Part 2)
-// and the metric detail screens (Part 3). Maps `calculateTrend`'s
-// discriminated union so a card/screen never renders "NaN%":
+// The "% change" reading shared by the Streaks home cards and the metric
+// detail screens. Maps `calculateTrend`'s discriminated union so a card/screen
+// never renders "NaN%":
 //   - 'ok'  -> the signed % with an up/down triangle, in `positive` green
 //             (up) / `recordRed` (down); a rounded 0 shows a plain grey
 //             "0%". A sublabel sits under the number — normally `windowLabel`
@@ -15,14 +15,12 @@ import type { TrendResult, TrendWindow } from '@/lib/streaks';
 //             only started partway into the window.
 //   - 'insufficient-history' (exactly one day of scored data) -> `card`:
 //             just that day's value, grey, NO sublabel / triangle. `compact`
-//             renders nothing (the detail screen hides its badge here).
-//   - 'no-data' -> `card`: just "No sessions yet". `compact`: renders
-//             nothing (the detail screen hides its badge here too).
+//             renders nothing.
+//   - 'no-data' -> `card`: just "No sessions yet". `compact`: renders nothing.
 //
 // Variants: `card` (home metric card — 30px number + sublabel) and `compact`
 // (detail-screen header badge, only ever mounted for an 'ok' trend — ~17px
-// number + triangle, with the "Last N days" sublabel on ONE line beneath it;
-// v4 Epic K — the badge box is sized wide enough to keep it unwrapped).
+// number + triangle, with the sublabel on one line beneath it).
 
 export function TrendTriangle({
   direction,

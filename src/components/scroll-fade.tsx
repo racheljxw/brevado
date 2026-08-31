@@ -2,24 +2,20 @@ import { View, type StyleProp, type ViewStyle } from 'react-native';
 
 import { Palette } from '@/constants/theme';
 
-// v4 Epic K (later UI pass) — a cream→transparent vertical fade used wherever
-// a fixed header sits above a scrollable region. Placed just under the header
-// (or, on the History list, under the filter pills), it makes content
-// dissolve into the background as it scrolls up instead of hard-cutting at a
-// rigid edge.
+// A cream→transparent vertical fade used wherever a fixed header sits above a
+// scrollable region, so content dissolves into the background as it scrolls up
+// instead of hard-cutting at a rigid edge.
 //
-// This project deliberately has no `expo-linear-gradient` (see the
-// design-system notes), so the "gradient" is a stack of thin
-// non-overlapping `flex: 1` bands at linearly-decreasing opacity — cream at
-// full opacity up top (seamless with the header), 0 at the bottom.
+// This project has no `expo-linear-gradient`, so the "gradient" is a stack of
+// thin non-overlapping `flex: 1` bands at linearly-decreasing opacity — cream
+// at full opacity up top (seamless with the header), 0 at the bottom.
 //
-// Placement is always `position: absolute` over the top of the scroll area,
-// with the scroll content inset (`paddingTop`) by roughly the fade's height
-// so nothing hides behind it at rest. `pointerEvents="none"` so it never
-// eats a scroll/tap.
+// Always placed `position: absolute` over the top of the scroll area, with
+// the scroll content inset (`paddingTop`) by roughly the fade's height so
+// nothing hides behind it at rest. `pointerEvents="none"` so it never eats a
+// scroll/tap.
 //
-//   - `SCROLL_FADE_HEIGHT` — the standard strip height for the detail /
-//     Streaks screens.
+//   - `SCROLL_FADE_HEIGHT` — the standard strip height.
 //   - `opaqueFraction` — keep the first N% of the height fully opaque before
 //     the fade begins (the History filter zone wants the pill row itself
 //     backed by solid cream, then the fade starting ~mid-pill).

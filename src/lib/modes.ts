@@ -2,10 +2,9 @@ import { Theme } from '@/constants/theme';
 
 import type { RecordingMode } from './recordings';
 
-// v2 Epic C Part 3 — one source of truth for how each recording mode is
-// shown to the user. "Storytelling" (not "Story") matches the design
-// screenshots and the mode-select pill label. The internal DB/schema value
-// (`mode: 'story'`) is unchanged — this is display-string only.
+// One source of truth for how each recording mode is shown to the user.
+// "Storytelling" is the user-facing label; the internal DB/schema value is
+// `mode: 'story'`.
 export const MODE_LABELS: Record<RecordingMode, string> = {
   interview: 'Interview',
   story: 'Storytelling',
@@ -19,11 +18,8 @@ export function formatMode(mode: string): string {
   return (MODE_LABELS as Record<string, string>)[mode] ?? mode;
 }
 
-// v2 Epic D Part 3 — the colour-coded mode pill (pale bg + a matching
-// saturated label colour). Originally a private helper inside
-// `history/index.tsx`'s list card; pulled out here in Part 7 once the
-// History detail screen's restyle needed the identical pill, so both
-// screens share one definition instead of two copies drifting apart.
+// The colour-coded mode pill (pale background + a matching saturated label
+// colour), shared by the History list card and the detail screen.
 export function modePillColors(mode: string): { backgroundColor: string; color: string } {
   switch (mode) {
     case 'interview':

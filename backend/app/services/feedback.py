@@ -1,43 +1,26 @@
 """
-Phase 2 Step 5: mode-aware Gemini feedback generation — the last previously-stubbed
-piece of the processing pipeline. Given an already-real transcript and already-computed
-deterministic metrics (see `app/services/metrics.py`), this module builds a mode-specific
-prompt and asks Gemini for free-text coaching feedback (structured/criteria-based scoring
-is explicitly Phase 5, not this step — see docs/CLAUDE.md's "Metrics" section and
-docs/PROJECT_PLAN.md Section 3).
+Mode-aware Gemini feedback generation.
 
-v2 Epic D Part 1 / v3 Epic F Step 1: the same single Gemini call now *also* returns a short
-2-4 word recording `title` ("Challenging Coworker", "Day Recap") AND three 0-100 scores —
-`impact_score`, `clarity_score`, `structure_score` — plus a `grammar_issue_count` (a
-Clarity grounding input, not a displayed score). All folded into this one call, not extra
-requests, to avoid cost/latency. Reliability of extracting every field comes from Gemini's
-structured-output mode: the call passes `response_mime_type="application/json"` plus an
-explicit `response_schema`, so the response is constrained to valid JSON we can `json.loads`
-— not a fragile delimiter we'd have to split on. A JSON-parse failure or an empty `feedback`
-field is treated as a feedback failure (raises `FeedbackGenerationError`, so
-`_run_with_one_retry` retries once); an empty/missing `title`, or any missing/out-of-range
-score, is NOT a failure — `generate_feedback` returns that field as `None`, logs it, and the
-recording still completes normally (same lenient degradation as metrics — see `processing.py`
-and docs/CLAUDE.md's "v3 scope" / "Metrics" sections).
+Given a transcript and the deterministic metrics computed from it (see
+`app/services/metrics.py`), this module builds a mode-specific prompt and asks Gemini,
+in a single call, for: free-text coaching `feedback`, a short 2-4 word recording
+`title`, three 0-100 scores (`impact_score`, `clarity_score`, `structure_score`), and a
+`grammar_issue_count` (a Clarity grounding input, not a displayed score). Everything is
+folded into one call to avoid extra cost/latency.
 
-Score prompt design (docs/CLAUDE.md's "v3 scope"): `impact_score` and `structure_score` use
-genuinely mode-specific guidance (`MODE_IMPACT_GUIDANCE` / `MODE_STRUCTURE_GUIDANCE`);
-`clarity_score` is one holistic judgment (`_CLARITY_GUIDANCE`) grounded by — not averaged
-from — the deterministic filler/repetition rates already in the metrics grounding plus the
-model's own grammar assessment (`grammar_issue_count`).
+Every field is extracted reliably because the call uses Gemini's structured-output mode
+(`response_mime_type="application/json"` + an explicit `response_schema`), so the reply
+is valid JSON rather than prose we'd have to parse out of a delimiter. A JSON-parse
+failure or an empty `feedback` field raises `FeedbackGenerationError` (retried once by
+`_run_with_one_retry`); a missing `title` or an out-of-range score is NOT a failure —
+that field comes back `None`, is logged, and the recording still completes.
 
-Kept as its own module rather than folded into `processing.py`, mirroring the choice
-already made for `metrics.py`: `build_feedback_prompt` is pure string-building logic with
-no Supabase/Gemini/network calls of its own, so it's easy to unit-test in isolation (see
-`test_feedback.py`) independent of the actual Gemini call, which needs a live API key and
-isn't exercised in tests.
+Score prompt design: `impact_score` and `structure_score` use genuinely mode-specific
+guidance; `clarity_score` is one holistic judgment grounded by — not averaged from — the
+deterministic filler/repetition rates and the model's own grammar assessment.
 
-Reuses the same Gemini client and model config as transcription
-(`app/gemini_client.py`, `settings.gemini_model`) — no reason for a second model here:
-this is a single text-in/text-out call, well within what Flash handles, and keeping one
-model id for the whole pipeline means Step 3's "model got renamed, bump one config value"
-story (see docs/CLAUDE.md's "AI processing endpoint" section) covers this call too, rather
-than needing to track two model ids independently.
+`build_feedback_prompt` is pure string-building with no network call, so it's unit-tested
+in isolation (see `test_feedback.py`); the live Gemini call is not exercised in tests.
 """
 
 import json
@@ -52,18 +35,11 @@ from app.gemini_client import get_gemini_client
 
 logger = logging.getLogger(__name__)
 
-# Structured-output schema for the single feedback call (v2 Epic D Part 1; extended in v3
-# Epic F Step 1). Constraining the response to this object is what makes extracting every
-# field from one call reliable — no delimiter parsing, no "the model wrapped it in prose"
-# failure mode.
-#
-# v3 adds `impact_score` / `clarity_score` / `structure_score` (each an integer 0-100 —
-# see docs/CLAUDE.md's "v3 scope") and `grammar_issue_count` (a non-negative integer the
-# model assesses itself, a Clarity grounding input — not a displayed score). All four are
-# in `required` for the same reason `title` is: structured output is most reliable when the
-# model must produce every key. `generate_feedback` still validates each leniently — a
-# missing/out-of-range score becomes `None` and never fails the recording (only a bad
-# `feedback` field does).
+# Structured-output schema for the single feedback call. Constraining the response to
+# this object is what makes extracting every field reliable. Every key is `required`
+# because structured output is most reliable when the model must produce all of them;
+# `generate_feedback` still validates each leniently (a missing/out-of-range score
+# becomes `None` and never fails the recording — only a bad `feedback` field does).
 _FEEDBACK_RESPONSE_SCHEMA = types.Schema(
     type=types.Type.OBJECT,
     properties={
@@ -84,8 +60,8 @@ _FEEDBACK_RESPONSE_SCHEMA = types.Schema(
     ],
 )
 
-# A title longer than this is the model ignoring "2-4 words" — kept anyway (Part 2 lets the
-# user edit it) but logged so it's visible.
+# A title longer than this is the model ignoring "2-4 words" — kept anyway (the user can
+# edit it) but logged so it's visible.
 _MAX_REASONABLE_TITLE_LEN = 120
 
 # Scores are integers on this inclusive scale. A value outside it (or a non-integer) is
@@ -96,14 +72,12 @@ _SCORE_MAX = 100
 
 @dataclass
 class GeneratedFeedback:
-    """Result of the single Gemini feedback call (feedback + title + v3 scores).
+    """Result of the single Gemini feedback call.
 
-    `feedback` is always non-empty (an empty one raises `FeedbackGenerationError` instead).
-    Every other field is `None` when the model returned nothing usable for it — a tolerated
-    outcome, not a failure: the recording still completes with feedback and whatever else
-    did parse. `impact_score` / `clarity_score` / `structure_score` are integers 0-100 when
-    present; `grammar_issue_count` is a non-negative integer (a Clarity grounding input, not
-    a displayed score — see docs/CLAUDE.md's "v3 scope").
+    `feedback` is always non-empty (an empty one raises `FeedbackGenerationError`). Every
+    other field is `None` when the model returned nothing usable for it — tolerated, not a
+    failure. The three scores are integers 0-100 when present; `grammar_issue_count` is a
+    non-negative integer (a Clarity grounding input, not a displayed score).
     """
 
     feedback: str
@@ -113,12 +87,8 @@ class GeneratedFeedback:
     structure_score: int | None = None
     grammar_issue_count: int | None = None
 
-# Mode-specific evaluation criteria, per docs/PROJECT_PLAN.md Section 3: interview answers
-# are judged on directness/structure, stories on narrative arc/pacing, miscellaneous on
-# general clarity/conciseness. All three branches were built in Phase 2 Step 5, before
-# Phase 4's real mode/question selection existed (every recording was still
-# mode='miscellaneous', question=null then) — Phase 4 didn't need this rebuilt, and a real
-# interview/story mode+question now flows into this exactly as originally designed.
+# Mode-specific evaluation criteria: interview answers are judged on directness/structure,
+# stories on narrative arc/pacing, miscellaneous on general clarity/conciseness.
 MODE_CRITERIA: dict[str, str] = {
     "interview": (
         "This is an interview-practice answer. Evaluate it primarily on directness and "
@@ -139,10 +109,10 @@ MODE_CRITERIA: dict[str, str] = {
     ),
 }
 
-# v3 Epic F Step 1: mode-specific guidance for the `impact_score`. Deliberately worded to
-# be a genuinely different judgment per mode, not one instruction with the mode name swapped
-# in — interview impact is about whether the answer landed as a response, story impact is
-# about engagement/cohesion, miscellaneous impact is about substance.
+# Mode-specific guidance for `impact_score` — a genuinely different judgment per mode,
+# not one instruction with the mode name swapped in: interview impact is whether the
+# answer landed as a response, story impact is engagement/cohesion, miscellaneous is
+# substance.
 MODE_IMPACT_GUIDANCE: dict[str, str] = {
     "interview": (
         "Impact here is whether the answer actually landed as a response to the question: "
@@ -163,8 +133,7 @@ MODE_IMPACT_GUIDANCE: dict[str, str] = {
     ),
 }
 
-# v3 Epic F Step 1: mode-specific guidance for the `structure_score` — a mode-aware
-# organization/coherence judgment, consistent with how MODE_CRITERIA already frames
+# Mode-specific guidance for `structure_score`, consistent with how MODE_CRITERIA frames
 # structure for the prose feedback.
 MODE_STRUCTURE_GUIDANCE: dict[str, str] = {
     "interview": (
@@ -182,11 +151,10 @@ MODE_STRUCTURE_GUIDANCE: dict[str, str] = {
     ),
 }
 
-# v3 Epic F Step 1: guidance for the `clarity_score` and `grammar_issue_count`. Not
-# mode-specific. The key instruction is that clarity is ONE holistic judgment, not a
-# mechanical average of the sub-metrics — the deterministic filler/repetition rates (in the
-# metrics grounding above) and the model's own grammar assessment are inputs to that
-# impression, not terms to average.
+# Guidance for `clarity_score` and `grammar_issue_count` — not mode-specific. The key
+# instruction is that clarity is ONE holistic judgment, not a mechanical average: the
+# deterministic filler/repetition rates and the model's own grammar assessment are inputs
+# to that impression, not terms to average.
 _CLARITY_GUIDANCE = (
     "Give one holistic judgment of how clear and easy to follow the speech was overall — "
     "how readily a listener could grasp the point and track the reasoning. This is your own "
@@ -222,13 +190,10 @@ class FeedbackGenerationError(Exception):
 def _format_metrics_grounding(metrics: dict | None) -> str:
     """Turns the `compute_metrics` output into a natural-language grounding sentence.
 
-    Per docs/PROJECT_PLAN.md Section 3, deterministic metrics are fed into the feedback
-    prompt as grounding text rather than left for Gemini to recount from the transcript
-    itself — e.g. "spoke at approximately 142 words per minute", not "count how fast they
-    talked". Handles `metrics` being entirely `None` (a total metrics-computation failure,
-    see `processing.py`) and `words_per_minute` being `None` on its own (duration couldn't
-    be determined, see `metrics.py`) by simply omitting what isn't known, never fabricating
-    a number.
+    Metrics are fed into the prompt as grounding text rather than left for Gemini to
+    recount from the transcript — e.g. "spoke at approximately 142 words per minute".
+    Handles `metrics` being entirely `None`, and `words_per_minute` being `None` on its
+    own, by omitting what isn't known — never fabricating a number.
     """
     if not metrics:
         return (
@@ -271,9 +236,9 @@ def build_feedback_prompt(mode: str, question: str | None, transcript: str, metr
     so prompt construction can be unit-tested (see `test_feedback.py`) without a live Gemini
     call.
 
-    `question` is written to naturally handle both cases: a real interview/story prompt, or
-    "no specific question" for miscellaneous (or any recording where `question` is null) —
-    see docs/CLAUDE.md's "Database" section on why `question` is nullable regardless of mode.
+    `question` handles both cases: a real interview/story prompt, or "no specific question"
+    for miscellaneous (or any recording where `question` is null — it's nullable for every
+    mode).
     """
     criteria = MODE_CRITERIA.get(mode, MODE_CRITERIA["miscellaneous"])
     impact_guidance = MODE_IMPACT_GUIDANCE.get(mode, MODE_IMPACT_GUIDANCE["miscellaneous"])
@@ -444,8 +409,7 @@ def generate_feedback(
     elif len(title) > _MAX_REASONABLE_TITLE_LEN:
         logger.warning("feedback: title looks unexpectedly long (%d chars): %r", len(title), title)
 
-    # v3 Epic F Step 1: three 0-100 scores + a grammar-issue count from the same response.
-    # Each validated leniently — a missing/garbage one is stored NULL, never a failure.
+    # Each score validated leniently — a missing/garbage one is stored NULL, never a failure.
     impact_score = _coerce_score(parsed.get("impact_score"), "impact_score")
     clarity_score = _coerce_score(parsed.get("clarity_score"), "clarity_score")
     structure_score = _coerce_score(parsed.get("structure_score"), "structure_score")

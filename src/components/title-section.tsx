@@ -13,29 +13,25 @@ import {
 import { ThemedText } from '@/components/themed-text';
 import { Spacing, Theme } from '@/constants/theme';
 
-// v2 Epic D Part 2 — recording-title editing. Originally a display state with
-// its own pencil trigger; as of v4 Epic K the pencil is GONE — "Rename title"
-// is now an item in the `RecordingActionsMenu` (3-dot menu), so the parent
-// controls the editing flag and this component is purely: show the title, or
-// (when `editing`) show the inline editor.
+// Recording-title editing. "Rename title" in the `RecordingActionsMenu`
+// (3-dot menu) flips the parent's editing flag; this component is purely:
+// show the title, or (when `editing`) show the inline editor.
 //
-// `title` is nullable — a recording from before Part 1, or one where
-// generation returned nothing usable. Editing then just starts from an empty
-// field (display shows a muted "Untitled recording"), so a user can set a
-// title on an older recording for the first time. Validation matches custom
-// questions exactly: non-empty after trim, nothing else.
+// `title` is nullable — an older recording, or one where generation returned
+// nothing usable. Editing then starts from an empty field (display shows a
+// muted "Untitled recording"), so a user can set a title on an older
+// recording for the first time. Validation: non-empty after trim, nothing else.
 //
 // The component owns the in-progress `draft` + its local validation error;
 // the parent owns `editing`, the persisted `title`, and the async save
 // (`saving` / `saveError`). `onSave` resolves `true` once the write has
-// actually persisted, which is the signal to leave edit mode (via
-// `onEndEdit`) — so a failed save keeps the box open with the error shown,
-// and the displayed title only ever changes after Supabase confirms.
+// persisted, which is the signal to leave edit mode — so a failed save keeps
+// the box open with the error shown, and the displayed title only changes
+// after Supabase confirms.
 //
-// v2 Epic D Part 7 — restyled as a large bold heading. v4 Epic J Part 2 —
-// pulled out of `history/[id].tsx` into this shared component. v4 Epic K —
-// pencil removed (see above); `textStyle` / `compact` let the History LIST
-// card reuse it at its smaller heading size.
+// `textStyle` / `compact` let the History list card reuse it at its smaller
+// heading size; `hideWhenIdle` is for the chain accordion, where the title
+// lives in the panel header and this is only the editor.
 export function TitleSection({
   title,
   editing,

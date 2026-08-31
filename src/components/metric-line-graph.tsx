@@ -5,15 +5,13 @@ import { ThemedText } from '@/components/themed-text';
 import { Spacing, Theme } from '@/constants/theme';
 import type { GraphPoint } from '@/lib/streaks';
 
-// The full-size line graph on the Streaks metric detail screens (v3 Epic G
-// Part 3). Same drawing technique as `MiniLineGraph` (the home-card
-// sparkline) — a run of thin rotated `View` segments between consecutive
-// non-null points, since this project has no `react-native-svg` and Part 2
-// deliberately chose not to add it — just larger, with faint y-gridlines
-// behind the line, a right-hand y-axis scale (25 / 50 / 75 / 100 %), and an
-// x-axis tick row below it.
+// The full-size line graph on the Streaks metric detail screens. Same drawing
+// technique as `MiniLineGraph` — a run of thin rotated `View` segments between
+// consecutive non-null points, since this project has no `react-native-svg` —
+// just larger, with faint y-gridlines behind the line, a right-hand y-axis
+// scale (25 / 50 / 75 / 100 %), and an x-axis tick row below it.
 //
-// Sparse-data behaviour matches the mini version and extends naturally:
+// Sparse-data behaviour:
 //   - 0 plottable points -> just the faint gridlines (the "baseline")
 //   - 1 plottable point  -> gridlines + the single dot
 //   - >= 2               -> gridlines + dots + the connecting line

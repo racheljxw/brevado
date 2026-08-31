@@ -44,5 +44,6 @@ example
 /android
 
 #docs
-.docs/AGENTS
-.dics/CLAUDE
+docs/
+CLAUDE.md
+.claude/

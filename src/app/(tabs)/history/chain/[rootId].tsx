@@ -33,33 +33,23 @@ import {
   type RecordingDetail,
 } from '@/lib/recordings';
 
-// v4 Epic J Part 2 — the re-practice chain detail screen: an accordion, one
-// panel per attempt of a question, replacing Part 1's interim "tap a grouped
-// card -> the most recent attempt's normal detail screen".
+// The re-practice chain detail screen: an accordion, one panel per attempt of
+// a question. Only multi-member chains navigate here; a single-member chain
+// opens the normal `history/[id]` screen.
 //
-// Route: `/history/chain/[rootId]` — `rootId` is the chain root id the Part 1
-// grouped card (`history/index.tsx`) computes via `buildChains`. Only
-// multi-member chains navigate here; a single-member chain still opens the
-// unchanged `history/[id]` screen.
+// Route: `/history/chain/[rootId]` — `rootId` is the chain root id the grouped
+// card (`history/index.tsx`) computes via `buildChains`.
 //
 // Data: `fetchRecordings` + `buildChains` to resolve which recordings are in
 // this chain (client-side, same query the List uses), then
 // `fetchRecordingDetailsByIds` for each member's full transcript / feedback /
-// scores. Both re-run on focus so a favorite toggled on the List, a new
-// re-practice attempt, or a deletion elsewhere all reflect here.
+// scores. Both re-run on focus.
 //
-// Layout:
-//   - "Back to History" header link.
-//   - Chain header: the shared question (`chainQuestion`, same string the
-//     grouped card shows), mode pill, "N attempts", and ONE favorite star
-//     bound to the chain root's `favorite` flag (the confirmed group-level
-//     design — toggling here writes the same row the List card reads).
-//   - One `<Card>` panel per attempt, most-recent first, most-recent expanded
-//     by default. Each panel header shows that attempt's date + status + its
-//     OWN 3-dot `RecordingActionsMenu` (Download / Delete audio / Delete
-//     recording / Regenerate — NOT favorite). Expanded, the panel renders
-//     `<TitleSection>` (editable per attempt) + the shared
-//     `<RecordingDetailBody>`.
+// Layout: a chain header (the shared question, mode pill, "N attempts", and
+// one favorite star bound to the chain's favorite-reference recording — see
+// `favoriteReference`), then one `<Card>` panel per attempt, most-recent
+// first and expanded by default. Each panel has its OWN 3-dot menu; favorite
+// stays chain-level.
 
 type ScreenState = 'loading' | 'not-found' | 'error' | 'loaded';
 
@@ -80,11 +70,11 @@ function sortNewestFirst(rows: RecordingDetail[]): RecordingDetail[] {
 // Which member the chain-header favorite star reads from / writes to.
 // `buildChains` over the current members resolves this naturally: in a linear
 // chain the root is the earliest attempt, and if the root is deleted the FK's
-// `on delete set null` (migration 0010) promotes the next attempt to root, so
-// the star simply follows the earliest surviving attempt. For a branched
-// chain (an attempt re-practised from a middle attempt, then the branch
-// point deleted) `buildChains` can return several sub-chains — we take the
-// root of the largest, tie-broken by the earliest attempt.
+// `on delete set null` promotes the next attempt to root, so the star follows
+// the earliest surviving attempt. For a branched chain (an attempt
+// re-practised from a middle attempt, then the branch point deleted)
+// `buildChains` can return several sub-chains — take the root of the largest,
+// tie-broken by the earliest attempt.
 function favoriteReference(members: RecordingDetail[]): RecordingDetail {
   const chains = buildChains(members);
   const primary = [...chains].sort(
@@ -96,8 +86,8 @@ function favoriteReference(members: RecordingDetail[]): RecordingDetail {
   return primary.members.find((m) => m.id === primary.rootId) ?? members[members.length - 1];
 }
 
-// Small local helpers for the per-panel in-flight / error state (keyed by
-// recording id), the same shape `history/index.tsx` tracks for its list rows.
+// Small local helpers for the per-panel in-flight / error state, keyed by
+// recording id — the same shape `history/index.tsx` tracks for its list rows.
 function useIdSet() {
   const [set, setSet] = useState<Set<string>>(new Set());
   const add = useCallback((id: string) => setSet((s) => new Set(s).add(id)), []);
@@ -166,9 +156,9 @@ function ChainPanel({
 }) {
   return (
     <Card style={styles.panel}>
-      {/* v4 Epic K — header layout, left→right: expand arrow, title + date
-          (stacked), 3-dot menu (rightmost). No status label. The whole row
-          still toggles; the menu (nested Pressable) doesn't. */}
+      {/* Header layout, left→right: expand arrow, title + date (stacked),
+          3-dot menu. The whole row toggles expand; the menu (nested
+          Pressable) doesn't. */}
       <Pressable
         onPress={onToggle}
         style={({ pressed }) => [styles.panelHeader, pressed && styles.pressed]}
@@ -279,12 +269,11 @@ export default function ChainDetailScreen() {
   const [delRecErrors, setDelRecError, clearDelRecError] = useIdErrors();
   const [titleSavingIds, addTitleSaving, removeTitleSaving] = useIdSet();
   const [titleErrors, setTitleError, clearTitleError] = useIdErrors();
-  // v4 Epic K — which panels have their title editor open (opened from that
-  // panel's "Rename title" menu item; the inline pencil is gone).
+  // Which panels have their title editor open (opened from that panel's
+  // "Rename title" menu item).
   const [renamingIds, addRenaming, removeRenaming] = useIdSet();
 
-  // Out-of-order-response guard shared by the full load and the poll — same
-  // purpose as `history/[id].tsx`'s `requestSeqRef`.
+  // Out-of-order-response guard shared by the full load and the poll.
   const seqRef = useRef(0);
   const knownIdsRef = useRef<Set<string>>(new Set());
   const membersRef = useRef<RecordingDetail[] | null>(null);
@@ -379,11 +368,9 @@ export default function ChainDetailScreen() {
   );
 
   // Collapse-to-fewer navigation. Nothing left -> back to the List. Exactly
-  // one attempt left -> that's a genuinely single recording now, so
-  // `replace` into the normal `history/[id]` screen — keeping the UI
-  // consistent with how every other single recording looks in History
-  // (rather than showing a one-panel "chain"). `navigatedRef` guards against
-  // firing twice before the screen unmounts.
+  // one attempt left -> it's a genuinely single recording now, so `replace`
+  // into the normal `history/[id]` screen rather than a one-panel "chain".
+  // `navigatedRef` guards against firing twice before the screen unmounts.
   const navigatedRef = useRef(false);
   useEffect(() => {
     if (navigatedRef.current || screenState !== 'loaded' || members === null) return;
@@ -663,8 +650,8 @@ const styles = StyleSheet.create({
     flex: 1,
     width: '100%',
     maxWidth: MaxContentWidth,
-    // Gutter on the sections below, not here — a padded ScrollView frame
-    // clips card drop shadows. Same note as `history/index.tsx` / `[id].tsx`.
+    // Gutter on the scroll content, not here — a padded ScrollView frame
+    // clips card drop shadows.
   },
   centerFill: {
     flex: 1,
@@ -679,9 +666,8 @@ const styles = StyleSheet.create({
   errorText: {
     color: '#e5484d',
   },
-  // v4 Epic K — relative wrapper so the header `ScrollFade` can sit absolute
-  // over the top of the ScrollView (content dissolves under the header
-  // instead of ending at a rigid line).
+  // Relative wrapper so the header `ScrollFade` can sit absolute over the top
+  // of the ScrollView.
   scrollArea: {
     flex: 1,
   },

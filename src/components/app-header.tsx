@@ -5,18 +5,15 @@ import { ProfileButton } from '@/components/profile-button';
 import { ThemedText } from '@/components/themed-text';
 import { Spacing, Theme } from '@/constants/theme';
 
-// v2 — the single top header row shared by the three main tab screens
-// (Record / History / Streaks): the "brevado." wordmark on the left, the
-// profile icon on the right. This row's position (horizontal gutter,
-// top offset) is the one constant every screen lines up against.
+// The single top header row shared by the three main tab screens (Record /
+// History / Streaks): the "brevado." wordmark on the left, the profile icon
+// on the right. Its position (gutter, top offset) is the constant every
+// screen lines up against.
 //
-// Detail/sub-screens (History's detail view, Settings) never render this —
-// they render `HeaderBackLink` instead, which reuses the exact same row
-// shape (padding, min-height) so the back link sits in precisely the slot
-// the "brevado." logo would otherwise occupy. The Record screen does the
-// same thing itself once a mode is picked (`selectedMode`): its header
-// swaps from this to a `HeaderBackLink` reading "Change mode", rather than
-// showing the back link somewhere else on the screen — see `index.tsx`.
+// Detail/sub-screens render `HeaderBackLink` instead, which reuses the same
+// row shape so the back link sits exactly where the wordmark would. The
+// Record screen swaps to a `HeaderBackLink` reading "Change mode" once a mode
+// is picked.
 const HEADER_ROW_HEIGHT = 28;
 
 export function AppHeader() {
@@ -29,15 +26,10 @@ export function AppHeader() {
 }
 
 // The one back-arrow-plus-label look every back link in the app renders
-// through — "Change mode", "Back to History", "Back", "Use prompt
-// instead", all identical apart from colour. Noto Sans regular, and a real
-// `SymbolView` chevron rather than a "‹" character inline in the text: at
-// the same font size as its label, "‹" renders noticeably smaller/thinner
-// than the letters beside it (a font-rendering quirk of that one glyph,
-// not a sizing mistake), so no font-size bump could make it visually
-// match — an icon sized independently of the text is what actually fixes
-// that. `BACK_ARROW_SIZE` (16) was picked to sit visually between the old
-// inline "‹" glyph (too small) and History's old standalone 18px icon.
+// through — identical apart from colour. Uses a real `SymbolView` chevron
+// rather than a "‹" character: at the same font size as its label, "‹"
+// renders noticeably smaller and thinner than the letters beside it, so an
+// icon sized independently of the text is the only way to make it match.
 const BACK_ARROW_SIZE = 16;
 
 function BackLinkContent({ label, color }: { label: string; color: string }) {
@@ -49,11 +41,9 @@ function BackLinkContent({ label, color }: { label: string; color: string }) {
   );
 }
 
-// The header-row variant: same row shape as `AppHeader`, so it can stand
-// in for it (History detail's "Back to History", Settings' "Back", and the
-// Record screen's "Change mode" once a mode is selected). Coloured
-// `textPrimary` — the same colour as the "brevado." wordmark it's standing
-// in for, not the link blue.
+// The header-row variant: same row shape as `AppHeader`, so it stands in for
+// it on detail screens. Coloured `textPrimary` — the same colour as the
+// "brevado." wordmark it replaces, not the link blue.
 export function HeaderBackLink({ label, onPress }: { label: string; onPress: () => void }) {
   return (
     <View style={styles.row}>
@@ -64,12 +54,10 @@ export function HeaderBackLink({ label, onPress }: { label: string; onPress: () 
   );
 }
 
-// The inline/body variant: identical arrow + font styling to
-// `HeaderBackLink`, but in the app's link blue, matching every other
-// interactive body text — used for anything that isn't sitting in the
-// header row itself (e.g. `QuestionArea`'s "Use prompt instead", or the
-// "Change mode" buttons inside the Record screen's body content). `style`
-// passes through to the `Pressable` for a caller's own spacing/alignment.
+// The inline/body variant: identical arrow + font styling to `HeaderBackLink`
+// but in the app's link blue, for a back link that isn't in the header row
+// itself (e.g. `QuestionArea`'s "Use prompt instead"). `style` passes through
+// to the `Pressable`.
 export function BackLink({
   label,
   onPress,
@@ -88,11 +76,10 @@ export function BackLink({
 
 const styles = StyleSheet.create({
   row: {
-    // `alignSelf: 'stretch'` is load-bearing wherever a parent centres its
-    // children (e.g. the Record screen's `safeArea`) rather than stretching
-    // them by default — without it this row would shrink-wrap its two
-    // children instead of spanning full width, and `justifyContent:
-    // 'space-between'` would have nothing to space apart.
+    // Load-bearing wherever a parent centres its children rather than
+    // stretching them (e.g. the Record screen's `safeArea`): without it the
+    // row shrink-wraps its two children and `space-between` has nothing to
+    // space apart.
     alignSelf: 'stretch',
     flexDirection: 'row',
     alignItems: 'center',

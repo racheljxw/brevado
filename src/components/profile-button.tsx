@@ -4,14 +4,10 @@ import { Pressable, StyleSheet } from 'react-native';
 
 import { useTheme } from '@/hooks/use-theme';
 
-// v2 Epic A Step 2 — the header profile icon that opens the Settings
-// screen (`src/app/settings.tsx`, a stack push, not a tab). Rendered only
-// on the three main tab screens (Record / History / Streaks); deliberately
-// absent from any detail/sub-screen (e.g. History's detail view), per the
-// confirmed visibility decision — see docs/CLAUDE.md's Settings section.
-//
-// SF Symbol placeholder, matching how `FavoriteStar` and the Streaks tab
-// icon were handled — Epic B's visual redesign pass will restyle this.
+// The header profile icon that opens the Settings screen
+// (`src/app/settings.tsx`, a stack push, not a tab). Rendered only on the
+// three main tab screens (Record / History / Streaks), never on a
+// detail/sub-screen.
 export function ProfileButton({ size = 26 }: { size?: number }) {
   const router = useRouter();
   const theme = useTheme();

@@ -1,10 +1,9 @@
 """
-Phase 2 Step 4 unit checks for `app/services/metrics.py` — the deterministic
-filler-word/WPM/repetition logic. Deliberately small (a handful of
-hand-written transcripts, not a full suite): this is pure code logic that's
-easy to get subtly wrong (off-by-one word counts, double-counted repeats)
-and hard to verify just by eyeballing a real recording's output, per
-docs/CLAUDE.md's "Metrics" section.
+Unit checks for `app/services/metrics.py` — the deterministic
+filler-word/WPM/repetition logic. Deliberately small (hand-written
+transcripts): this is pure code that's easy to get subtly wrong (off-by-one
+word counts, double-counted repeats) and hard to verify by eyeballing a real
+recording's output.
 
 Run from `backend/` with the dev deps installed:
     pip install -r requirements.txt -r requirements-dev.txt
@@ -57,8 +56,6 @@ def test_word_count_empty_string():
 
 
 def test_filler_word_rate_sample_transcript():
-    # The exact sentence from the manual test plan in the Step 4 task: 2 fillers
-    # ("um", "the the" counts toward repetition not filler) out of 9 words.
     transcript = "So, um, I think the the main point is clear"
     word_count = compute_word_count(transcript)  # So, um, I, think, the, the, main, point, is, clear = 10
     assert word_count == 10
@@ -157,9 +154,8 @@ def test_compute_metrics_shape_and_values():
 
 
 def test_compute_metrics_survives_missing_audio():
-    # No audio bytes (e.g. duration lookup upstream failed) -> words_per_minute is
-    # None, but filler/repetition/word_count are unaffected — see processing.py's
-    # module docstring for why this partial result is preferred over failing outright.
+    # No audio bytes -> words_per_minute is None, but filler/repetition/word_count are
+    # unaffected. This partial result is preferred over failing the recording outright.
     metrics = compute_metrics("um, I think the the plan works", None, None)
     assert metrics["words_per_minute"] is None
     assert metrics["word_count"] == 7

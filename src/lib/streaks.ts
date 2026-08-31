@@ -1,32 +1,27 @@
-// v3 Epic G Part 1 — pure client-side aggregation logic for the Streaks tab.
-//
-// Same spirit as the backend's `metrics.py` (Phase 2 Step 4): isolated,
-// dependency-free, unit-testable functions with no React / React Native / no
-// Supabase imports, verified against hand-written cases *before* any screen
-// (Epic G Part 2 onward) consumes them. Nothing here renders anything.
+// Pure client-side aggregation logic for the Streaks tab: isolated,
+// dependency-free, unit-testable functions with no React / React Native /
+// Supabase imports. Nothing here renders anything.
 //
 // Every function derives from the already-fetched recordings list — there is
-// no new backend query in v3, consistent with how v2's History search and
-// calendar view were built. `fetchRecordings()` (src/lib/recordings.ts) will
-// be widened in Part 2 to also select the three score columns; the rows it
-// returns then satisfy `StreakRecording` structurally.
+// no dedicated backend query for Streaks. `fetchRecordings()`
+// (src/lib/recordings.ts) selects the score columns so its rows satisfy
+// `StreakRecording` structurally.
 //
-// Day grouping reuses `localDayKey` from `src/lib/format-time.ts` — the exact
-// same local-calendar-day rule History's Calendar view (v2 Epic D Part 6)
-// groups by. See the note there for the local-time-zone tradeoff.
+// Day grouping reuses `localDayKey` from `src/lib/format-time.ts` — the same
+// local-calendar-day rule History's Calendar view groups by. See the note
+// there for the local-time-zone tradeoff.
 
 import { addLocalDays, dayKeyToDate, localDayKey } from './format-time';
 
-// The three per-recording 0–100 scores from the Gemini feedback call (v3
-// Epic F Step 1). `grammar_issue_count` is deliberately NOT here — it isn't a
-// trend metric, just a Clarity grounding input.
+// The three per-recording 0–100 scores from the Gemini feedback call.
+// `grammar_issue_count` is deliberately NOT here — it isn't a trend metric,
+// just a Clarity grounding input.
 export type ScoreMetric = 'impact_score' | 'clarity_score' | 'structure_score';
 
 // The three scored metrics, in display order, with the short slug used in the
-// Streaks detail route (`/streaks/[metric]`) and the UI copy shared by the
-// home cards (Part 2) and the detail screens (Part 3). Kept here — next to
-// `ScoreMetric` — so the two screens can't drift on label/description/slug.
-// Plain string data, no React, consistent with the rest of this module.
+// Streaks detail route (`/streaks/[metric]`) and the UI copy. Kept here — next
+// to `ScoreMetric` — so the home cards and detail screens can't drift on
+// label/description/slug.
 export const SCORE_METRICS: {
   key: ScoreMetric;
   slug: 'impact' | 'clarity' | 'structure';
@@ -39,8 +34,7 @@ export const SCORE_METRICS: {
 ];
 
 // The minimal shape these functions need off a `recordings` row. `RecordingRow`
-// (once Part 2 widens `fetchRecordings`) is assignable to this; extra fields
-// are ignored.
+// is assignable to this; extra fields are ignored.
 export type StreakRecording = {
   status: string;
   created_at: string;
@@ -110,8 +104,8 @@ function startOfLocalToday(): Date {
  *
  * Excluded (never contribute to any average):
  *   - recordings whose `status` is not `'done'` (still processing / failed);
- *   - recordings whose `metric` value is `null` (pre-v3 rows, or a score
- *     that missed generation — Epic F's lenient failure) or non-finite.
+ *   - recordings whose `metric` value is `null` (older rows, or a score that
+ *     missed generation) or non-finite.
  *
  * Returns a NEW array sorted ascending by `date`. An empty input, or one
  * where nothing qualifies, returns `[]`.
@@ -402,16 +396,14 @@ export function buildGraphPoints(dailyAverages: DailyAverage[], tab: GraphTab): 
 // 5. averageClaritySupportingMetrics
 // ---------------------------------------------------------------------------
 
-// The raw metrics behind the Clarity detail screen's three supporting badges
-// (v3 Epic G Part 3). These are NOT a trend metric — they never feed
-// `calculateTrend` / `buildGraphPoints`; they're a windowed read-out of the
-// deterministic signals (from `metrics.py`) plus the model's grammar-issue
-// count that ground the Clarity *score*. Only surfaced on `/streaks/clarity`.
+// The raw metrics behind the Clarity detail screen's three supporting badges.
+// These are NOT a trend metric — they never feed `calculateTrend` /
+// `buildGraphPoints`; they're a windowed read-out of the deterministic signals
+// (filler rate, repetition) plus the model's grammar-issue count that ground
+// the Clarity *score*. Only surfaced on `/streaks/clarity`.
 //
-// Structural input shape (not importing `RecordingMetrics` from
-// `recordings.ts`, to keep this module dependency-free). A widened
-// `RecordingRow` — which now selects `metrics` + `grammar_issue_count` (Part
-// 3) — is assignable to this.
+// Structural input shape — not importing from `recordings.ts`, to keep this
+// module dependency-free. `RecordingRow` is assignable to it.
 export type ClaritySupportingRecording = {
   status: string;
   created_at: string;
@@ -437,8 +429,8 @@ export type ClaritySupportingAverages = {
  *
  * Only `status === 'done'` recordings whose local day is within the last
  * `window` days count (`'all-time'` = no lower bound). Each field averages
- * independently over just the recordings that have a finite value for it — a
- * pre-v3 row with no `metrics` / `grammar_issue_count` simply doesn't
+ * independently over just the recordings that have a finite value for it — an
+ * older row with no `metrics` / `grammar_issue_count` simply doesn't
  * contribute to that field. A field with nothing to average is `null`.
  *
  * Averages are NOT rounded — the UI formats each (filler rate as a %,

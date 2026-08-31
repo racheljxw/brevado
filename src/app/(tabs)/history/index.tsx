@@ -47,39 +47,18 @@ import {
   type RecordingRow,
 } from '@/lib/recordings';
 
-// Phase 3 Step 1: rows are now tappable, pushing `history/[id]` for the full
-// detail view (transcript/feedback/metrics/playback). `onPress` is threaded
+// One recording's list card. `onPress` (pushes `history/[id]`) is threaded
 // through rather than reading `useRouter()` in here so this stays a plain
-// presentational component.
+// presentational component. Layout: the recording `title` as the bold
+// heading (a muted "Untitled recording" fallback for a NULL title), the
+// question/prompt as a secondary line ("No prompt" for miscellaneous), a
+// colour-coded mode pill and the date on the meta row, and the favorite star
+// + 3-dot actions menu on the heading line.
 //
-// v2 Epic D Part 3 — the card is restyled to the design screenshots:
-//   - the recording `title` (Part 1/2) as the bold heading, with the
-//     favorite star on the same line. NULL title -> a muted "Untitled
-//     recording" fallback (see the CLAUDE.md "Recording titles" note on why
-//     that over a truncated question).
-//   - the question/prompt as a secondary `textSecondary` line; "No prompt"
-//     (not blank) for miscellaneous, which has no question.
-//   - a colour-coded mode pill (`modeInterview`/`modeStory`/
-//     `modeMiscellaneous` bg + the matching `*Text` label tokens) on the
-//     meta row, with the date/time right-aligned opposite it. No status
-//     badge — the failed-row "Regenerate report" action keys off
-//     `recording.status` directly, not a visible badge.
-//
-// v2 Epic D Part 4 — the old inline row of icon actions (download / delete
-// audio) plus the inline "Regenerate report" text action are gone,
-// consolidated into a single `RecordingActionsMenu` (the "3-dot" menu) on
-// the heading line next to the favorite star, which also carries the new
-// "Delete recording" action (removes the whole row + its audio). The star
-// deliberately stays its own always-visible icon, not a menu item.
-// The heading shown for a recording with a NULL `title` (a legacy row from
-// before Epic D Part 1, or one where generation returned nothing usable).
-// Pulled out as a constant so the client-side search below matches against
-// exactly what the card displays — searching "untitled" surfaces these rows.
+// The NULL-title heading text is a constant so the client-side search below
+// matches exactly what the card displays — searching "untitled" surfaces
+// those rows.
 const UNTITLED_LABEL = 'Untitled recording';
-
-// `modePillColors` moved to `src/lib/modes.ts` in v2 Epic D Part 7 — the
-// History detail screen's restyle needed the identical pill, so both
-// screens now share one definition.
 
 function RecordingListItem({
   recording,
@@ -146,11 +125,10 @@ function RecordingListItem({
       onPress={renaming ? undefined : onPress}
       style={({ pressed }) => pressed && !renaming && styles.pressed}>
       <Card style={styles.row}>
-        {/* Heading: the recording title (or a muted fallback for a NULL
-            title), with the favorite star and the 3-dot actions menu sharing
-            the line. v4 Epic K — the title is a `<TitleSection>` (shared with
-            the detail screens) so "Rename title" from the 3-dot menu can open
-            an inline editor right here; there's no pencil. */}
+        {/* Heading: the title (a `<TitleSection>`, shared with the detail
+            screens, so "Rename title" from the 3-dot menu opens an inline
+            editor right here), with the favorite star and 3-dot menu sharing
+            the line. */}
         <View style={styles.titleRow}>
           <TitleSection
             title={recording.title}
@@ -180,12 +158,8 @@ function RecordingListItem({
           </View>
         </View>
 
-        {/* Phase 4 Step 5 exit-checkpoint review: the question/topic (real as
-            of Phase 4 Steps 3-4 for interview/story; still null for
-            miscellaneous) is meaningful context when scanning past sessions,
-            so it gets a one-line, truncated preview here — the detail screen
-            shows it in full. Epic D Part 3: miscellaneous (no question) shows
-            a clear "No prompt" rather than blank space. */}
+        {/* The question/topic as a one-line truncated preview (the detail
+            screen shows it in full); "No prompt" for miscellaneous. */}
         <ThemedText type="small" themeColor="textSecondary" numberOfLines={1} style={styles.promptLine}>
           {recording.question ?? 'No prompt'}
         </ThemedText>
@@ -203,10 +177,8 @@ function RecordingListItem({
           </ThemedText>
         </View>
 
-        {/* Per-row action outcomes. The actions themselves (download / delete
-            audio / delete recording / regenerate) live in the 3-dot
-            `RecordingActionsMenu` on the heading line as of Part 4; only
-            their error messages surface down here. */}
+        {/* Per-row action outcomes — the actions themselves live in the 3-dot
+            menu on the heading line; only their errors surface here. */}
         {downloadAudioError && (
           <ThemedText type="small" style={styles.actionError}>
             {downloadAudioError}
@@ -232,29 +204,17 @@ function RecordingListItem({
   );
 }
 
-// v4 Epic J Part 1 — a chain of re-practice attempts for one question,
-// rendered as a SINGLE card. `buildChains` (src/lib/re-practice-chains.ts)
-// groups the flat list by following `re_practice_of` links; a single-member
-// chain still renders as the ordinary `RecordingListItem` above (no visual
-// change), only a multi-member chain reaches this component.
+// A chain of re-practice attempts for one question, rendered as a SINGLE
+// card. Only a multi-member chain reaches this component; a single-member
+// chain renders as the ordinary `RecordingListItem` above.
 //
-// What it shows: the shared question as the heading (never an individual
-// attempt's title), an "×N attempts" line, the mode pill (all members share
-// a mode), and the most-recent attempt's date + a status note if it isn't
-// `done`. The favorite star reflects/toggles the CHAIN ROOT's `favorite`
-// flag (the confirmed group-level design).
-//
-// Tapping the card opens the chain detail screen
-// (`history/chain/[rootId].tsx`, v4 Epic J Part 2) — a per-attempt accordion.
-//
-// v4 Epic K — this card now DOES carry a 3-dot menu (+ the favorite star) in
-// the exact same heading-row position as every single-recording card, so the
-// list reads consistently. The menu operates on the MOST RECENT attempt
-// (`chain.members[0]` — the one whose date/status the card already shows):
-// Re-practice / Download audio / Delete audio / Delete recording / Regenerate.
-// It has NO "Rename title" — the card's heading is the shared question, not a
-// per-attempt title; renaming individual attempts lives in the accordion.
-// Full per-attempt management (older attempts) is still the accordion screen.
+// Shows: the shared question as the heading (never an individual attempt's
+// title), an "×N attempts" line, the mode pill, and the most-recent
+// attempt's date + a status note if it isn't `done`. The favorite star
+// reflects/toggles the chain root's `favorite` flag; the 3-dot menu operates
+// on the most-recent attempt and has no "Rename title" (the heading is the
+// shared question). Tapping the card opens the chain detail screen — a
+// per-attempt accordion.
 function GroupedRecordingListItem({
   chain,
   onPress,
@@ -385,52 +345,28 @@ function GroupedRecordingListItem({
   );
 }
 
-// v2 Epic D Part 5 — the search bar + Calendar/List toggle above the list.
+// The search bar + Calendar/List toggle above the list.
 //
-// Search is a purely CLIENT-SIDE substring filter over the already-loaded
-// `recordings` (no new backend query — a deliberate decision, the list is
-// capped at 30 rows/user so there's nothing to paginate or server-filter).
-// It matches, case-insensitively, against the recording `title` (or the
-// "Untitled recording" fallback text when the title is NULL, since that's
-// what the card actually shows) and the `question`/prompt text.
+// Search is a purely client-side substring filter over the already-loaded
+// `recordings` (the list is capped at 30 rows/user, so there's nothing to
+// paginate or server-filter). It matches, case-insensitively, against the
+// recording `title` (or the "Untitled recording" fallback text) and the
+// `question`/prompt text.
 //
-// The toggle is a minimalist underline-style tab pair. "List" is the
-// existing restyled-card list. "Calendar" is a real month grid as of Epic D
-// Part 6 — see `MonthCalendar` below.
+// The Calendar view is a standard 7-column month grid, current month by
+// default, with prev/next navigation (next is capped at the current month —
+// there can be no future recordings). Each day with ≥1 recording gets a dot;
+// counts are grouped client-side by the local date portion of `created_at`.
+// Tapping a day with recordings switches to List view filtered to that date;
+// tapping the selected day again clears the filter; tapping an empty day just
+// shows a subtle "No recordings on …" line.
 //
-// Typing a non-empty search term while on Calendar auto-switches to List so
-// the results are actually visible. Clearing the search does NOT switch
-// back — that would feel like the UI fighting the user; they stay on
-// whichever view they last chose.
-//
-// v2 Epic D Part 6 — the real Calendar view. A standard 7-column month grid,
-// current month by default, with prev/next month navigation (next is capped
-// at the current month — there can be no future recordings). Each day that
-// has at least one recording gets a dot; the counts are grouped CLIENT-SIDE
-// from the already-loaded `recordings` list by the LOCAL date portion of
-// `created_at` (`dayKey`) — no new backend query, same data source as List
-// and search.
-//
-// Tapping a day WITH recordings switches to List view filtered to that date
-// (`dayFilter`) — reusing Part 3's card styling and Part 4's menu rather
-// than building a second list rendering. Tapping the already-selected day
-// again clears the filter. Tapping a day with NO recordings is a no-op
-// beyond a subtle "No recordings on …" line under the grid.
-//
-// Search + day filter are treated as MUTUALLY EXCLUSIVE: tapping a day
-// clears any active search term ("everything from this day" is a singular
-// intent a leftover search would confusingly narrow), and typing a search
-// term clears any active day filter. A "Showing {date}" chip above the
-// filtered list is the explicit way back to viewing everything.
+// Search and the day filter are mutually exclusive: tapping a day clears any
+// search term, and typing a search clears any day filter. A "Showing {date}"
+// chip above the filtered list is the explicit way back to everything.
 type HistoryView = 'calendar' | 'list';
 
 const WEEKDAY_LABELS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
-
-// `dayKey` (the local-date `YYYY-MM-DD` grouping key) and `dayKeyToDate` now
-// live in `src/lib/format-time.ts` (`localDayKey` / `dayKeyToDate`) so v3's
-// Streaks aggregation groups recordings by the exact same rule — see the
-// note there. Imported above as `dayKey` to keep this file's call sites
-// unchanged.
 
 // "Mon, Aug 25" — for the day-filter chip and the empty-day notice.
 function formatDayLabel(key: string): string {
@@ -457,11 +393,8 @@ function SearchBar({ value, onChangeText }: { value: string; onChangeText: (next
         value={value}
         onChangeText={onChangeText}
         placeholder="Search by title or prompt"
-        // `#56453D80` = `Theme.colors.textSecondary` at 50% opacity — the
-        // one placeholder-text treatment used app-wide (matches the custom-
-        // question input in `index.tsx` and the title editor in
-        // `history/[id].tsx`), rather than the full-opacity secondary text
-        // colour this used to read.
+        // `#56453D80` = `Theme.colors.textSecondary` at 50% opacity — the one
+        // placeholder-text treatment used app-wide.
         placeholderTextColor="#56453D80"
         autoCorrect={false}
         autoCapitalize="none"
@@ -510,34 +443,25 @@ function ViewToggle({ view, onChange }: { view: HistoryView; onChange: (next: Hi
   );
 }
 
-// v4 Epic K — the History filter bar (mode + favorites-only). Client-side,
-// same spirit as the Epic D Part 5 search: it narrows the already-built
-// chains (from `buildChains`), no new backend query. Sits below the
-// Calendar/List toggle, above the list, and renders only in List view (it's
-// a list-refinement control) — but its STATE persists across a
-// Calendar/List switch, consistent with how the search term already
-// persists (Epic D Part 5).
+// The History filter bar (mode + favorites-only). Client-side — it narrows
+// the already-built chains, no new backend query. Renders only in List view,
+// but its STATE persists across a Calendar/List switch (like the search
+// term).
 //
-// A single horizontal-scrolling row — All, then the Favorites toggle, then
-// the three modes — so every chip keeps its shape and stays reachable on a
-// narrow screen. `flexGrow: 0` on the ScrollView keeps it content-height (a
-// horizontal ScrollView in a flex column would otherwise try to fill the
-// remaining vertical space and push the list off screen).
+// A single horizontal-scrolling row — All, the Favorites toggle, then the
+// three modes — so every chip stays reachable on a narrow screen.
+// `flexGrow: 0` on the ScrollView keeps it content-height (a horizontal
+// ScrollView in a flex column would otherwise fill the remaining vertical
+// space and push the list off screen).
 //
-// Mode: one of interview / story / miscellaneous, or `'all'` for "no mode
-// filter". A chain's members always share one mode (a re-practice keeps the
-// original's mode — v4 Epic I), so `members[0].mode` is unambiguous.
-//
-// Favorites-only: a toggle, independent of the mode selection. "Favorited"
-// means the chain's favorite-reference recording (`chainFavoriteReference`
-// — the chain root, exactly what the grouped card's star reads) has
-// `favorite === true`.
-//
-// Both combine with each other AND with an active search term / day filter —
-// every active constraint narrows the same list together (see
+// A chain's members always share a mode (a re-practice keeps the original's),
+// so `members[0].mode` is the chain's mode. "Favorited" keys off
+// `chainFavoriteReference` — the chain root, exactly what the grouped card's
+// star reads. Both combine freely with the search term / day filter (see
 // `visibleChains`).
 type ModeFilter = 'all' | RecordingMode;
 
+// A local list (not `MODE_LABELS`) because it also carries the `'all'` option.
 const MODE_FILTER_OPTIONS: { key: ModeFilter; label: string }[] = [
   { key: 'all', label: 'All' },
   { key: 'interview', label: 'Interview' },
@@ -696,15 +620,11 @@ function MonthCalendar({
               accessibilityLabel={`${formatDayLabel(key)}, ${
                 count > 0 ? `${count} recording${count === 1 ? '' : 's'}` : 'no recordings'
               }`}>
-              {/* `dayInner` is a fixed-size box (constant regardless of
-                  today/selected) purely so `dotSlot` below always sits the
-                  same distance from the top of the cell — the "today" circle
-                  is smaller than the default/selected one, but that sizing
-                  lives on the *nested* `dayCircle`, not on this outer box,
-                  so it can never shift the dot's vertical position (a bug
-                  the previous version had: shrinking `dayInner` itself for
-                  "today" pushed its `dotSlot` up relative to every other
-                  day's). */}
+              {/* `dayInner` is a fixed-size box regardless of today/selected,
+                  so `dotSlot` below always sits the same distance from the
+                  top of the cell. The "today" circle is smaller, but that
+                  sizing lives on the nested `dayCircle`, not this box, so it
+                  can't shift the dot's vertical position. */}
               <View style={styles.dayInner}>
                 <View
                   style={[
@@ -742,33 +662,30 @@ export default function HistoryScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // v2 Epic D Part 5 — client-side search + the Calendar/List view toggle.
-  // `view` defaults to List (the functional view; Calendar is a placeholder
-  // this step). `search` filters the list client-side — see `matchesSearch`.
+  // Client-side search + the Calendar/List view toggle. `search` filters the
+  // list client-side — see `matchesSearch`.
   const [search, setSearch] = useState('');
   const [view, setView] = useState<HistoryView>('list');
 
-  // v4 Epic K — client-side mode + favorites-only filters. State lives here
-  // (not in `FilterBar`) so it survives a Calendar/List toggle, same as the
-  // search term. `'all'` = no mode filter applied.
+  // Client-side mode + favorites-only filters. State lives here (not in
+  // `FilterBar`) so it survives a Calendar/List toggle, same as the search
+  // term. `'all'` = no mode filter applied.
   const [modeFilter, setModeFilter] = useState<ModeFilter>('all');
   const [favoritesOnly, setFavoritesOnly] = useState(false);
   const filtersActive = modeFilter !== 'all' || favoritesOnly;
-  // v4 Epic K — measured height of the overlaid filter-pill zone (pills +
-  // day chip + the cream→transparent fade tail). The list content is inset
-  // by this so its first card starts just below the fade, and cards scroll
-  // *under* the pills (fading out via `CreamFade`) rather than hard-clipping.
+  // Measured height of the overlaid filter-pill zone (pills + day chip + the
+  // cream→transparent fade tail). The list content is inset by this so its
+  // first card starts just below the fade, and cards scroll *under* the pills
+  // rather than hard-clipping.
   const [filterZoneHeight, setFilterZoneHeight] = useState(56);
   const handleClearFilters = useCallback(() => {
     setModeFilter('all');
     setFavoritesOnly(false);
   }, []);
 
-  // v2 Epic D Part 6 — Calendar state. `calendar` is the month currently
-  // shown in the grid (defaults to the current month). `dayFilter` is the
-  // selected day's `dayKey`, which — when set — narrows the List view to
-  // that day. `emptyDayNotice` is the `dayKey` of a tapped day that had no
-  // recordings, shown as a subtle line under the grid.
+  // Calendar state. `calendar` is the month shown in the grid (defaults to
+  // the current month). `dayFilter`, when set, narrows the List view to that
+  // day. `emptyDayNotice` is the `dayKey` of a tapped day with no recordings.
   const [calendar, setCalendar] = useState(() => {
     const now = new Date();
     return { year: now.getFullYear(), month: now.getMonth() };
@@ -790,10 +707,8 @@ export default function HistoryScreen() {
   }, []);
 
   // Tapping a day: no recordings -> just the subtle notice; the
-  // already-selected day -> clear the filter (toggle off); otherwise -> set
-  // the day filter, clear any active search (mutually exclusive — see the
-  // comment block above `MonthCalendar`), and switch to List so the filtered
-  // cards are visible.
+  // already-selected day -> clear the filter; otherwise -> set the day
+  // filter, clear any active search (mutually exclusive), and switch to List.
   const handleSelectDay = useCallback(
     (key: string, count: number) => {
       if (count === 0) {
@@ -825,51 +740,29 @@ export default function HistoryScreen() {
     }
   }, []);
 
-  // Phase 3 Step 2: per-row "Regenerate report" state — keyed by recording
-  // id since any number of failed rows could be regenerated independently
-  // (each gets its own in-flight spinner / error message, not a single
-  // list-wide one).
+  // Per-row action state, all keyed by recording id so failed/in-flight rows
+  // are independent — each gets its own spinner / error, not a list-wide one.
   const [regeneratingIds, setRegeneratingIds] = useState<Set<string>>(new Set());
   const [regenerateErrors, setRegenerateErrors] = useState<Record<string, string>>({});
-
-  // Phase 3 Step 4 — per-row favorite-toggle in-flight state, same shape as
-  // the regenerate state above (independent per row, keyed by id).
   const [favoritingIds, setFavoritingIds] = useState<Set<string>>(new Set());
-
-  // Phase 3 Step 5 — per-row audio-delete in-flight/error state, same shape
-  // as the regenerate state above.
   const [deletingAudioIds, setDeletingAudioIds] = useState<Set<string>>(new Set());
   const [deleteAudioErrors, setDeleteAudioErrors] = useState<Record<string, string>>({});
-
-  // Phase 3 Step 6 — per-row audio-download in-flight/error state, same
-  // shape as delete/regenerate above (independent per row, keyed by id).
   const [downloadingAudioIds, setDownloadingAudioIds] = useState<Set<string>>(new Set());
   const [downloadAudioErrors, setDownloadAudioErrors] = useState<Record<string, string>>({});
-
-  // v2 Epic D Part 4 — per-row "delete recording" (whole row + audio)
-  // in-flight/error state, same shape as the audio-delete state above.
   const [deletingRecordingIds, setDeletingRecordingIds] = useState<Set<string>>(new Set());
   const [deleteRecordingErrors, setDeleteRecordingErrors] = useState<Record<string, string>>({});
-
-  // v4 Epic K — per-row title editing. `renamingIds` = which rows have their
-  // inline title editor open (opened from the 3-dot menu's "Rename title" —
-  // the pencil is gone); `titleSavingIds` / `titleErrors` mirror the other
-  // per-row in-flight/error state.
+  // `renamingIds` = which rows have their inline title editor open (opened
+  // from the 3-dot menu's "Rename title").
   const [renamingIds, setRenamingIds] = useState<Set<string>>(new Set());
   const [titleSavingIds, setTitleSavingIds] = useState<Set<string>>(new Set());
   const [titleErrors, setTitleErrors] = useState<Record<string, string>>({});
 
-  // Step 7: monotonically-increasing id for each `load()` call, so a
-  // response can tell whether a *newer* request has been issued since it
-  // went out. The interval below can have more than one `fetchRecordings()`
-  // in flight at once (e.g. a manual pull-to-refresh landing mid-poll), and
-  // network timing doesn't guarantee they resolve in the order they were
-  // sent — without this, a slower, older request resolving after a faster,
-  // newer one briefly overwrites fresh state with stale status (the
-  // flashing bug flagged in Step 3's review). Only the response matching the
-  // most recently *issued* request is applied; anything else is discarded
-  // as stale. A ref, not state, since bumping it should never itself
-  // trigger a re-render.
+  // Monotonically-increasing id for each `load()` call. The poll below can
+  // have more than one `fetchRecordings()` in flight at once (e.g. a manual
+  // pull-to-refresh landing mid-poll), and they aren't guaranteed to resolve
+  // in send order — so only the response matching the most recently *issued*
+  // request is applied, and a slower older one can't overwrite fresh state.
+  // A ref, not state, so bumping it doesn't re-render.
   const requestSeqRef = useRef(0);
 
   const load = useCallback(async () => {
@@ -910,21 +803,12 @@ export default function HistoryScreen() {
     recordingsRef.current = recordings;
   }, [recordings]);
 
-  // Phase 2 Step 7 (was a flat "poll while anything's in flight" loop since
-  // Step 2): refetch on an interval while any row is still pending/
-  // processing, so status visibly moves pending -> processing -> done
-  // without a manual pull-to-refresh. Only runs while this tab is focused.
-  //
-  // Per-row stop condition: fetching is one query for the whole list, not
-  // one request per row, so there's no separate "stop polling this row"
-  // switch to build — the granularity that matters is whether *any* row is
-  // still non-terminal, which is what `stillInFlight` checks. Once every
-  // row has reached `done`/`failed` (TERMINAL_STATUSES), this stops firing
-  // `load()` at all. A finished row riding along in an in-flight tick's
-  // response costs nothing extra (same one query either way), so there's no
-  // benefit to scoping the query itself down to just the non-terminal rows
-  // at this app's scale (max 30 rows/user) — that'd be added complexity for
-  // no real savings.
+  // Refetch on an interval while any row is still pending/processing, so
+  // status visibly moves pending -> processing -> done without a manual
+  // pull-to-refresh. Only runs while this tab is focused, and stops firing
+  // once every row has reached a terminal state. Fetching is one query for
+  // the whole list, so there's no per-row "stop polling this row" — just
+  // "is any row non-terminal", which is what `stillInFlight` checks.
   useFocusEffect(
     useCallback(() => {
       const interval = setInterval(() => {
@@ -953,13 +837,9 @@ export default function HistoryScreen() {
     });
     try {
       await regenerateReport(id);
-      // Optimistically flip this row to 'processing' (what
-      // `process_recording()` sets as its first step regardless of entry
-      // point — see `src/lib/api.ts`) so it reads as back in progress
-      // immediately and so the polling effect above — which already
-      // refetches whenever *any* row is non-terminal — picks it up on its
-      // very next tick instead of waiting on a stale 'failed' row to be
-      // overwritten by a slower background update.
+      // Flip this row to 'processing' (what `process_recording()` sets as its
+      // first step) so it reads as back in progress immediately and the poll
+      // above picks it up on its next tick.
       setRecordings((prev) => prev?.map((row) => (row.id === id ? { ...row, status: 'processing' } : row)) ?? prev);
     } catch (err) {
       setRegenerateErrors((prev) => ({
@@ -975,11 +855,8 @@ export default function HistoryScreen() {
     }
   }
 
-  // Phase 3 Step 4: optimistic, responsive favorite toggle — flip local
-  // state immediately (no waiting on a refetch/poll tick), then persist via
-  // `setFavorite` (direct Supabase update, see src/lib/recordings.ts). On
-  // failure, revert the optimistic flip rather than leaving the UI showing
-  // a state that didn't actually save.
+  // Optimistic favorite toggle: flip local state immediately, then persist
+  // via `setFavorite` and revert on failure.
   async function handleToggleFavorite(id: string, nextFavorite: boolean) {
     setRecordings((prev) => prev?.map((row) => (row.id === id ? { ...row, favorite: nextFavorite } : row)) ?? prev);
     setFavoritingIds((prev) => new Set(prev).add(id));
@@ -997,15 +874,10 @@ export default function HistoryScreen() {
     }
   }
 
-  // Phase 3 Step 5 — no confirmation dialog before this fires, per an
-  // explicit product decision (see docs/CLAUDE.md's History section):
-  // tapping delete calls the backend immediately, no "are you sure?" step.
-  // Unlike the favorite toggle above, this is NOT optimistic — local state
-  // only flips to audio_deleted once the backend confirms the delete
-  // actually completed (Storage object gone + row updated; see
-  // `delete_audio` in `backend/app/routers/recordings.py`). Flipping it
-  // eagerly and reverting on failure would risk briefly showing "audio
-  // deleted" for audio that's still there, or the reverse.
+  // No confirmation dialog — tapping delete calls the backend immediately.
+  // Not optimistic: local state only flips to audio_deleted once the backend
+  // confirms, so it never briefly shows "audio deleted" for audio that's
+  // still there (or the reverse).
   async function handleDeleteAudio(id: string) {
     setDeletingAudioIds((prev) => new Set(prev).add(id));
     setDeleteAudioErrors((prev) => {
@@ -1031,14 +903,10 @@ export default function HistoryScreen() {
     }
   }
 
-  // Phase 3 Step 6 — downloads a recording's audio and opens the native
-  // share sheet (see `shareRecordingAudio` in src/lib/recordings.ts for the
-  // full flow and why a cancelled share sheet isn't treated as a failure
-  // here — the promise resolves the same way on cancel as on a completed
-  // share, so there's nothing to special-case in this handler). Guards on
-  // `audioPath` even though the button is only rendered when one exists
-  // (`RecordingListItem` above) — defensive, matching how the rest of this
-  // file treats a theoretically-missing audio_path.
+  // Downloads a recording's audio and opens the native share sheet. A
+  // cancelled share sheet isn't a failure — `shareRecordingAudio` resolves
+  // the same way on cancel as on a completed share. Guards on `audioPath`
+  // defensively even though the menu item is only shown when one exists.
   async function handleDownloadAudio(id: string, audioPath: string | null) {
     if (!audioPath) {
       setDownloadAudioErrors((prev) => ({ ...prev, [id]: 'No audio file to download.' }));
@@ -1067,14 +935,10 @@ export default function HistoryScreen() {
     }
   }
 
-  // v2 Epic D Part 4 — permanently delete a whole recording (row + audio).
-  // Gated behind a confirmation dialog in `RecordingActionsMenu` before it
-  // reaches here. Not optimistic, matching `handleDeleteAudio`: the row is
-  // only dropped from local state once the backend confirms the delete
-  // landed (see `deleteRecording` in src/lib/api.ts / `delete_recording` in
-  // the backend router). The list refetches on focus anyway, so a slot
-  // freed under `MAX_RECORDINGS_PER_USER` reflects on the next Record-tab
-  // visit — the deleted row simply no longer exists to be counted.
+  // Permanently delete a whole recording (row + audio). Gated behind a
+  // confirmation dialog in `RecordingActionsMenu`. Not optimistic: the row is
+  // dropped from local state only once the backend confirms. A cap slot
+  // frees up automatically — the deleted row no longer exists to be counted.
   async function handleDeleteRecording(id: string) {
     setDeletingRecordingIds((prev) => new Set(prev).add(id));
     setDeleteRecordingErrors((prev) => {
@@ -1100,21 +964,18 @@ export default function HistoryScreen() {
     }
   }
 
-  // v4 Epic I — "Re-practice this question" navigates to the Record tab
-  // (`src/app/(tabs)/index.tsx`) carrying the original recording's id + mode +
-  // question, which that screen consumes into a read-only "re-practice" state
-  // (no mode-select, no question toggle) and, on upload, writes back as the
-  // new recording's `re_practice_of`. A route-param handoff rather than shared
-  // state because the Record screen is a sibling tab, already param-capable.
+  // "Re-practice this question" navigates to the Record tab carrying the
+  // original recording's id + mode + question via route params; that screen
+  // consumes them into a read-only re-practice state and writes
+  // `re_practice_of` on upload.
   function handleRePractice(recording: RecordingRow) {
     router.navigate({ pathname: '/', params: rePracticeNavParams(recording) });
   }
 
-  // v4 Epic K — title editing, opened from the 3-dot menu's "Rename title".
-  // Same shape as `history/[id].tsx`'s handler: a direct `updateRecordingTitle`
-  // Supabase update, NOT optimistic (the row's `title` only changes once the
-  // write lands), returning whether it persisted so `TitleSection` knows
-  // whether to close.
+  // Title editing, opened from the 3-dot menu's "Rename title". A direct
+  // `updateRecordingTitle` Supabase update, not optimistic — the row's
+  // `title` only changes once the write lands. `handleSaveTitle` returns
+  // whether it persisted so `TitleSection` knows whether to close.
   function handleStartRename(id: string) {
     setTitleErrors((prev) => {
       if (!(id in prev)) return prev;
@@ -1168,18 +1029,16 @@ export default function HistoryScreen() {
 
   const query = search.trim().toLowerCase();
 
-  // v4 Epic J Part 1 — group the full list into re-practice chains first,
-  // then filter whole chains: a chain stays visible if ANY of its attempts
-  // matches the search / day filter (so a group appears whenever any attempt
-  // would have appeared individually), and the card then shows the whole
-  // chain. A single-member chain is just an ordinary recording.
+  // Group the full list into re-practice chains, then filter whole chains: a
+  // chain stays visible if ANY of its attempts matches, and the card shows
+  // the whole chain. A single-member chain is just an ordinary recording.
   const allChains = useMemo(() => buildChains(recordings ?? []), [recordings]);
 
   const visibleChains = useMemo(() => {
     let chains = allChains;
-    // v4 Epic K — mode + favorites-only. A chain's members share a mode, so
-    // `members[0].mode` is the chain's mode. "Favorited" keys off the same
-    // recording the grouped card's star reads (`chainFavoriteReference`).
+    // A chain's members share a mode, so `members[0].mode` is the chain's
+    // mode. "Favorited" keys off the same recording the grouped card's star
+    // reads (`chainFavoriteReference`).
     if (modeFilter !== 'all') {
       chains = chains.filter((chain) => chain.members[0].mode === modeFilter);
     }
@@ -1187,8 +1046,7 @@ export default function HistoryScreen() {
       chains = chains.filter((chain) => chainFavoriteReference(chain).favorite);
     }
     // Day filter and search are mutually exclusive in the UI, but applying
-    // both here is harmless and keeps this robust if that ever changes. The
-    // Epic K filters above combine freely with either.
+    // both here is harmless and robust if that ever changes.
     if (dayFilter) {
       chains = chains.filter((chain) =>
         chain.members.some((m) => dayKey(new Date(m.created_at)) === dayFilter)
@@ -1200,9 +1058,9 @@ export default function HistoryScreen() {
     return chains;
   }, [allChains, query, dayFilter, modeFilter, favoritesOnly]);
 
-  // v2 Epic D Part 6 — recording counts grouped by local calendar day, for
-  // the month grid's per-day dots. Computed from the full already-loaded
-  // list (not the filtered one) so the dots always reflect every recording.
+  // Recording counts by local calendar day, for the month grid's per-day
+  // dots. Computed from the full list (not the filtered one) so the dots
+  // always reflect every recording.
   const recordingsByDay = useMemo(() => {
     const map = new Map<string, number>();
     for (const row of recordings ?? []) {
@@ -1221,11 +1079,10 @@ export default function HistoryScreen() {
   // Three visually-distinct "nothing to show" states for List view, in
   // priority order (mutually exclusive by construction):
   const noVisible = view === 'list' && hasRecordings && visibleChains.length === 0;
-  // 1. An Epic K mode/favorites filter combo (possibly + a search term)
-  //    matched nothing — distinct from a bare search miss or a bare day
-  //    filter miss, and offers a "Clear filters" reset.
+  // 1. A mode/favorites filter combo (possibly + a search term) matched
+  //    nothing — offers a "Clear filters" reset.
   const showNoFilterMatches = noVisible && filtersActive;
-  // 2. A search that matched nothing, no filters — the Epic D Part 5 state.
+  // 2. A search that matched nothing, no filters active.
   const showNoResults = noVisible && !filtersActive && query.length > 0 && !dayFilter;
   // 3. A day filter that now matches nothing (e.g. the day's last recording
   //    was just deleted) — the "Showing {date}" chip is still the way back.
@@ -1303,8 +1160,8 @@ export default function HistoryScreen() {
                     keyExtractor={(chain) => chain.rootId}
                     renderItem={({ item: chain }) => {
                       // Multi-attempt chain -> one grouped card that opens the
-                      // accordion chain detail screen (v4 Epic J Part 2). Its
-                      // 3-dot menu (v4 Epic K) acts on the most-recent attempt.
+                      // accordion chain detail screen. Its 3-dot menu acts on
+                      // the most-recent attempt.
                       if (chain.members.length > 1) {
                         const root = chain.members.find((m) => m.id === chain.rootId) ?? chain.members[0];
                         const latest = chain.members[0];
@@ -1381,12 +1238,11 @@ export default function HistoryScreen() {
                   />
                 )}
 
-                {/* v4 Epic K — the filter pills + day chip, overlaid on the
-                    list. A cream→transparent `ScrollFade` sits BEHIND the
-                    pills (`opaqueFraction` keeps the top of the row solid,
-                    the fade starting ~mid-pill) so cards flow seamlessly
-                    under them while scrolling, with only a small gap to the
-                    first card. Measured so the list content is inset by
+                {/* The filter pills + day chip, overlaid on the list. A
+                    cream→transparent `ScrollFade` sits BEHIND the pills
+                    (`opaqueFraction` keeps the top of the row solid, the fade
+                    starting ~mid-pill) so cards flow seamlessly under them
+                    while scrolling. Measured so the list content is inset by
                     exactly its height. */}
                 <View
                   style={styles.filterZone}
@@ -1433,18 +1289,12 @@ const styles = StyleSheet.create({
     flex: 1,
     width: '100%',
     maxWidth: MaxContentWidth,
-    // NB: the horizontal gutter lives on the individual sections below
-    // (`headerRow`, `centerFill`, `errorCard`, and the FlatList's
-    // `listContent`), NOT here — a ScrollView/FlatList clips its content to
-    // its own frame, so if this container were padded the card drop shadows
-    // would be sliced off at the list's left/right edges. Keeping the list
-    // full-bleed and insetting only its contentContainer lets the shadow
-    // bleed into the gutter.
+    // The horizontal gutter lives on the individual sections below, NOT here:
+    // a ScrollView/FlatList clips its content to its own frame, so a padded
+    // container would slice the card drop shadows off at the list's edges.
+    // Full-bleed list + inset contentContainer lets the shadow bleed into the
+    // gutter.
   },
-  // `AppHeader` (brevado logo + profile icon) owns its own padding — see
-  // src/components/app-header.tsx. This screen's own "History" heading
-  // renders as its own line right below it, not sharing that row, so the
-  // header row itself is identical across Record/History/Streaks.
   centerFill: {
     flex: 1,
     alignItems: 'center',
@@ -1455,8 +1305,8 @@ const styles = StyleSheet.create({
   emptyText: {
     textAlign: 'center',
   },
-  // v2 Epic D Part 5 — pill-shaped search bar (card fill + hairline border),
-  // sitting in the same horizontal gutter as the header and list.
+  // Pill-shaped search bar (card fill + hairline border), in the same
+  // horizontal gutter as the header and list.
   searchBar: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1502,12 +1352,11 @@ const styles = StyleSheet.create({
     fontSize: 16,
     lineHeight: 22,
   },
-  // v4 Epic K — the mode + favorites filter row. Pill chips in the app's
-  // standard "unselected control" treatment (card fill + hairline border),
-  // flipping to the `accent` fill + `onAccent` text of every other active
-  // control (mode-select pill, selected calendar day) when narrowing.
-  // `flexGrow: 0` so the horizontal ScrollView stays content-height instead
-  // of trying to fill the column's remaining vertical space.
+  // The mode + favorites filter row. Pill chips in the app's standard
+  // "unselected control" treatment (card fill + hairline border), flipping to
+  // the `accent` fill + `onAccent` text of every other active control when
+  // narrowing. `flexGrow: 0` so the horizontal ScrollView stays
+  // content-height instead of filling the column's remaining vertical space.
   filterScroll: {
     flexGrow: 0,
     marginTop: Spacing.two,
@@ -1542,8 +1391,8 @@ const styles = StyleSheet.create({
   filterChipTextActive: {
     color: Theme.colors.onAccent,
   },
-  // v4 Epic K — the list + the overlaid filter zone share this relative box
-  // so the pills can sit `position: absolute` on top of the scrolling list.
+  // The list + the overlaid filter zone share this relative box so the pills
+  // can sit `position: absolute` on top of the scrolling list.
   listRegion: {
     flex: 1,
   },
@@ -1564,7 +1413,6 @@ const styles = StyleSheet.create({
     // list scrolls within its own frame
     flex: 1,
   },
-  // v2 Epic D Part 6 — Calendar view.
   calendarScreen: {
     flex: 1,
     paddingHorizontal: Spacing.four,
@@ -1596,8 +1444,7 @@ const styles = StyleSheet.create({
     paddingVertical: Spacing.one,
   },
   // Fixed-size box — constant regardless of today/selected — so `dotSlot`
-  // below always sits the same distance from the cell's top. See the JSX
-  // comment at the call site for the bug this fixes.
+  // below always sits the same distance from the cell's top.
   dayInner: {
     width: 34,
     height: 34,
@@ -1683,7 +1530,7 @@ const styles = StyleSheet.create({
     alignItems: 'flex-start',
     gap: Spacing.two,
   },
-  // v4 Epic K — tight star + 3-dot cluster, hugging the card's right edge.
+  // Tight star + 3-dot cluster, hugging the card's right edge.
   headingActions: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1695,8 +1542,8 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   cardTitle: {
-    // "smallBold" (Noto Sans bold) bumped up to a list-card heading size —
-    // smaller than the detail screen's `subtitle`, larger than body.
+    // Noto Sans bold at a list-card heading size — smaller than the detail
+    // screen's `subtitle`, larger than body.
     fontSize: 17,
     lineHeight: 22,
   },

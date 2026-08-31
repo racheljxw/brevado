@@ -162,7 +162,6 @@ const styles = StyleSheet.create({
     color: '#e5484d',
   },
   notice: {
-    // The one app-wide link/interactive blue — see Theme.colors.link.
     color: Theme.colors.link,
   },
   button: {
@@ -173,7 +172,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   buttonText: {
-    // v2 Epic B Part 2: was '#ffffff' — the app never uses pure white now.
     color: Palette.nearWhite,
     fontWeight: '600',
   },

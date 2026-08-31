@@ -4,10 +4,8 @@ from fastapi import FastAPI
 
 from app.routers import health, questions, recordings
 
-# Root logging config for the whole app — INFO and above show up wherever uvicorn's
-# own output goes. Added in Phase 2 Step 3 so the app/services/processing.py logging
-# around the (now real) Gemini call is actually visible when running locally/on Render,
-# not silently dropped by the default WARNING root level.
+# Raise the root level to INFO so the processing-pipeline log lines are visible in
+# uvicorn's output (and Render's log stream); the default WARNING would drop them.
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
 app = FastAPI(title="Brevado API")

@@ -18,16 +18,11 @@ import { useTheme } from '@/hooks/use-theme';
 import type { RecordingRow } from '@/lib/recordings';
 import { buildDailyAverages, buildGraphPoints, calculateStreak, calculateTrend, SCORE_METRICS } from '@/lib/streaks';
 
-// v3 Epic G Part 2 — the Streaks home screen, replacing the Epic A empty
-// placeholder. Part 3 restructured `streaks.tsx` into this directory
-// (`index.tsx` + `[metric].tsx` + `_layout.tsx`) so each card's "See details"
-// link can push a real per-metric detail screen.
-//
-// Everything is computed CLIENT-SIDE from the same `fetchRecordings()` query
-// History uses (via `useStreakRecordings`, shared with the detail screens) —
-// no new backend endpoint, consistent with how v2's History search and
-// calendar view were built. The pure aggregation lives in `src/lib/streaks.ts`
-// (Part 1, unit-tested); this file only fetches and renders.
+// The Streaks home screen. Everything is computed client-side from the same
+// `fetchRecordings()` query History uses (via `useStreakRecordings`, shared
+// with the detail screens) — no dedicated backend endpoint. The pure
+// aggregation lives in `src/lib/streaks.ts` (unit-tested); this file only
+// fetches and renders.
 //
 // The home cards use the fixed 7-day trend window; the Week / Month / Year /
 // All Time tabs and full-size graphs live on the detail screen.
@@ -38,9 +33,8 @@ function pluralDays(n: number): string {
   return `${n} ${n === 1 ? 'day' : 'days'}`;
 }
 
-// "You're on a {n} day streak!" per the design, plus a "Longest streak" line
-// (a confirmed addition, not in the original mockup). current === 0 is handled
-// as a plain, non-discouraging state rather than "0 day streak".
+// The streak header. current === 0 is handled as a plain, non-discouraging
+// state rather than "0 day streak".
 function StreakHeader({ recordings }: { recordings: RecordingRow[] }) {
   const { current, longest } = useMemo(() => calculateStreak(recordings), [recordings]);
 
@@ -91,8 +85,7 @@ function MetricCard({
 
       <Card style={styles.metricCard}>
         {/* Top row: the short description (top-left) and the "See details"
-            link (top-right) share one line. Part 3 wired the link to the
-            per-metric detail route. */}
+            link (top-right) share one line. */}
         <View style={styles.cardTopRow}>
           <ThemedText style={styles.metricDescription} themeColor="textSecondary" numberOfLines={1}>
             {description}
@@ -212,8 +205,8 @@ const styles = StyleSheet.create({
     flex: 1,
     width: '100%',
     maxWidth: MaxContentWidth,
-    // Gutter lives on the sections below, not here — a padded ScrollView
-    // frame clips card drop shadows at its edges (see history/index.tsx).
+    // Gutter lives on the scroll content, not here — a padded ScrollView
+    // frame clips card drop shadows at its edges.
   },
   centerFill: {
     flex: 1,

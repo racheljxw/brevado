@@ -1,50 +1,36 @@
 """
 Background processing for a recording.
 
-*** Phase 2 Step 6: the full pipeline is real and now retries once on
-failure — no stubs and no more "fail on the first error" remain. ***
 `process_recording` downloads the recording's audio from Supabase Storage
-once, sends it to Gemini (native audio input) for a real transcript, then
-computes deterministic metrics (filler-word rate, words per minute,
-repetition — see `app/services/metrics.py`) from that transcript and the
-same audio bytes, then sends the transcript, metrics, mode, and question to
-Gemini again for real mode-aware feedback, a short 2-4 word recording
-title, and the v3 scores — `impact_score` / `clarity_score` /
-`structure_score` (each 0-100) plus `grammar_issue_count` — all from one
-structured-JSON call (see `app/services/feedback.py`). No second download
-involved anywhere in this. Each stage's result is written to the row as
-soon as it succeeds (transcript, then metrics), so a later stage failing
-can never lose earlier, already-successful work. A missing title or any
-missing/out-of-range score never fails the recording — it's stored as NULL
-and logged, same lenient degradation as a metrics-computation failure.
+once, sends it to Gemini (native audio input) for a transcript, computes
+deterministic metrics from that transcript and the same audio bytes (see
+`app/services/metrics.py`), then sends the transcript, metrics, mode, and
+question to Gemini again for mode-aware feedback, a short recording title,
+and four scores — `impact_score` / `clarity_score` / `structure_score` and
+`grammar_issue_count` — all from one structured-JSON call (see
+`app/services/feedback.py`).
 
-**v2 Epic D Part 7 bug fix: a hand-edited title is never overwritten.** If
-the row's `title_edited_by_user` flag is set (set only by
-`updateRecordingTitle` in src/lib/recordings.ts, the Part 2 title editor),
-the final `status: done` write omits `title` entirely, so a user's own
-title survives a fresh generation or a later "Regenerate report" untouched.
-Feedback/transcript/metrics are unaffected by this flag — only the title
-write is conditional. See migration `0006_title_edited_by_user.sql`.
+Each stage's result is written to the row as soon as it succeeds (transcript,
+then metrics), so a later stage failing can never lose earlier, successful
+work. A missing title or an unparseable score is stored as NULL and logged —
+never a reason to fail the recording (only a bad transcript or bad feedback
+is).
 
-**Retry policy (Step 6, docs/PROJECT_PLAN.md Section 3 "Retry behavior"):**
-each of the two Gemini-calling stages — transcription (download + the
-transcribe call, via `_run_with_one_retry` in `process_recording`) and
-feedback generation — gets one immediate inline retry of *just that stage*
-if it raises `TranscriptionError`/`FeedbackGenerationError`, before the
-recording is marked `failed`. This is stage-level retry, not whole-pipeline
-retry: a feedback failure retries only the feedback call, reusing the
-transcript/metrics already computed and stored on the first pass, rather
-than re-downloading audio and burning a second transcription Gemini call
-for work that already succeeded. See `_run_with_one_retry`'s docstring for
-the full reasoning and `docs/CLAUDE.md`'s "Background processing" section
-for the project-level summary. Both attempts happen synchronously inside
-this same `BackgroundTasks` call — a caller polling `status` never sees an
-intermediate `failed` unless both attempts of a stage failed.
+Hand-edited titles are never overwritten: if the row's `title_edited_by_user`
+flag is set (only `updateRecordingTitle` in src/lib/recordings.ts sets it),
+the final write omits `title` entirely so a fresh generation or a
+"Regenerate report" leaves the user's title alone.
 
-This runs as a FastAPI `BackgroundTasks` callback, i.e. after the request
-that scheduled it has already returned a response — there's no HTTP request
-context here, which is why it uses the service-role client directly rather
-than anything tied to the caller's bearer token.
+Retry policy: each of the two Gemini-calling stages (transcription and
+feedback) gets exactly one immediate inline retry of *just that stage* on
+`TranscriptionError`/`FeedbackGenerationError` before the recording is marked
+`failed` — see `_run_with_one_retry`. Both attempts happen synchronously
+within this same call, so a caller polling `status` never sees an
+intermediate `failed` unless both attempts failed.
+
+Runs as a FastAPI `BackgroundTasks` callback — no HTTP request context, which
+is why it uses the service-role client directly rather than the caller's
+bearer token.
 """
 
 import logging
@@ -64,12 +50,9 @@ logger = logging.getLogger(__name__)
 T = TypeVar("T")
 
 # Gemini's documented native audio MIME types (ai.google.dev/gemini-api/docs/audio)
-# are audio/wav, audio/mp3, audio/aiff, audio/aac, audio/ogg, audio/flac — m4a isn't
-# explicitly listed, but it's AAC audio in an MP4 container, and audio/mp4 is the
-# IANA-registered MIME type for that container (Gemini accepts it in practice). m4a is
-# also the realistic case: it's what expo-audio's HIGH_QUALITY preset actually produces
-# on iOS, the only device this project tests on (see docs/CLAUDE.md's Conventions
-# section). Other extensions here are best-effort/untested against Gemini.
+# don't list m4a, but it's AAC in an MP4 container and Gemini accepts audio/mp4 in
+# practice. m4a is the case that matters — it's what expo-audio's HIGH_QUALITY preset
+# produces on iOS. The other extensions are best-effort and untested against Gemini.
 _GEMINI_MIME_TYPES = {
     "m4a": "audio/mp4",
     "mp4": "audio/mp4",
@@ -159,39 +142,22 @@ def _transcribe(audio_bytes: bytes, mime_type: str) -> str:
 
 def _run_with_one_retry(stage_name: str, recording_id: str, fn: Callable[[], T]) -> T:
     """Runs `fn()`, retrying it exactly once, immediately, if it raises
-    `TranscriptionError` or `FeedbackGenerationError` — the Step 6 retry policy from
-    docs/PROJECT_PLAN.md Section 3 ("On failure, the pipeline auto-retries once
-    immediately"). If `fn` succeeds on the retry, the caller never learns a first
-    attempt failed at all except via the logs — `status` never moves to `failed`. If
-    the retry also fails, that same exception propagates to the caller, who is
-    responsible for marking the recording `failed`.
+    `TranscriptionError` or `FeedbackGenerationError`. If the retry succeeds the
+    caller never learns the first attempt failed (except via the logs) and `status`
+    never moves to `failed`; if the retry also fails, the exception propagates and
+    the caller marks the recording `failed`.
 
-    Deliberately **stage-level**, not whole-pipeline: `fn` is expected to be just the
-    Gemini-calling unit that can fail (transcription's download+transcribe, or a bare
-    feedback generation call), not a re-run of the entire `process_recording` body.
-    This was the two options considered for Step 6:
-      - Retry the whole pipeline from scratch — simpler, but a feedback failure would
-        redo a successful transcription too, wasting a second transcription Gemini
-        call over audio that was already transcribed correctly.
-      - Retry only the failed stage, preserving already-succeeded stages — the
-        approach used here. It isn't meaningfully more complex than whole-pipeline
-        retry *because* the pipeline was already structured to store each stage's
-        result to the row as soon as it succeeds (see `process_recording` and
-        docs/CLAUDE.md's "Metrics"/"Feedback generation" sections) — that same
-        structure means a feedback retry can just reuse the transcript/metrics
-        already in hand rather than needing to fetch them back from the row.
-    A transcription-stage retry does re-download the audio (see `process_recording`)
-    rather than reusing bytes from a failed first attempt — that's a cheap Storage
-    round-trip, not a Gemini call, so it isn't the waste this policy is trying to
-    avoid; it also means a first-attempt download failure is retried too, not just a
-    first-attempt Gemini-call failure.
+    Deliberately stage-level, not whole-pipeline: `fn` is just the Gemini-calling
+    unit that can fail (transcription's download+transcribe, or one feedback call),
+    not a re-run of the whole `process_recording` body. Retrying the whole pipeline
+    would redo a successful transcription on a feedback-only failure, burning a
+    second transcription call over audio already transcribed correctly. Because each
+    stage's result is stored to the row as soon as it succeeds, a feedback retry can
+    just reuse the transcript/metrics already in hand.
 
-    Only two log lines exist for this, deliberately worded to be unambiguous when
-    read later in Render's log stream: a first-attempt failure says "retrying once
-    immediately" and never appears if the retry then succeeds; a retry failure says
-    "retry also failed" and only appears once both attempts are exhausted. Before
-    Step 6 these were indistinguishable — every failure logged the same way whether
-    it was a first or only attempt.
+    A transcription retry does re-download the audio — a cheap Storage round-trip,
+    not the Gemini call this policy exists to protect — so a first-attempt download
+    failure is retried too, not only a Gemini-call failure.
     """
     try:
         return fn()
@@ -233,14 +199,9 @@ def process_recording(recording_id: str) -> None:
             raise TranscriptionError(f"Recording {recording_id} has no audio_path to transcribe.")
         mode = row.get("mode") if row else None
         question = row.get("question") if row else None
-        # v2 Epic D Part 7 bug fix: if the user has hand-edited this
-        # recording's title (via the Part 2 editor — the only place that ever
-        # sets this flag, see `updateRecordingTitle` in src/lib/recordings.ts
-        # and migration 0006_title_edited_by_user.sql), a pipeline run (fresh
-        # generation or a "Regenerate report" retry) must never clobber it
-        # with a freshly-generated one. Read once here so both the retry
-        # branch below and the final write can use it without a second
-        # round-trip.
+        # If the user has hand-edited this recording's title, the final write
+        # below must not overwrite it with a freshly-generated one. Read here so
+        # that write can honour it without a second round-trip.
         title_edited_by_user = bool(row.get("title_edited_by_user")) if row else False
 
         mime_type = _mime_type_for(audio_path)
@@ -252,29 +213,23 @@ def process_recording(recording_id: str) -> None:
 
         audio_bytes, transcript = _run_with_one_retry("transcription", recording_id, _do_transcription)
 
-        # Store the transcript immediately, before touching metrics — a metrics bug
-        # below must never be able to lose an already-successful transcript (see
-        # module docstring and docs/CLAUDE.md's "Metrics" section).
+        # Store the transcript before touching metrics — a metrics failure below
+        # must never be able to lose an already-successful transcript.
         client.table("recordings").update({"transcript": transcript}).eq("id", recording_id).execute()
 
         metrics = None
         try:
             metrics = compute_metrics(transcript, audio_bytes, mime_type)
         except Exception as exc:
-            # Deliberately lenient, not the stricter "fail the recording" option: a
-            # good transcript is the expensive/valuable part (real Gemini call,
-            # user's actual speech) and metrics are a derived nice-to-have for the
-            # feedback prompt below — losing metrics is a much smaller loss than
-            # losing a transcript over what's likely a duration-parsing edge case.
-            # `metrics` stays None here; `compute_metrics` itself already isolates
-            # the one field (words_per_minute) that can legitimately fail on its
-            # own, so reaching this branch means something more unexpected broke.
+            # Lenient, not "fail the recording": the transcript is the expensive
+            # part and metrics are just grounding for the feedback prompt.
+            # `compute_metrics` already isolates the one field that can fail on its
+            # own (words_per_minute), so reaching here means something unexpected
+            # broke — still not worth discarding a good transcript over.
             logger.error("processing: metrics computation failed for recording %s: %s", recording_id, exc)
 
-        # Store metrics immediately too, before attempting feedback generation —
-        # mirrors the transcript store above, so a feedback-generation failure below
-        # can never lose metrics that already succeeded (see
-        # docs/CLAUDE.md's "AI processing endpoint" section).
+        # Store metrics before attempting feedback, same reasoning as the transcript
+        # store above.
         client.table("recordings").update({"metrics": metrics}).eq("id", recording_id).execute()
 
         generated: GeneratedFeedback = _run_with_one_retry(
@@ -283,23 +238,14 @@ def process_recording(recording_id: str) -> None:
             lambda: generate_feedback(transcript=transcript, metrics=metrics, mode=mode, question=question),
         )
 
-        # `generated.title` (and any of the v3 scores) is None if the model returned
-        # nothing usable for that field — deliberately tolerated (logged in
-        # `generate_feedback`), never a reason to fail the recording, same lenient
-        # degradation as metrics above. A None writes as SQL NULL.
+        # Any of title / the three scores / grammar_issue_count is None when the
+        # model returned nothing usable for it — tolerated (logged in
+        # `generate_feedback`), written as SQL NULL, never a reason to fail.
         #
-        # v3 Epic F Step 1: the three 0-100 scores + grammar_issue_count are always
-        # written (including on a "Regenerate report" run) — unlike `title`, they are
-        # NOT subject to the `title_edited_by_user` hand-edit guard, since nothing lets
-        # a user hand-edit a score. Streaks aggregation (Epic G) excludes any recording
-        # with a NULL score, so a regenerate that fills a previously-NULL score simply
-        # brings that recording into the aggregation.
-        #
-        # v2 Epic D Part 7 bug fix: if the user hand-edited this recording's title
-        # (`title_edited_by_user`, read above), `title` is left out of this update
-        # entirely — feedback/transcript/metrics/scores still refresh normally, but the
-        # user's own title is never overwritten by a freshly-generated one, on
-        # either an initial run or a later "Regenerate report".
+        # The scores are always written, even on a "Regenerate report" run — nothing
+        # lets a user hand-edit a score, so the `title_edited_by_user` guard doesn't
+        # apply to them. `title` is omitted from the payload when that flag is set,
+        # so a hand-edited title survives regeneration untouched.
         update_payload: dict = {
             "status": "done",
             "feedback": generated.feedback,
@@ -318,12 +264,9 @@ def process_recording(recording_id: str) -> None:
             )
         client.table("recordings").update(update_payload).eq("id", recording_id).execute()
     except TranscriptionError as exc:
-        # Reached only after `_run_with_one_retry` already tried transcription twice
-        # (see that function's own "retrying once immediately" / "failed again on
-        # retry" log lines above this one) — this is the terminal "give up" step:
-        # mark `failed` and stop before metrics/feedback are ever attempted. Also
-        # reached directly (no retry involved) for the missing-audio_path check
-        # above, which raises `TranscriptionError` outside of `_run_with_one_retry`.
+        # Reached after `_run_with_one_retry` already tried transcription twice, or
+        # directly from the missing-audio_path check above. Terminal: mark `failed`
+        # and stop before metrics/feedback are attempted.
         logger.error(
             "processing: recording %s: giving up after retry, marking failed to transcribe: %s",
             recording_id,
@@ -331,12 +274,9 @@ def process_recording(recording_id: str) -> None:
         )
         client.table("recordings").update({"status": "failed"}).eq("id", recording_id).execute()
     except FeedbackGenerationError as exc:
-        # Reached only after `_run_with_one_retry` already tried feedback generation
-        # twice. The transcript and metrics steps above already wrote their results
-        # to the row before this ran, so this branch only ever touches `status` — the
-        # good partial work (transcript, metrics) is never lost or overwritten,
-        # matching the same principle as the transcription failure branch above. See
-        # docs/CLAUDE.md's "AI processing endpoint" section.
+        # Reached after feedback generation was tried twice. Transcript and metrics
+        # were already written to the row, so this branch only touches `status` —
+        # the good partial work is kept.
         logger.error(
             "processing: recording %s: giving up after retry, marking failed to generate feedback: %s",
             recording_id,
@@ -344,9 +284,8 @@ def process_recording(recording_id: str) -> None:
         )
         client.table("recordings").update({"status": "failed"}).eq("id", recording_id).execute()
     except Exception as exc:
-        # Deliberately NOT retried (see `_run_with_one_retry`'s docstring): the Step 6
-        # retry policy targets flaky Gemini calls specifically, not every possible
-        # failure mode. This branch just prevents an unexpected failure (e.g. a
-        # Supabase read/write error) from leaving a row stuck at "processing" forever.
+        # Not retried — the retry policy targets flaky Gemini calls, not arbitrary
+        # failures. This branch just stops an unexpected error (e.g. a Supabase
+        # read/write failure) from leaving a row stuck at "processing" forever.
         logger.error("processing: recording %s failed unexpectedly: %s", recording_id, exc)
         client.table("recordings").update({"status": "failed"}).eq("id", recording_id).execute()
