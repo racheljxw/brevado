@@ -18,9 +18,11 @@ import type { TrendResult, TrendWindow } from '@/lib/streaks';
 //             renders nothing.
 //   - 'no-data' -> `card`: just "No sessions yet". `compact`: renders nothing.
 //
-// Variants: `card` (home metric card — 30px number + sublabel) and `compact`
-// (detail-screen header badge, only ever mounted for an 'ok' trend — ~17px
-// number + triangle, with the sublabel on one line beneath it).
+// Variants: `card` (home metric card — 30px number + sublabel), `compact`
+// (small square badge — ~17px number + triangle + tiny sublabel), and
+// `inline` (detail-screen header — 28px number right-aligned with the
+// heading, "Last N days" right-aligned with the subheading, no box). `compact`
+// and `inline` are only ever mounted for an 'ok' trend.
 
 export function TrendTriangle({
   direction,
@@ -61,14 +63,16 @@ export function TrendReadout({
    *  (practice only started recently). `compact` ignores it. */
   windowLabel: string;
   windowDays: TrendWindow;
-  variant?: 'card' | 'compact';
+  variant?: 'card' | 'compact' | 'inline';
 }) {
   const compact = variant === 'compact';
-  const bigStyle = compact ? styles.compactBig : styles.big;
+  const inline = variant === 'inline';
+  const badge = compact || inline;
+  const bigStyle = compact ? styles.compactBig : inline ? styles.inlineBig : styles.big;
   const triangleSize = compact ? 7 : 9;
 
   if (trend.status === 'no-data') {
-    if (compact) return null;
+    if (badge) return null;
     return (
       <View style={styles.block}>
         <ThemedText type="small" themeColor="textSecondary" numberOfLines={1}>
@@ -79,7 +83,7 @@ export function TrendReadout({
   }
 
   if (trend.status === 'insufficient-history') {
-    if (compact) return null;
+    if (badge) return null;
     // Exactly one day of data — show that value alone. No sublabel, no arrow.
     return (
       <View style={styles.block}>
@@ -106,7 +110,7 @@ export function TrendReadout({
   }
 
   return (
-    <View style={[styles.block, compact && styles.compactBlock]}>
+    <View style={[styles.block, compact && styles.compactBlock, inline && styles.inlineBlock]}>
       <View style={styles.valueRow}>
         {direction !== 'flat' && (
           <TrendTriangle direction={direction} color={color} size={triangleSize} />
@@ -126,7 +130,7 @@ export function TrendReadout({
         numberOfLines={1}
         adjustsFontSizeToFit={compact}
         minimumFontScale={0.65}
-        style={compact ? styles.compactLabel : undefined}>
+        style={compact ? styles.compactLabel : inline ? styles.inlineLabel : undefined}>
         {label}
       </ThemedText>
     </View>
@@ -144,6 +148,18 @@ const styles = StyleSheet.create({
   },
   compactBlock: {
     alignItems: 'center',
+  },
+  inlineBlock: {
+    alignItems: 'flex-end',
+    gap: Spacing.one,
+  },
+  inlineLabel: {
+    opacity: 0.6,
+  },
+  inlineBig: {
+    fontFamily: Theme.typography.fontFamily.bold,
+    fontSize: 28,
+    lineHeight: 34,
   },
   compactLabel: {
     fontSize: 10,

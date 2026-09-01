@@ -174,9 +174,6 @@ export default function MetricDetailScreen() {
             style={styles.scrollArea}
             contentContainerStyle={styles.scrollContent}
             showsVerticalScrollIndicator={false}>
-            {/* Heading + subheading on the left; the selected window's % change
-                as a badge top-right, shown only for a real trend (`'ok'`) —
-                with no data, or only one day of it, the corner is empty. */}
             <View style={styles.headerRow}>
               <View style={styles.headerTitleBlock}>
                 <ThemedText style={styles.metricHeading}>{config.label}</ThemedText>
@@ -185,14 +182,12 @@ export default function MetricDetailScreen() {
                 </ThemedText>
               </View>
               {trend.status === 'ok' && (
-                <Card style={styles.statCard}>
-                  <TrendReadout
-                    trend={trend}
-                    windowLabel={activeTab.windowLabel}
-                    windowDays={activeTab.window}
-                    variant="compact"
-                  />
-                </Card>
+                <TrendReadout
+                  trend={trend}
+                  windowLabel={activeTab.windowLabel}
+                  windowDays={activeTab.window}
+                  variant="inline"
+                />
               )}
             </View>
 
@@ -279,18 +274,6 @@ const styles = StyleSheet.create({
   headerTitleBlock: {
     flex: 1,
     gap: Spacing.one,
-  },
-  // Badge in the header's top-right — the % (+ triangle) with the window
-  // label on one line beneath it. The label uses `adjustsFontSizeToFit` (see
-  // `compactLabel` in trend-readout) to keep the longer windows ("Last 12
-  // months") on a single line in this square.
-  statCard: {
-    width: 76,
-    minHeight: 76,
-    paddingHorizontal: Spacing.one,
-    paddingVertical: Spacing.two,
-    alignItems: 'center',
-    justifyContent: 'center',
   },
   metricHeading: {
     fontFamily: Theme.typography.fontFamily.bold,
