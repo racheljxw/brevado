@@ -12,6 +12,7 @@ from app.services.feedback import (
     _FEEDBACK_RESPONSE_SCHEMA,
     _coerce_issue_count,
     _coerce_score,
+    _coerce_string_list,
     _format_metrics_grounding,
     build_feedback_prompt,
 )
@@ -27,11 +28,17 @@ SAMPLE_METRICS = {
 # --- metrics grounding text --------------------------------------------------------
 
 
-def test_metrics_grounding_includes_filler_rate_and_wpm():
+def test_metrics_grounding_includes_filler_rate_and_repetition():
     grounding = _format_metrics_grounding(SAMPLE_METRICS)
     assert "8%" in grounding
-    assert "142 words per minute" in grounding
     assert "3 times" in grounding
+
+
+def test_metrics_grounding_omits_words_per_minute():
+    # Speaking rate must not reach the written feedback, so the model never sees it.
+    grounding = _format_metrics_grounding(SAMPLE_METRICS)
+    assert "words per minute" not in grounding
+    assert "142" not in grounding
 
 
 def test_metrics_grounding_singular_repetition():
@@ -45,10 +52,10 @@ def test_metrics_grounding_zero_repetition_says_no_repeats():
     assert "did not noticeably repeat" in grounding
 
 
-def test_metrics_grounding_handles_none_wpm():
-    grounding = _format_metrics_grounding({**SAMPLE_METRICS, "words_per_minute": None})
-    assert "words per minute" not in grounding
-    assert "8%" in grounding  # other fields still included
+def test_metrics_grounding_handles_none_filler_rate():
+    grounding = _format_metrics_grounding({**SAMPLE_METRICS, "filler_word_rate": None})
+    assert "8%" not in grounding
+    assert "3 times" in grounding  # other fields still included
 
 
 def test_metrics_grounding_handles_totally_missing_metrics():
@@ -122,7 +129,9 @@ def test_prompt_includes_metrics_grounding():
         mode="miscellaneous", question=None, transcript="Some text.", metrics=SAMPLE_METRICS,
     )
     assert "8%" in prompt
-    assert "142 words per minute" in prompt
+    # The grounding sentence never carries the WPM figure (only the "don't mention rate"
+    # instruction refers to words-per-minute at all).
+    assert "142" not in prompt
 
 
 def test_prompt_handles_missing_metrics_gracefully():
@@ -138,14 +147,44 @@ def test_prompt_requests_prose_feedback_no_numeric_scores():
 # --- prompt construction: title --------------------------------------------------
 
 
-def test_prompt_asks_for_a_json_object_with_feedback_and_title():
+def test_prompt_asks_for_a_json_object_with_feedback_fields_and_title():
     prompt = build_feedback_prompt(
         mode="interview", question="Why this role?", transcript="Some answer.", metrics=SAMPLE_METRICS,
     )
     assert "JSON object" in prompt
-    assert '"feedback"' in prompt
+    assert '"feedback_summary"' in prompt
+    assert '"feedback_strengths"' in prompt
+    assert '"feedback_improvements"' in prompt
     assert '"title"' in prompt
     assert "2-4 word label" in prompt
+
+
+def test_prompt_feedback_grounded_in_scores_without_restating_them():
+    prompt = build_feedback_prompt(
+        mode="interview", question="Why this role?", transcript="Some answer.", metrics=SAMPLE_METRICS,
+    )
+    assert "do not restate the numeric scores" in prompt
+    assert "impact, clarity, and structure assessment" in prompt
+
+
+def test_prompt_forbids_speaking_rate_commentary_in_feedback():
+    prompt = build_feedback_prompt(
+        mode="story", question="Tell a story.", transcript="Once upon a time.", metrics=SAMPLE_METRICS,
+    )
+    assert "Do not comment on the speaker's speaking rate or words per minute" in prompt
+
+
+def test_prompt_includes_per_metric_calibration_bands():
+    prompt = build_feedback_prompt(
+        mode="miscellaneous", question=None, transcript="t", metrics=SAMPLE_METRICS,
+    )
+    assert "Calibration for impact_score:" in prompt
+    assert "Calibration for clarity_score:" in prompt
+    assert "Calibration for structure_score:" in prompt
+    # Each band block is genuinely different guidance, not the same text relabelled.
+    assert "distinct takeaway" in prompt  # impact 50
+    assert "force re-reading" in prompt  # clarity 50
+    assert "track the throughline" in prompt  # structure 50
 
 
 def test_title_guidance_uses_question_context_when_a_question_is_present():
@@ -168,7 +207,9 @@ def test_title_guidance_falls_back_to_transcript_when_no_question():
 
 def test_feedback_response_schema_requires_all_keys():
     expected = {
-        "feedback",
+        "feedback_summary",
+        "feedback_strengths",
+        "feedback_improvements",
         "title",
         "impact_score",
         "clarity_score",
@@ -253,3 +294,24 @@ def test_coerce_issue_count_rejects_negative_and_garbage():
     assert _coerce_issue_count(-2) is None
     assert _coerce_issue_count("lots") is None
     assert _coerce_issue_count(None) is None
+
+
+# --- strengths / improvements list coercion (lenient parsing) --------------------
+
+
+def test_coerce_string_list_keeps_non_empty_strings_and_strips():
+    assert _coerce_string_list(["  Clear opening  ", "Concrete example"], "feedback_strengths") == [
+        "Clear opening",
+        "Concrete example",
+    ]
+
+
+def test_coerce_string_list_drops_non_string_and_blank_entries():
+    assert _coerce_string_list(["Real point", "", 7, None, "  "], "feedback_strengths") == ["Real point"]
+
+
+def test_coerce_string_list_rejects_non_list_and_empty():
+    assert _coerce_string_list(None, "feedback_strengths") is None
+    assert _coerce_string_list("just a string", "feedback_strengths") is None
+    assert _coerce_string_list([], "feedback_improvements") is None
+    assert _coerce_string_list(["", "   "], "feedback_improvements") is None

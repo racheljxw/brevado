@@ -124,6 +124,69 @@ function ScoresRow({ recording }: { recording: RecordingDetail }) {
   return <Card style={styles.scoresCard}>{nodes}</Card>;
 }
 
+function BulletList({ items }: { items: string[] }) {
+  return (
+    <View style={styles.bulletList}>
+      {items.map((item, i) => (
+        <View key={i} style={styles.bulletRow}>
+          <ThemedText type="default" style={[styles.bodyText, styles.bulletGlyph]}>
+            •
+          </ThemedText>
+          <ThemedText type="default" style={[styles.bodyText, styles.bulletText]}>
+            {item}
+          </ThemedText>
+        </View>
+      ))}
+    </View>
+  );
+}
+
+// Feedback body. Newer recordings carry a short summary (`feedback`) plus
+// distinct strengths / improvements lists; a recording generated before that
+// split has both lists null and its full prose still in `feedback`, which is
+// rendered as a single block — the same way it has always displayed. Both
+// lists null also covers a generation run where only those lists missed, so an
+// old-style block is the right fallback rather than empty headers.
+function FeedbackBody({ recording }: { recording: RecordingDetail }) {
+  const summary = recording.feedback?.trim() || null;
+  const strengths = recording.feedback_strengths;
+  const improvements = recording.feedback_improvements;
+
+  if (strengths == null && improvements == null) {
+    return (
+      <ThemedText type="default" style={styles.bodyText}>
+        {summary ?? 'Not available.'}
+      </ThemedText>
+    );
+  }
+
+  return (
+    <View style={styles.feedbackGroups}>
+      {summary && (
+        <ThemedText type="default" style={styles.bodyText}>
+          {summary}
+        </ThemedText>
+      )}
+      {strengths && strengths.length > 0 && (
+        <View style={styles.feedbackGroup}>
+          <ThemedText type="smallBold" style={styles.feedbackGroupHeading}>
+            What went well
+          </ThemedText>
+          <BulletList items={strengths} />
+        </View>
+      )}
+      {improvements && improvements.length > 0 && (
+        <View style={styles.feedbackGroup}>
+          <ThemedText type="smallBold" style={styles.feedbackGroupHeading}>
+            Areas to improve
+          </ThemedText>
+          <BulletList items={improvements} />
+        </View>
+      )}
+    </View>
+  );
+}
+
 // The scores/feedback/transcript section — only meaningful once the pipeline
 // has actually run. `failed` shows its own explanation + a "Regenerate
 // report" button; `pending`/`processing` shows a plain "still working" notice.
@@ -192,9 +255,7 @@ function ReportSection({
         <ThemedText type="smallBold" style={styles.sectionHeading}>
           Feedback
         </ThemedText>
-        <ThemedText type="default" style={styles.bodyText}>
-          {recording.feedback ?? 'Not available.'}
-        </ThemedText>
+        <FeedbackBody recording={recording} />
       </View>
 
       <View style={styles.section}>
@@ -270,6 +331,28 @@ const styles = StyleSheet.create({
   bodyText: {
     ...Theme.typography.variants.body,
     color: Theme.colors.textPrimary,
+  },
+  feedbackGroups: {
+    gap: Spacing.three,
+  },
+  feedbackGroup: {
+    gap: Spacing.one,
+  },
+  feedbackGroupHeading: {
+    fontSize: 15,
+  },
+  bulletList: {
+    gap: Spacing.one,
+  },
+  bulletRow: {
+    flexDirection: 'row',
+    gap: Spacing.one,
+  },
+  bulletGlyph: {
+    color: Theme.colors.textSecondary,
+  },
+  bulletText: {
+    flex: 1,
   },
   audioCard: {
     padding: Spacing.four,

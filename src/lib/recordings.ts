@@ -205,7 +205,16 @@ export type RecordingDetail = {
   // `updateRecordingTitle` above.
   title: string | null;
   transcript: string | null;
+  // A 1-2 sentence overview for newer recordings; the full original prose
+  // block for ones generated before feedback was split into summary + lists.
+  // `RecordingDetailBody` picks which way to render based on the two fields
+  // below.
   feedback: string | null;
+  // Distinct prose points. Null when generation returned nothing usable, and
+  // always null for a legacy recording — that's the signal to fall back to
+  // rendering `feedback` as one block.
+  feedback_strengths: string[] | null;
+  feedback_improvements: string[] | null;
   // Three 0-100 scores from the Gemini feedback call, shown as badges on the
   // detail screen. Null for an older recording or a score that missed
   // generation.
@@ -228,7 +237,7 @@ export type RecordingDetail = {
  * `maybeSingle()` surfaces as `null`. That gives the not-found screen for free.
  */
 const RECORDING_DETAIL_COLUMNS =
-  'id, mode, question, question_id, re_practice_of, status, created_at, title, transcript, feedback, impact_score, clarity_score, structure_score, grammar_issue_count, audio_path, audio_deleted, favorite';
+  'id, mode, question, question_id, re_practice_of, status, created_at, title, transcript, feedback, feedback_strengths, feedback_improvements, impact_score, clarity_score, structure_score, grammar_issue_count, audio_path, audio_deleted, favorite';
 
 export async function fetchRecordingById(id: string): Promise<RecordingDetail | null> {
   const { data, error } = await supabase

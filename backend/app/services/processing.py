@@ -5,16 +5,17 @@ Background processing for a recording.
 once, sends it to Gemini (native audio input) for a transcript, computes
 deterministic metrics from that transcript and the same audio bytes (see
 `app/services/metrics.py`), then sends the transcript, metrics, mode, and
-question to Gemini again for mode-aware feedback, a short recording title,
-and four scores — `impact_score` / `clarity_score` / `structure_score` and
+question to Gemini again for a mode-aware feedback summary, its
+strengths/improvements lists, a short recording title, and four scores —
+`impact_score` / `clarity_score` / `structure_score` and
 `grammar_issue_count` — all from one structured-JSON call (see
 `app/services/feedback.py`).
 
 Each stage's result is written to the row as soon as it succeeds (transcript,
 then metrics), so a later stage failing can never lose earlier, successful
-work. A missing title or an unparseable score is stored as NULL and logged —
-never a reason to fail the recording (only a bad transcript or bad feedback
-is).
+work. A missing title, an unusable strengths/improvements list, or an
+unparseable score is stored as NULL and logged — never a reason to fail the
+recording (only a bad transcript or an empty feedback summary is).
 
 Hand-edited titles are never overwritten: if the row's `title_edited_by_user`
 flag is set (only `updateRecordingTitle` in src/lib/recordings.ts sets it),
@@ -238,9 +239,11 @@ def process_recording(recording_id: str) -> None:
             lambda: generate_feedback(transcript=transcript, metrics=metrics, mode=mode, question=question),
         )
 
-        # Any of title / the three scores / grammar_issue_count is None when the
-        # model returned nothing usable for it — tolerated (logged in
-        # `generate_feedback`), written as SQL NULL, never a reason to fail.
+        # Any of title / strengths / improvements / the three scores /
+        # grammar_issue_count is None when the model returned nothing usable for it
+        # — tolerated (logged in `generate_feedback`), written as SQL NULL, never a
+        # reason to fail. `feedback` holds the short summary; the strengths /
+        # improvements lists go to their own jsonb columns.
         #
         # The scores are always written, even on a "Regenerate report" run — nothing
         # lets a user hand-edit a score, so the `title_edited_by_user` guard doesn't
@@ -248,7 +251,9 @@ def process_recording(recording_id: str) -> None:
         # so a hand-edited title survives regeneration untouched.
         update_payload: dict = {
             "status": "done",
-            "feedback": generated.feedback,
+            "feedback": generated.summary,
+            "feedback_strengths": generated.strengths,
+            "feedback_improvements": generated.improvements,
             "impact_score": generated.impact_score,
             "clarity_score": generated.clarity_score,
             "structure_score": generated.structure_score,
